@@ -1,0 +1,81 @@
+# IDE
+.idea/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+*.egg
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+
+# Sisyphus internal
+.sisyphus/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Build artifacts
+*.pyc
+*.pyo
+
+# Suggested additions
+# Virtualenvs
+.venv/
+venv/
+
+# Packaging / metadata
+mod_watcher_agent.egg-info/
+dist/
+build/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# IDEs
+.vscode/
+.idea/
+
+# Logs and runtime data
+logs/
+log/
+backend/logs/
+.runtime/
+thoughts/
+
+# Python test / coverage
+.pytest_cache/
+coverage/
+.mypy_cache/
+
+# Secrets / env
+*.env
+sisyphus/notepads/credentials/
+
+# Node / npm
+npm-debug.log*
+yarn-error.log
+frontend/tsc_out*.txt
+frontend/tsc_err.txt
+frontend/tsc_verify.txt
+frontend/test_error.ts
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Local runtime database
+mod_watcher.db
