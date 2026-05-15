@@ -128,12 +128,5 @@ cp .env.example .env
 
 | 文档 | 内容 |
 |---|---|
-| [ARCHITECTURE.md](./docs/ARCHITECTURE.md) | 架构、数据流、组件设计 |
 | [DEPENDENCIES.md](./DEPENDENCIES.md) | 后端/前端依赖清单与安装方式 |
 | [CODE_STYLE.md](./CODE_STYLE.md) | 代码风格与规范 |
-| [AGENETS.md](./AGENETS.md) | Agent 协作说明 |
-| [docs/api-contract.md](./docs/api-contract.md) | REST API 合约 |
-| [docs/source-adapters.md](./docs/source-adapters.md) | 数据源适配器设计 |
-| [docs/nexusmods-integration.md](./docs/nexusmods-integration.md) | NexusMods 接入细节 |
-| [docs/loverslab-integration.md](./docs/loverslab-integration.md) | LoversLab 接入细节 |
-| [docs/deployment.md](./docs/deployment.md) | 部署说明 |
