@@ -25,7 +25,17 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   });
 
   if (!res.ok) {
-    throw new Error(`API Error: ${res.status} ${res.statusText}`);
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = body.detail || body.message || "";
+    } catch {
+      // Response body is not JSON or is empty
+    }
+    const message = detail
+      ? `API Error ${res.status}: ${detail}`
+      : `API Error: ${res.status} ${res.statusText}`;
+    throw new Error(message);
   }
 
   if (res.status === 204) {

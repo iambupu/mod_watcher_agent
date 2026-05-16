@@ -7,6 +7,7 @@ import Rules from "@/pages/Rules";
 import { RuleEditorPage } from "@/components/rules/RuleEditorPage";
 import Logs from "@/pages/Logs";
 import Settings from "@/pages/Settings";
+import AgentChat from "@/pages/AgentChat";
 
 export const router = createBrowserRouter([
   { path: "/", element: <Dashboard /> },
@@ -17,5 +18,6 @@ export const router = createBrowserRouter([
   { path: "/rules/new", element: <RuleEditorPage /> },
   { path: "/rules/:id/edit", element: <RuleEditorPage /> },
   { path: "/logs", element: <Logs /> },
+  { path: "/agent", element: <AgentChat /> },
   { path: "/settings", element: <Settings /> },
 ]);

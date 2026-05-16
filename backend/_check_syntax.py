@@ -1,17 +1,16 @@
 import ast
-import glob
-import os
+from pathlib import Path
 
-root = r"D:\bupuy\Documents\mod_watcher_agent\backend"
-pyfiles = glob.glob(os.path.join(root, "**", "*.py"), recursive=True)
+root = Path(__file__).resolve().parent
+pyfiles = [path for path in root.rglob("*.py")]
 errors = []
 
-for f in pyfiles:
+for path in pyfiles:
     try:
-        with open(f, encoding="utf-8") as fh:
+        with path.open(encoding="utf-8") as fh:
             ast.parse(fh.read())
     except SyntaxError as e:
-        errors.append(f"{f}: {e}")
+        errors.append(f"{path}: {e}")
 
 print(f"{len(pyfiles)} files checked, {len(errors)} errors")
 for err in errors:

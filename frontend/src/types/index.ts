@@ -82,6 +82,9 @@ export interface UserSettings {
   summaryMode: SummaryMode;
   summaryReportIntervalMinutes: number;
   summaryReportPrompt: string;
+  watchdogCheckIntervalMinutes: number;
+  watchdogGraceMinutes: number;
+  watchdogMaxCatchupPerRun: number;
   // Credentials
   nexusApiKey: string;
   // LLM

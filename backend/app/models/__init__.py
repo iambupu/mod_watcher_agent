@@ -8,6 +8,7 @@ from app.models.notification import Notification
 from app.models.job_run import JobRun
 from app.models.settings import Setting
 from app.models.system_notification import SystemNotificationEvent
+from app.models.agent_message import AgentMessage
 
 __all__ = [
     "Mod",
@@ -20,4 +21,5 @@ __all__ = [
     "JobRun",
     "Setting",
     "SystemNotificationEvent",
+    "AgentMessage",
 ]

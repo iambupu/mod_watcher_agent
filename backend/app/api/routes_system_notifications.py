@@ -1,15 +1,20 @@
 from fastapi import APIRouter, Query, Depends
 from sqlmodel import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.db import get_session
 from app.services.system_notification_service import SystemNotificationService
+from app.services.windows_notifier import send_windows_notification
 
 router = APIRouter(prefix="/api/system-notifications", tags=["system-notifications"])
 
 
 class MarkSeenRequest(BaseModel):
     event_ids: list[int]
+
+
+class DispatchRequest(BaseModel):
+    event_ids: list[int] = Field(min_length=1, max_length=50)
 
 
 @router.get("/recent")
@@ -45,3 +50,22 @@ def mark_seen(
     svc = SystemNotificationService(session)
     updated = svc.mark_seen(body.event_ids)
     return {"updated": updated}
+
+
+@router.post("/dispatch-windows")
+def dispatch_windows(
+    body: DispatchRequest,
+    session: Session = Depends(get_session),
+):
+    svc = SystemNotificationService(session)
+    events = svc.get_unseen_events_by_ids(body.event_ids, limit=50)
+    dispatched_ids: list[int] = []
+    for event in events:
+        event_id = int(event.id or 0)
+        title = str(event.title or "").strip()
+        message = str(event.message or "").strip()
+        if not title or not message:
+            continue
+        if send_windows_notification(title, message):
+            dispatched_ids.append(event_id)
+    return {"dispatched_ids": dispatched_ids}

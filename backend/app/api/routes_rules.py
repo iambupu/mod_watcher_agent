@@ -1,7 +1,9 @@
 import json
 import logging
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_
 from sqlmodel import Session, select
@@ -25,6 +27,15 @@ from app.services.settings_service import SettingsService
 router = APIRouter(prefix="/api/rules", tags=["rules"])
 
 logger = logging.getLogger(__name__)
+DEFAULT_RULE_INTERVAL_MINUTES = 360
+
+
+def _safe_interval_minutes(value: int | None) -> int:
+    if value is None:
+        return DEFAULT_RULE_INTERVAL_MINUTES
+    if value < 1:
+        return DEFAULT_RULE_INTERVAL_MINUTES
+    return value
 
 
 def _model_to_read(rule: WatchRule) -> WatchRuleRead:
@@ -40,6 +51,39 @@ def _model_to_read(rule: WatchRule) -> WatchRuleRead:
         created_at=rule.created_at,
         updated_at=rule.updated_at,
     )
+
+
+def _rule_to_create_payload(rule: WatchRule) -> dict:
+    return {
+        "name": rule.name,
+        "enabled": rule.enabled,
+        "intervalMinutes": rule.interval_minutes or 360,
+        "source": rule.source,
+        "sourceConfig": json.loads(rule.source_config_json),
+        "filters": json.loads(rule.filters_json),
+        "notification": json.loads(rule.notification_json),
+    }
+
+
+def _import_rules_payload_from_url(url: str) -> list[dict]:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=422, detail="Only http/https URLs are allowed")
+    try:
+        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch rules from URL: {exc}") from exc
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="URL response is not valid JSON") from exc
+    if isinstance(data, dict) and isinstance(data.get("rules"), list):
+        return data["rules"]
+    if isinstance(data, list):
+        return data
+    raise HTTPException(status_code=422, detail="Imported JSON must be an array or {\"rules\": [...]}")
 
 
 @router.get("", response_model=list[WatchRuleRead])
@@ -63,6 +107,75 @@ def list_rules(
     return [_model_to_read(r) for r in results]
 
 
+@router.get("/export")
+def export_rules(session: Session = Depends(get_session)):
+    rules = session.exec(select(WatchRule)).all()
+    payload = {
+        "version": 1,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "rules": [_rule_to_create_payload(rule) for rule in rules],
+    }
+    return payload
+
+
+@router.post("/import")
+def import_rules(
+    body: dict,
+    session: Session = Depends(get_session),
+):
+    raw_rules = body.get("rules")
+    if not isinstance(raw_rules, list):
+        url = str(body.get("url") or "").strip()
+        if not url:
+            raise HTTPException(status_code=422, detail="Provide either rules array or import URL")
+        raw_rules = _import_rules_payload_from_url(url)
+
+    imported = 0
+    skipped = 0
+    for item in raw_rules:
+        if not isinstance(item, dict):
+            skipped += 1
+            continue
+        try:
+            validated = WatchRuleCreate.model_validate(item)
+        except Exception:
+            skipped += 1
+            continue
+        existing = session.exec(
+            select(WatchRule).where(
+                WatchRule.name == validated.name,
+                WatchRule.source == validated.source,
+            )
+        ).first()
+        now = datetime.now(timezone.utc).isoformat()
+        if existing:
+            existing.enabled = validated.enabled
+            existing.interval_minutes = _safe_interval_minutes(validated.intervalMinutes)
+            existing.source_config_json = validated.sourceConfig.model_dump_json()
+            existing.filters_json = validated.filters.model_dump_json()
+            existing.notification_json = validated.notification.model_dump_json()
+            existing.updated_at = now
+            session.add(existing)
+        else:
+            session.add(
+                WatchRule(
+                    name=validated.name,
+                    enabled=validated.enabled,
+                    interval_minutes=_safe_interval_minutes(validated.intervalMinutes),
+                    source=validated.source,
+                    source_config_json=validated.sourceConfig.model_dump_json(),
+                    filters_json=validated.filters.model_dump_json(),
+                    notification_json=validated.notification.model_dump_json(),
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        imported += 1
+    session.commit()
+    register_jobs(session)
+    return {"imported": imported, "skipped": skipped}
+
+
 @router.get("/{rule_id}", response_model=WatchRuleRead)
 def get_rule(rule_id: int, session: Session = Depends(get_session)):
     rule = session.get(WatchRule, rule_id)
@@ -80,7 +193,7 @@ def create_rule(
     rule = WatchRule(
         name=data.name,
         enabled=data.enabled,
-        interval_minutes=data.intervalMinutes,
+        interval_minutes=_safe_interval_minutes(data.intervalMinutes),
         source=data.source,
         source_config_json=data.sourceConfig.model_dump_json(),
         filters_json=data.filters.model_dump_json(),
@@ -113,7 +226,7 @@ def update_rule(
     if data.enabled is not None:
         rule.enabled = data.enabled
     if data.intervalMinutes is not None:
-        rule.interval_minutes = data.intervalMinutes
+        rule.interval_minutes = _safe_interval_minutes(data.intervalMinutes)
     if data.sourceConfig is not None:
         rule.source_config_json = data.sourceConfig.model_dump_json()
     if data.filters is not None:

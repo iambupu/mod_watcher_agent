@@ -1,308 +1,133 @@
-# CODE_STYLE.md — Mod Watcher Agent
+# CODE_STYLE.md - Mod Watcher Agent
 
-## 命名约定
+本文档定义本仓库的代码风格与工程约定。目标是提高一致性、可维护性和可审查性。
 
-### 文件命名
+## 1. 命名规范
 
-| 类型 | 约定 | 示例 |
-|---|---|---|
-| Python 模块 | `snake_case` | `discovery_service.py`, `routes_mods.py` |
-| 模型文件 | 单数名词 | `mod.py`, `watch_rule.py` |
-| 测试文件 | `test_` 前缀 + 模块名 | `test_filter_service.py`, `test_nexus_adapter.py` |
-| TypeScript 组件 (页面) | PascalCase | `Dashboard.tsx`, `Discover.tsx` |
-| TypeScript 组件 (UI) | PascalCase | `ModCard.tsx`, `RuleEditor.tsx` |
-| TypeScript 工具模块 | camelCase | `queryClient.ts`, `uiStore.ts` |
-| API 模块 | camelCase, 按资源 | `mods.ts`, `favorites.ts`, `client.ts` |
-| 国际化资源 | BCP-47 语言标签 | `zh-CN.json`, `en-US.json`, `ja-JP.json` |
-| 文档 | kebab-case | `api-contract.md`, `source-adapters.md` |
+### 1.1 Python（后端）
 
-### 类/函数/变量命名
+- 文件名：`snake_case.py`（如 `routes_mods.py`, `settings_service.py`）
+- 类名：`PascalCase`（如 `SettingsService`）
+- 函数/方法/变量：`snake_case`
+- 常量：`UPPER_SNAKE_CASE`
+- 私有辅助函数：前缀 `_`（如 `_redact_settings_for_response`）
 
-| 类型 | Python | TypeScript |
-|---|---|---|
-| 类 | `PascalCase` — `DiscoveryService`, `SourceAdapter`, `FilterService` | `PascalCase` — `ModCard`, `RuleEditor`, `LanguageToggle` |
-| 函数/方法 | `snake_case` — `discover_from_rule()`, `apply_filters()`, `init_db()` | `camelCase` — `handleSubmit()`, `toggleSidebar()` |
-| 私有方法 | `_` 前缀 — `_filter_by_keywords()`, `_run_job_with_logging()` | 无特殊约定 |
-| 变量 | `snake_case` — `mod_count`, `external_id` | `camelCase` — `selectedMod`, `isLoading` |
-| 常量 | `UPPER_SNAKE_CASE` — `BASE_URL`, `DATABASE_URL` | `UPPER_SNAKE_CASE` 或模块级 `const` — `BASE_URL` |
-| 数据库字段 | `snake_case` — `first_seen_at`, `adult_content` | N/A (由后端 Schema 映射为 camelCase) |
-| React Hooks | N/A | `use` 前缀 — `useUIStore`, `useQuery`, `useTranslation` |
-| React 组件 Props | N/A | 接口名 `Props` 或内联 — `{ mod: ModItem; onFavorite: () => void }` |
+### 1.2 TypeScript / React（前端）
 
-### 模型/Schema 字段约定
+- 组件文件：`PascalCase.tsx`（如 `RuleEditorPage.tsx`）
+- 非组件模块：`camelCase.ts`（如 `queryClient.ts`, `uiStore.ts`）
+- 变量/函数：`camelCase`
+- 类型/接口：`PascalCase`
+- Hook：`use` 前缀（如 `useSettingsSync`）
 
-- **SQLModel 模型**: 数据库字段使用 `snake_case`，必须与列名一致
-- **Pydantic Schema**: 使用 `model_config = {"from_attributes": True}` 支持 ORM 模式
-- **JSON 列表字段**: 数据库中以 `_json` 后缀的字符串字段存储（如 `sources_json`, `tags_json`），Schema 层负责序列化
-- **前后端字段映射**: 后端 API 返回 `snake_case`，前端 TypeScript 类型使用 `camelCase`（如 `externalId` ↔ `external_id`）
+## 2. 目录与职责
 
-## 文件组织
+### 2.1 后端
 
-### Python 后端模块结构
-```
-backend/app/
-├── main.py          # FastAPI 应用实例、CORS、路由注册、lifespan
-├── config.py        # Settings 类，加载环境变量
-├── db.py            # 引擎创建、init_db()、get_session() 生成器
-├── models/          # SQLModel 表定义，每个模型一个文件
-├── schemas/         # Pydantic 请求/响应 Schema，每个模型一个文件
-├── api/             # FastAPI APIRouter 路由，每个资源一个文件
-├── services/        # 业务服务类，每个服务一个文件
-├── adapters/        # 外部站点适配器，继承 SourceAdapter 基类
-├── jobs/            # APScheduler 任务，每个任务一个文件
-└── tests/           # pytest 测试，每个模块一个文件
-```
+`backend/app` 下按职责分层：
 
-### TypeScript 前端模块结构
-```
-frontend/src/
-├── main.tsx         # ReactDOM 入口
-├── App.tsx          # RouterProvider 包装
-├── index.css        # Tailwind 全局样式
-├── app/             # 应用级配置 (router, queryClient, i18n)
-├── pages/           # 路由页面组件 (一个文件一个页面)
-├── components/      # 可复用组件
-│   └── ui/          # 基础 UI 组件 (Button, Card, Drawer 等)
-├── api/             # API 请求模块 (一个文件一个资源)
-├── stores/          # Zustand stores
-├── types/           # TypeScript 类型定义 (index.ts 集中管理)
-└── locales/         # i18next JSON 翻译文件
-```
+- `api/`：HTTP 路由层（参数校验、协议转换）
+- `services/`：业务逻辑层
+- `models/`：SQLModel 持久化模型
+- `schemas/`：请求/响应 schema
+- `adapters/`：外部来源适配器
+- `jobs/`：定时与手动任务
 
-### 空 `__init__.py` 约定
-以下目录的 `__init__.py` 目前为空文件：
-- `backend/app/adapters/__init__.py`
-- `backend/app/api/__init__.py`
-- `backend/app/jobs/__init__.py`
-- `backend/app/models/__init__.py` (未确认)
-- `backend/app/tests/__init__.py`
+要求：
+- 路由层尽量薄，复杂逻辑下沉到 service。
+- 外部站点抓取与解析只放在 adapter 中。
 
-未来如需注册插件/适配器映射表，应在对应 `__init__.py` 中完成。
+### 2.2 前端
 
-## 导入风格
+`frontend/src` 下按职责分层：
 
-### Python
-- 标准库 → 第三方库 → 本地模块，按组空行分隔
-- 使用绝对导入：`from app.db import get_session`
-- 避免 `import *`
-- 类型导入使用内置语法（Python 3.11+）：
-  ```python
-  from typing import Optional
-  # 或
-  def func(arg: str | None) -> int:
-  ```
+- `pages/`：路由页面
+- `components/`：复用组件
+- `api/`：API 调用封装
+- `stores/`：状态管理（Zustand）
+- `app/`：应用级配置（router/queryClient/i18n）
+- `types/`：共享类型
 
-### TypeScript
-- 使用 `@/` 路径别名（vite.config.ts 中配置）：
-  ```typescript
-  import Dashboard from "@/pages/Dashboard";
-  import { useUIStore } from "@/stores/uiStore";
-  import { get } from "@/api/client";
-  ```
-- React 导入优先：`import { useState } from "react";`
-- 第三方库 → 本地模块
+要求：
+- 页面不直接拼接 API URL，统一走 `api/client.ts`。
+- 通用 UI 与业务 UI 分离（`components/ui` vs 业务组件）。
 
-## 代码模式
+## 3. API 与数据约定
 
-### Python 服务模式
+- 后端路由统一挂载在 `/api/*`。
+- 后端 schema 字段使用 `snake_case`（与数据库字段一致）；API 返回 `snake_case`，前端 TS 类型使用 `camelCase`。
+- 数据库存储字段使用 `snake_case`。
+- JSON 字符串字段使用 `_json` 后缀（如 `filters_json`）。
 
-服务类接受 `Session` 依赖注入，方法为 `async`：
+## 4. 导入与依赖
 
-```python
-class DiscoveryService:
-    def __init__(self, session: Session):
-        self.session = session
+### 4.1 Python
 
-    async def discover_from_rule(self, rule_id: int) -> list:
-        ...
-```
+- 导入分组：标准库 -> 第三方 -> 本地模块。
+- 禁止 `import *`。
+- 优先绝对导入：`from app.db import get_session`。
 
-### FastAPI 路由模式
+### 4.2 TypeScript
 
-每个路由文件定义 `router = APIRouter(prefix="/...", tags=["..."])`：
+- 使用 `@/` 别名导入本地模块。
+- 第三方包导入放在本地模块导入之前。
 
-```python
-from fastapi import APIRouter, Depends
-from sqlmodel import Session
-from app.db import get_session
+## 5. 错误处理与日志
 
-router = APIRouter(prefix="/mods", tags=["mods"])
+### 5.1 后端
 
-@router.get("", response_model=ModList)
-async def list_mods(
-    game: str | None = Query(default=None),
-    limit: int = Query(default=50, le=200),
-    session: Session = Depends(get_session),
-):
-    ...
-```
+- 参数与资源错误使用 `HTTPException` 明确返回码。
+- 外部调用异常要记录上下文日志，避免吞错。
+- 任务执行统一落 `JobRun`/日志，不在路由中静默失败。
 
-### Adapter 抽象模式
+### 5.2 前端
 
-所有外部站点适配器继承 `SourceAdapter` 抽象基类：
+- API 层统一抛错，页面层负责展示。
+- 用户可操作流程要有可见状态（loading/success/error）。
 
-```python
-from abc import ABC, abstractmethod
+## 6. 测试规范
 
-class SourceAdapter(ABC):
-    source_name: str
+### 6.1 后端（pytest）
 
-    @abstractmethod
-    async def discover(self, rule: Any) -> list[dict]: ...
+- 测试文件命名：`test_*.py`。
+- 测试目录：`backend/app/tests/`（主要测试）与 `backend/tests/`（根级 schema 测试）。
+- 异步测试使用 `pytest-asyncio`。
 
-    @abstractmethod
-    async def fetch_mod_detail(
-        self, external_id: str, game_domain: str | None = None
-    ) -> dict | None: ...
-```
+### 6.2 前端（Vitest）
 
-### TypeScript API 请求模式
+- 测试文件与组件同目录或 `__tests__` 目录。
+- UI 文案和交互行为都应有关键路径测试。
 
-所有 API 调用通过 `api/client.ts` 封装的 `get/post/put/del` 函数：
+## 7. 提交前检查
 
-```typescript
-// api/mods.ts
-import { get, post } from "./client";
-import type { ModItem } from "@/types";
+### 后端
 
-export const fetchMods = (params?: Record<string, string>) =>
-  get<ModItem[]>("/mods", params);
-```
-
-### TypeScript 组件模式
-
-页面和组件使用函数组件 + Hooks：
-
-```typescript
-const ModCard: React.FC<{ mod: ModItem; onFavorite: (id: number) => void }> = ({
-  mod,
-  onFavorite,
-}) => { ... };
-```
-
-### Zustand Store 模式
-
-```typescript
-export const useUIStore = create<UIState>((set) => ({
-  sidebarOpen: true,
-  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
-}));
-```
-
-### TanStack Query 配置
-
-默认配置 5 分钟 stale time，失败重试 1 次：
-```typescript
-// app/queryClient.ts
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { staleTime: 1000 * 60 * 5, retry: 1 },
-  },
-});
-```
-
-### 数据库会话模式
-
-使用生成器函数提供会话，FastAPI 依赖注入自动管理生命周期：
-
-```python
-def get_session() -> Generator[Session, None, None]:
-    with Session(engine) as session:
-        yield session
-```
-
-SQLite 特殊处理：`connect_args={"check_same_thread": False}`。
-
-## 错误处理
-
-### Python 后端
-- 大多数服务方法目前为骨架实现（`...` 占位）
-- FastAPI 自动处理 HTTP 异常
-- 调度任务通过 `_run_job_with_logging()` 包装器捕获异常并记录到 `JobRun` 表
-
-### TypeScript 前端
-- API client 层统一检查 `res.ok`，非 2xx 状态抛出 `Error`
-  ```typescript
-  if (!res.ok) {
-    throw new Error(`API Error: ${res.status} ${res.statusText}`);
-  }
-  ```
-- TanStack Query 自动处理请求错误，配置 `retry: 1`
-
-## 日志
-
-- 调度器计划使用 `_run_job_with_logging()` 包装器记录任务开始/结束
-- 当前处于早期阶段，日志基础设施尚未完全实现
-- 未来建议使用 Python `logging` 标准库 + 结构化日志
-
-## 测试
-
-### 命名与位置
-- 测试文件放在 `backend/app/tests/`，与源代码同目录层级
-- 文件名：`test_` + 被测试模块名，如 `test_filter_service.py`
-- 测试类：`Test` + 被测试类名，如 `TestFilterService`
-- 测试方法：`test_` + 场景描述，如 `test_filter_by_keywords_include`
-
-### 测试框架与模式
-- **框架**: pytest + pytest-asyncio
-- **Fixture 风格**: 类内 `@pytest.fixture` 方法
-- **异步测试**: 所有测试方法使用 `async def`
-- **测试类组织**:
-  ```python
-  class TestFilterService:
-      @pytest.fixture
-      def service(self):
-          from app.services.filter_service import FilterService
-          return FilterService()
-
-      async def test_filter_by_keywords_include(self, service):
-          """Mod title matches include keywords."""
-          ...
-  ```
-
-### 测试覆盖范围
-| 测试文件 | 覆盖模块 |
-|---|---|
-| `test_nexus_adapter.py` | NexusModsAdapter — 发现、详情获取、404 处理 |
-| `test_loverslab_feed_adapter.py` | LoversLabFeedAdapter — Feed 解析 |
-| `test_filter_service.py` | FilterService — 关键词、统计阈值、成人策略、去重 |
-| `test_update_tracking.py` | UpdateTrackingService — 版本变更检测、已读标记 |
-
-### 运行测试
 ```bash
 cd backend
-pip install -e .[dev]   # 安装 pytest, pytest-asyncio
-pytest app/tests/ -v
+pip install -e .[dev]
+pytest
 ```
 
-## 配置与格式化
+### 前端
 
-- **Python**: 使用 `pyproject.toml` 管理依赖（PEP 621），`setuptools` 构建后端
-- **TypeScript**: 使用 `tsconfig.json` + 项目引用（`tsconfig.app.json`, `tsconfig.node.json`）
-- **Tailwind**: `tailwind.config.js` 扫描 `./src/**/*.{js,ts,jsx,tsx}`
-- **Vite**: `vite.config.ts`，配置 `@` 路径别名和 `/api` 代理
-- **Linter/Formatter**: 前端有 `eslint` 脚本（`npm run lint`），后端暂无配置
-- **未配置**: 后端尚无 ruff/black/mypy 配置
+```bash
+cd frontend
+npm install
+npm run lint
+npm run test
+npm run build
+```
 
-## Do's and Don'ts
+## 8. 安全与配置
 
-### ✅ Do
-- 使用 `snake_case` 命名 Python 文件、函数、变量
-- 使用 `PascalCase` 命名 Python 类和 React 组件
-- 使用 `camelCase` 命名 TypeScript 函数、变量
-- 通过 `app/db.py` 的 `get_session()` 获取数据库会话
-- 外部站点接入必须创建独立 SourceAdapter，不直接依赖 HTML/API 结构
-- 列表字段在 SQLite 中以 `_json` 字符串存储
-- API 请求通过 `api/client.ts` 封装函数发送
-- 测试使用 `async def` + pytest fixture
-- 环境变量通过 `app/config.py` 的 `Settings` 类统一管理
-- 数组字段在代码中使用 `_json` 后缀命名（如 `sources_json`）
+- 禁止提交任何密钥、令牌、Webhook。
+- `.env` 仅本地使用，参考 `.env.example`。
+- 对敏感配置返回必须脱敏（例如 `********`）。
+- 默认本地模式下，遵循 `LOCAL_ONLY_API` 的访问限制设计。
 
-### ❌ Don't
-- 不要在业务服务中直接解析外部站点 HTML
-- 不要绕过 SourceAdapter 抽象直接调用外部 API
-- 不要在 Python 中使用 `camelCase` 命名数据库字段
-- 不要在 TypeScript 中使用 `snake_case` 命名属性（API 响应映射由前端自行处理）
-- 不要在 SQLite 字段中直接存储 Python list/dict（必须序列化为 JSON 字符串）
-- 不要硬编码 API URL 在前端组件中（使用 `client.ts` + 相对路径）
-- 不要将 API 密钥写入代码或提交到仓库
+## 9. 禁止事项
+
+- 不要在组件中直接写死后端地址。
+- 不要在 service 层做 UI 语义拼装。
+- 不要绕过 adapter 直接在其他层解析外部 HTML。
+- 不要把临时调试文件、日志、数据库产物提交到仓库。

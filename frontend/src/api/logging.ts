@@ -1,4 +1,4 @@
-import { get } from "./client";
+import { get, post } from "./client";
 
 export interface LogEntry {
   time: string;
@@ -19,4 +19,8 @@ export function fetchLogs(params?: {
   if (params?.search) query.search = params.search;
   if (params?.limit !== undefined) query.limit = String(params.limit);
   return get<{ entries: LogEntry[] }>("/logs", query);
+}
+
+export function openLogDirectory(): Promise<{ opened: boolean; path: string }> {
+  return post<{ opened: boolean; path: string }>("/logs/open-dir");
 }

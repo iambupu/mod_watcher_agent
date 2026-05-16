@@ -249,6 +249,19 @@ class TestGetRules:
         assert data[0]["name"] == "Skyrim Mods"
 
 
+class TestImportExportRules:
+    def test_export_rules_uses_static_route(self, client):
+        client.post("/api/rules", json=make_nexusmods_payload(name="Exported Rule"))
+
+        response = client.get("/api/rules/export")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["version"] == 1
+        assert data["rules"][0]["name"] == "Exported Rule"
+        assert data["rules"][0]["intervalMinutes"] == 360
+
+
 class TestDryRun:
     def test_test_rule_nexusmods_dry_run(self, client, mock_nexus_adapter):
         payload = make_nexusmods_payload(name="DryRun Test")

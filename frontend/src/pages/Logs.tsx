@@ -2,24 +2,20 @@ import React, { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
-  FileText,
-  Search,
-  LayoutDashboard,
-  Heart,
-  Bell,
-  Settings,
-  SlidersHorizontal,
   RefreshCw,
   ChevronDown,
   ChevronRight,
   Inbox,
   AlertCircle,
   Activity,
+  Settings2,
+  Link2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { fetchLogs } from "@/api/logging";
+import AppSidebar from "@/components/layout/AppSidebar";
+import { fetchLogs, openLogDirectory } from "@/api/logging";
 import { fetchJobRuns, fetchSchedulerStatus, type JobRun, type SchedulerJob } from "@/api/jobs";
 
 const levelBadge: Record<string, "default" | "info" | "warning" | "danger"> = {
@@ -28,25 +24,6 @@ const levelBadge: Record<string, "default" | "info" | "warning" | "danger"> = {
   WARNING: "warning",
   ERROR: "danger",
 };
-
-const NavLink: React.FC<{
-  href: string;
-  icon: React.ReactNode;
-  label: string;
-  active?: boolean;
-}> = ({ href, icon, label, active }) => (
-  <a
-    href={href}
-    className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-      active
-        ? "bg-blue-50 text-blue-700"
-        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-    }`}
-  >
-    {icon}
-    {label}
-  </a>
-);
 
 function LogSkeleton() {
   return (
@@ -112,31 +89,32 @@ const Logs: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="flex h-screen">
-        <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
-          <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
-            <img src="/mwlogo.png" alt="Mod Watcher" className="h-12 w-auto" />
-            <span className="text-lg font-bold text-gray-900">Mod Watcher</span>
-          </div>
-
-          <nav className="flex-1 px-3 py-4 space-y-1">
-            <NavLink href="/" icon={<LayoutDashboard size={18} />} label={t("nav.dashboard")} />
-            <NavLink href="/discover" icon={<Search size={18} />} label={t("nav.discover")} />
-            <NavLink href="/favorites" icon={<Heart size={18} />} label={t("nav.favorites")} />
-            <NavLink href="/updates" icon={<Bell size={18} />} label={t("nav.updates")} />
-            <NavLink href="/rules" icon={<SlidersHorizontal size={18} />} label={t("nav.rules")} />
-            <NavLink href="/logs" icon={<FileText size={18} />} label={t("nav.logs")} active />
-            <NavLink href="/settings" icon={<Settings size={18} />} label={t("nav.settings")} />
-          </nav>
-
-        </aside>
+        <AppSidebar active="logs" />
 
         <main className="flex-1 overflow-y-auto p-6">
           <div className="max-w-5xl mx-auto">
             <div className="mb-6 flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">{t("logs.title")}</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-2xl font-bold text-gray-900">{t("logs.title")}</h2>
+                  <button
+                    type="button"
+                    title="打开日志目录"
+                    onClick={async () => {
+                      try {
+                        await openLogDirectory();
+                      } catch {
+                        // Keep UI quiet; this is a convenience shortcut only.
+                      }
+                    }}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  >
+                    <Link2 size={13} />
+                  </button>
+                </div>
                 <p className="text-sm text-gray-500 mt-1">
                   {t("common.total", { total: entries.length })}
+                  <span className="ml-2 text-xs text-gray-400">本地时区显示</span>
                   {isFetching && (
                     <span className="ml-2 text-blue-500 text-xs">
                       {t("logs.autoRefresh")}
@@ -230,7 +208,7 @@ const Logs: React.FC = () => {
                         <TaskRow
                           key={task.id}
                           task={task}
-                          schedulerJob={findSchedulerJob(task.job_name, schedulerJobs)}
+                          schedulerJob={findSchedulerJob(task, schedulerJobs)}
                           showNextRun={activeTab === "finished"}
                         />
                       ))}
@@ -340,11 +318,18 @@ const SCHEDULED_JOB_MATCHERS: Array<{ ids: string[]; names: string[] }> = [
   },
 ];
 
-function findSchedulerJob(jobName: string, schedulerJobs: SchedulerJob[]): SchedulerJob | undefined {
-  const normalized = jobName.toLowerCase();
+function findSchedulerJob(task: JobRun, schedulerJobs: SchedulerJob[]): SchedulerJob | undefined {
+  const normalized = task.job_name.toLowerCase();
   if (normalized === "run_rule_discovery") {
-    const dynamicRuleJob = schedulerJobs.find((job) => job.id.startsWith("discover_rule_"));
-    if (dynamicRuleJob) return dynamicRuleJob;
+    const metadata = parseTaskMetadata(task.metadata_json);
+    const ruleId = Number(metadata.rule_id || 0);
+    if (ruleId > 0) {
+      const exactRuleJobId = `discover_rule_${ruleId}`;
+      const exact = schedulerJobs.find((job) => job.id === exactRuleJobId);
+      if (exact) return exact;
+    }
+    const fallback = schedulerJobs.find((job) => job.id.startsWith("discover_rule_"));
+    if (fallback) return fallback;
   }
   const matcher = SCHEDULED_JOB_MATCHERS.find((item) => item.names.includes(normalized));
   if (matcher) {
@@ -362,6 +347,13 @@ function TaskRow({
   schedulerJob?: SchedulerJob;
   showNextRun: boolean;
 }) {
+  const metadata = parseTaskMetadata(task.metadata_json);
+  const ruleId = Number(metadata.rule_id || 0);
+  const ruleName = String(metadata.rule_name || "");
+  const llmModel = String(metadata.llm_model || metadata.model || "");
+  const isRuleRun = task.job_name === "run_rule_discovery";
+  const isLlmTask = task.job_name.startsWith("llm_") || task.job_name.includes("summary");
+
   return (
     <div className="px-4 py-3">
       <div className="flex items-center gap-3">
@@ -371,6 +363,25 @@ function TaskRow({
         <span className="text-sm font-semibold text-gray-900">{task.job_name}</span>
         <span className="ml-auto text-xs text-gray-500">{formatLogTime(task.started_at)}</span>
       </div>
+      {isRuleRun && ruleName && (
+        <div className="mt-2 flex items-center gap-2 text-xs text-gray-700">
+          {ruleId > 0 && (
+            <a
+              href={`/rules/${ruleId}/edit`}
+              className="inline-flex items-center justify-center rounded-md border border-gray-300 px-2 py-1 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              <Settings2 size={12} />
+              <span className="ml-1">规则设置</span>
+            </a>
+          )}
+          <span>规则：<span className="font-medium">{ruleName}</span></span>
+        </div>
+      )}
+      {isLlmTask && llmModel && (
+        <div className="mt-2 text-xs text-gray-700">
+          模型：<span className="font-medium">{llmModel}</span>
+        </div>
+      )}
       <div className="mt-2 grid grid-cols-2 gap-3 text-xs text-gray-500 md:grid-cols-4">
         <span>扫描 {task.items_scanned}</span>
         <span>匹配 {task.items_matched}</span>
@@ -389,7 +400,17 @@ function TaskRow({
 function formatLogTime(value?: string): string {
   if (!value) return "-";
   const normalized = value.includes("T") ? value : value.replace(" ", "T");
-  const date = new Date(normalized.endsWith("Z") || normalized.includes("+") ? normalized : `${normalized}Z`);
+  const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+function parseTaskMetadata(raw?: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }

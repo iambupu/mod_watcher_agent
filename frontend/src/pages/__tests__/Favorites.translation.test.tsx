@@ -76,7 +76,8 @@ describe('Favorites - translated_summary display', () => {
     renderFavorites();
 
     await waitFor(() => {
-      expect(screen.getByText('这是翻译后的摘要内容。')).toBeInTheDocument();
+      // Bilingual mode concatenates translated + original, so use substring match
+      expect(screen.getByText(/这是翻译后的摘要内容。/)).toBeInTheDocument();
     });
   });
 

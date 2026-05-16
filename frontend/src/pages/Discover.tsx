@@ -3,43 +3,21 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search,
-  LayoutDashboard,
-  Heart,
-  Bell,
-  Settings,
-  SlidersHorizontal,
   Play,
   Loader2,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
-  FileText,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import AppSidebar from "@/components/layout/AppSidebar";
 import { ModCard } from "@/components/ModCard";
 import { fetchModGames, fetchMods, generateModIntroduction, ignoreMod, regenerateModSummary } from "@/api/mods";
 import { fetchJobRun, runDiscoveryAll } from "@/api/jobs";
 import { addFavorite, fetchFavorites, removeFavorite } from "@/api/favorites";
 import { useUIStore } from "@/stores/uiStore";
 import type { Favorite, ModSource, AdultPolicy, SummaryMode } from "@/types";
-
-const NavLink: React.FC<{ href: string; icon: React.ReactNode; label: string; active?: boolean }> = ({
-  href,
-  icon,
-  label,
-  active,
-}) => (
-  <a
-    href={href}
-    className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-      active ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-    }`}
-  >
-    {icon}
-    {label}
-  </a>
-);
 
 const PAGE_SIZE = 24;
 
@@ -86,6 +64,7 @@ const Discover: React.FC = () => {
   const [page, setPage] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
   const [lastResult, setLastResult] = useState("");
+  const [regeneratingSummaryIds, setRegeneratingSummaryIds] = useState<Set<number>>(new Set());
 
   const offset = (page - 1) * PAGE_SIZE;
 
@@ -209,9 +188,25 @@ const Discover: React.FC = () => {
 
   const regenerateSummaryMutation = useMutation({
     mutationFn: regenerateModSummary,
+    onMutate: async (modId: number) => {
+      setRegeneratingSummaryIds((prev) => {
+        const next = new Set(prev);
+        next.add(modId);
+        return next;
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mods"] });
       setTimeout(() => queryClient.invalidateQueries({ queryKey: ["mods"] }), 5000);
+    },
+    onSettled: (_data, _error, modId) => {
+      setRegeneratingSummaryIds((prev) => {
+        const next = new Set(prev);
+        if (typeof modId === "number") {
+          next.delete(modId);
+        }
+        return next;
+      });
     },
   });
 
@@ -300,21 +295,7 @@ const Discover: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="flex h-screen">
-        <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
-          <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
-            <img src="/mwlogo.png" alt="Mod Watcher" className="h-12 w-auto" />
-            <span className="text-lg font-bold text-gray-900">Mod Watcher</span>
-          </div>
-          <nav className="flex-1 px-3 py-4 space-y-1">
-            <NavLink href="/" icon={<LayoutDashboard size={18} />} label={t("nav.dashboard")} />
-            <NavLink href="/discover" icon={<Search size={18} />} label={t("nav.discover")} active />
-            <NavLink href="/favorites" icon={<Heart size={18} />} label={t("nav.favorites")} />
-            <NavLink href="/updates" icon={<Bell size={18} />} label={t("nav.updates")} />
-            <NavLink href="/rules" icon={<SlidersHorizontal size={18} />} label={t("nav.rules")} />
-            <NavLink href="/logs" icon={<FileText size={18} />} label={t("nav.logs")} />
-            <NavLink href="/settings" icon={<Settings size={18} />} label={t("nav.settings")} />
-          </nav>
-        </aside>
+        <AppSidebar active="discover" />
 
         <main className="flex-1 overflow-y-auto">
           <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 px-6 py-3 flex items-center justify-between">
@@ -451,7 +432,7 @@ const Discover: React.FC = () => {
                       onToggleFavorite={() => handleToggleFavorite(mod.id)}
                       onIgnore={() => handleIgnore(mod.id)}
                       onRegenerateSummary={() => handleRegenerateSummary(mod.id)}
-                      regeneratingSummary={regenerateSummaryMutation.isPending && regenerateSummaryMutation.variables === mod.id}
+                      regeneratingSummary={regeneratingSummaryIds.has(mod.id)}
                       onGenerateIntroduction={() => handleGenerateIntroduction(mod.id)}
                       generatingIntroduction={generateIntroductionMutation.isPending && generateIntroductionMutation.variables === mod.id}
                     />

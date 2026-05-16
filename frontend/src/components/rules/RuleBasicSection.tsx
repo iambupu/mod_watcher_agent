@@ -38,7 +38,19 @@ export const RuleBasicSection: React.FC = () => {
         min={1}
         max={1440}
         value={intervalMinutes}
-        onChange={(e) => setBasicInfo({ intervalMinutes: Number(e.target.value) })}
+        onChange={(e) => {
+          const raw = e.target.value.trim();
+          if (!raw) {
+            setBasicInfo({ intervalMinutes: 360 });
+            return;
+          }
+          const parsed = Number(raw);
+          if (!Number.isFinite(parsed) || parsed < 1) {
+            setBasicInfo({ intervalMinutes: 360 });
+            return;
+          }
+          setBasicInfo({ intervalMinutes: Math.min(1440, Math.floor(parsed)) });
+        }}
       />
     </div>
   );

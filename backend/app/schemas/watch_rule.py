@@ -120,7 +120,7 @@ class WatchRuleRead(BaseModel):
     id: int
     name: str
     enabled: bool
-    intervalMinutes: int
+    intervalMinutes: int = Field(default=360, ge=1, le=1440, description="Polling interval for this rule in minutes")
     source: Literal["nexusmods", "loverslab"]
     sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig
     filters: CommonRuleFilters

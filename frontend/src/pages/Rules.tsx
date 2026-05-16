@@ -4,48 +4,30 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   SlidersHorizontal,
-  Search,
-  LayoutDashboard,
-  Heart,
-  Bell,
-  Settings,
   Plus,
   Play,
   Edit,
   Trash2,
   Loader2,
-  FileText,
+  Download,
+  Upload,
+  Link2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import AppSidebar from "@/components/layout/AppSidebar";
 import {
   fetchRules,
   deleteRule,
   runRule,
   toggleRule,
+  exportRules,
+  importRulesByUrl,
+  importRulesFromLocalFile,
 } from "@/api/rules";
-import { fetchJobRun } from "@/api/jobs";
+import { fetchJobRun, fetchJobRuns } from "@/api/jobs";
 import type { WatchRule, ModSource } from "@/types";
-
-const NavLink: React.FC<{
-  href: string;
-  icon: React.ReactNode;
-  label: string;
-  active?: boolean;
-}> = ({ href, icon, label, active }) => (
-  <a
-    href={href}
-    className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-      active
-        ? "bg-blue-50 text-blue-700"
-        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-    }`}
-  >
-    {icon}
-    {label}
-  </a>
-);
 
 const Rules: React.FC = () => {
   const { t } = useTranslation();
@@ -54,6 +36,7 @@ const Rules: React.FC = () => {
 
   const [deleteTarget, setDeleteTarget] = useState<WatchRule | null>(null);
   const [runStatus, setRunStatus] = useState<Record<number, string>>({});
+  const [isImporting, setIsImporting] = useState(false);
 
   const {
     data: rules = [],
@@ -63,6 +46,11 @@ const Rules: React.FC = () => {
   } = useQuery({
     queryKey: ["rules"],
     queryFn: fetchRules,
+  });
+  const { data: recentJobRuns } = useQuery({
+    queryKey: ["job-runs-for-rules"],
+    queryFn: () => fetchJobRuns(200),
+    refetchInterval: 10000,
   });
 
   const deleteMutation = useMutation({
@@ -139,67 +127,114 @@ const Rules: React.FC = () => {
     runMutation.mutate(ruleId);
   };
 
+  const latestRunByRuleId = React.useMemo(() => {
+    const map = new Map<number, string>();
+    const items = recentJobRuns?.items ?? [];
+    for (const job of items) {
+      if (job.job_name !== "run_rule_discovery") continue;
+      const raw = job.metadata_json;
+      if (!raw) continue;
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        parsed = {};
+      }
+      const ruleId = Number(parsed.rule_id || 0);
+      if (!ruleId || map.has(ruleId)) continue;
+      map.set(ruleId, job.finished_at || job.started_at);
+    }
+    return map;
+  }, [recentJobRuns?.items]);
+
+  const formatTime = (value?: string) => {
+    if (!value) return "未执行";
+    const normalized = value.includes("T") ? value : value.replace(" ", "T");
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  };
+
+  const handleExport = async () => {
+    const payload = await exportRules();
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `mod_watcher_rules_${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const refreshAfterImport = () => {
+    queryClient.invalidateQueries({ queryKey: ["rules"] });
+    queryClient.invalidateQueries({ queryKey: ["job-runs-for-rules"] });
+  };
+
+  const handleImportByUrl = async () => {
+    const url = window.prompt(t("rules.importByUrl"));
+    if (!url) return;
+    setIsImporting(true);
+    try {
+      const result = await importRulesByUrl(url);
+      alert(`导入完成：成功 ${result.imported}，跳过 ${result.skipped}`);
+      refreshAfterImport();
+    } catch (err) {
+      alert((err as Error).message || "导入失败");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleImportLocal: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setIsImporting(true);
+    try {
+      const result = await importRulesFromLocalFile(file);
+      alert(`导入完成：成功 ${result.imported}，跳过 ${result.skipped}`);
+      refreshAfterImport();
+    } catch (err) {
+      alert((err as Error).message || "导入失败");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="flex h-screen">
-        <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
-          <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
-            <img src="/mwlogo.png" alt="Mod Watcher" className="h-12 w-auto" />
-            <span className="text-lg font-bold text-gray-900">Mod Watcher</span>
-          </div>
-
-          <nav className="flex-1 px-3 py-4 space-y-1">
-            <NavLink
-              href="/"
-              icon={<LayoutDashboard size={18} />}
-              label={t("nav.dashboard")}
-            />
-            <NavLink
-              href="/discover"
-              icon={<Search size={18} />}
-              label={t("nav.discover")}
-            />
-            <NavLink
-              href="/favorites"
-              icon={<Heart size={18} />}
-              label={t("nav.favorites")}
-            />
-            <NavLink
-              href="/updates"
-              icon={<Bell size={18} />}
-              label={t("nav.updates")}
-            />
-            <NavLink
-              href="/rules"
-              icon={<SlidersHorizontal size={18} />}
-              label={t("nav.rules")}
-              active
-            />
-            <NavLink
-              href="/logs"
-              icon={<FileText size={18} />}
-              label={t("nav.logs")}
-            />
-            <NavLink
-              href="/settings"
-              icon={<Settings size={18} />}
-              label={t("nav.settings")}
-            />
-          </nav>
-
-        </aside>
+        <AppSidebar active="rules" />
 
         <main className="flex-1 overflow-y-auto p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-2xl font-bold text-gray-900">
               {t("rules.title")}
             </h2>
-            <Button
-              onClick={() => navigate("/rules/new")}
-            >
-              <Plus size={16} />
-              <span className="ml-1">{t("common.create")}</span>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={handleExport}>
+                <Download size={16} />
+                <span className="ml-1">导出</span>
+              </Button>
+              <label className="inline-flex">
+                <input type="file" accept="application/json,.json" className="hidden" onChange={handleImportLocal} />
+                <Button variant="outline" disabled={isImporting}>
+                  <Upload size={16} />
+                  <span className="ml-1">本地导入</span>
+                </Button>
+              </label>
+              <Button variant="outline" onClick={handleImportByUrl} disabled={isImporting}>
+                <Link2 size={16} />
+                <span className="ml-1">URL导入</span>
+              </Button>
+              <Button onClick={() => navigate("/rules/new")}>
+                <Plus size={16} />
+                <span className="ml-1">{t("common.create")}</span>
+              </Button>
+            </div>
           </div>
 
           {isLoading ? (
@@ -260,16 +295,15 @@ const Rules: React.FC = () => {
                           <h3 className="font-medium text-gray-900">
                             {rule.name}
                           </h3>
-                          <div className="flex gap-1 flex-wrap mt-0.5">
+                          <div className="flex gap-1 flex-wrap mt-1">
                             <Badge variant={getSourceBadgeVariant(rule.source)}>
                               {rule.source}
                             </Badge>
-                            {rule.filters?.includeKeywords &&
-                              rule.filters.includeKeywords.length > 0 && (
-                                <span className="text-xs text-gray-500">
-                                  +{rule.filters.includeKeywords.join(", ")}
-                                </span>
-                              )}
+                          </div>
+                          <div className="mt-1 text-xs text-gray-500">
+                            最近执行：{formatTime(latestRunByRuleId.get(rule.id))}
+                            <span className="mx-2">·</span>
+                            执行间隔：{rule.intervalMinutes} 分钟
                           </div>
                         </div>
                       </div>

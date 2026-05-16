@@ -109,3 +109,30 @@ export async function testRule(
 ): Promise<RuleTestResponse> {
   return post<RuleTestResponse>("/rules/test", data);
 }
+
+export async function exportRules(): Promise<{ version: number; exportedAt: string; rules: WatchRuleCreate[] }> {
+  return get<{ version: number; exportedAt: string; rules: WatchRuleCreate[] }>("/rules/export");
+}
+
+export async function importRulesByUrl(url: string): Promise<{ imported: number; skipped: number }> {
+  return post<{ imported: number; skipped: number }>("/rules/import", { url });
+}
+
+export async function importRulesFromLocalFile(file: File): Promise<{ imported: number; skipped: number }> {
+  const text = await file.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("Invalid JSON file");
+  }
+  const rules = Array.isArray(parsed)
+    ? parsed
+    : (parsed && typeof parsed === "object" && Array.isArray((parsed as { rules?: unknown[] }).rules)
+      ? (parsed as { rules: unknown[] }).rules
+      : null);
+  if (!rules) {
+    throw new Error("JSON must be an array or an object with 'rules' array");
+  }
+  return post<{ imported: number; skipped: number }>("/rules/import", { rules });
+}

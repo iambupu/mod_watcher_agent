@@ -28,6 +28,9 @@ interface BackendSettings {
   summary_mode: string;
   summary_report_interval_minutes: string;
   summary_report_prompt: string;
+  watchdog_check_interval_minutes: string;
+  watchdog_grace_minutes: string;
+  watchdog_max_catchup_per_run: string;
   auto_start: string;
   notifications_enabled: string;
   system_notifications_enabled: string;
@@ -85,6 +88,9 @@ function mapBackendToSettings(data: SettingsResponse): UserSettings {
     summaryMode: (s.summary_mode as SummaryMode) || "bilingual",
     summaryReportIntervalMinutes: Number(s.summary_report_interval_minutes) || 0,
     summaryReportPrompt: s.summary_report_prompt || "",
+    watchdogCheckIntervalMinutes: Number(s.watchdog_check_interval_minutes) || 10,
+    watchdogGraceMinutes: Number(s.watchdog_grace_minutes) || 60,
+    watchdogMaxCatchupPerRun: Number(s.watchdog_max_catchup_per_run) || 3,
     nexusApiKey: s.nexus_api_key || "",
     llmProvider: (s.llm_provider as LlmProvider) || "openai",
     llmModel: s.llm_model || "",
@@ -116,6 +122,9 @@ function mapSettingsToBackend(s: Partial<UserSettings>): { settings: Partial<Bac
   if (s.summaryMode !== undefined) settings.summary_mode = s.summaryMode;
   if (s.summaryReportIntervalMinutes !== undefined) settings.summary_report_interval_minutes = String(s.summaryReportIntervalMinutes);
   if (s.summaryReportPrompt !== undefined) settings.summary_report_prompt = s.summaryReportPrompt;
+  if (s.watchdogCheckIntervalMinutes !== undefined) settings.watchdog_check_interval_minutes = String(s.watchdogCheckIntervalMinutes);
+  if (s.watchdogGraceMinutes !== undefined) settings.watchdog_grace_minutes = String(s.watchdogGraceMinutes);
+  if (s.watchdogMaxCatchupPerRun !== undefined) settings.watchdog_max_catchup_per_run = String(s.watchdogMaxCatchupPerRun);
   if (s.nexusApiKey !== undefined) settings.nexus_api_key = s.nexusApiKey;
   if (s.llmProvider !== undefined) settings.llm_provider = s.llmProvider;
   if (s.llmModel !== undefined) settings.llm_model = s.llmModel;

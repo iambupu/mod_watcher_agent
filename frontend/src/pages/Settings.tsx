@@ -1,31 +1,15 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Settings as SettingsIcon, Search, LayoutDashboard, Heart, Bell, SlidersHorizontal, FileText, Loader2, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Loader2, ArrowUp, ArrowDown } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import AppSidebar from "@/components/layout/AppSidebar";
 
 import { NotificationSettings } from "@/components/NotificationSettings";
 import { DEFAULT_PROVIDER_BASE_URLS, fetchSettings, updateSettings, testLlmProviders, testTelegram, testDiscord, exportSettings, importSettings, type LlmProviderTestResult } from "@/api/settings";
 import type { UserSettings, UILanguage, LlmProvider, LlmProviderConfig } from "@/types";
-
-const NavLink: React.FC<{ href: string; icon: React.ReactNode; label: string; active?: boolean }> = ({
-  href,
-  icon,
-  label,
-  active,
-}) => (
-  <a
-    href={href}
-    className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-      active ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-    }`}
-  >
-    {icon}
-    {label}
-  </a>
-);
 
 const PROVIDER_OPTIONS: { provider: LlmProvider; label: string; defaultModel: string }[] = [
   { provider: "ollama", label: "Ollama (Local)", defaultModel: "qwen3:8b" },
@@ -69,6 +53,9 @@ const Settings: React.FC = () => {
   const [summaryLanguage, setSummaryLanguage] = useState<UILanguage>("zh-CN");
   const [summaryReportInterval, setSummaryReportInterval] = useState(0);
   const [summaryReportPrompt, setSummaryReportPrompt] = useState("");
+  const [watchdogCheckInterval, setWatchdogCheckInterval] = useState(10);
+  const [watchdogGraceMinutes, setWatchdogGraceMinutes] = useState(60);
+  const [watchdogMaxCatchupPerRun, setWatchdogMaxCatchupPerRun] = useState(3);
   const [nexusApiKey, setNexusApiKey] = useState("");
   const [llmProvider, setLlmProvider] = useState<LlmProvider>("openai");
   const [llmModel, setLlmModel] = useState("");
@@ -96,7 +83,6 @@ const Settings: React.FC = () => {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [proxyErrors, setProxyErrors] = useState<{ host?: string; port?: string }>({});
   const [importMsg, setImportMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -106,6 +92,9 @@ const Settings: React.FC = () => {
       setSummaryLanguage(settings.summaryLanguage);
       setSummaryReportInterval(settings.summaryReportIntervalMinutes);
       setSummaryReportPrompt(settings.summaryReportPrompt);
+      setWatchdogCheckInterval(settings.watchdogCheckIntervalMinutes);
+      setWatchdogGraceMinutes(settings.watchdogGraceMinutes);
+      setWatchdogMaxCatchupPerRun(settings.watchdogMaxCatchupPerRun);
       setNexusApiKey(settings.nexusApiKey);
       setLlmProvider(settings.llmProvider);
       setLlmModel(settings.llmModel);
@@ -154,6 +143,9 @@ const Settings: React.FC = () => {
       summaryLanguage,
       summaryReportIntervalMinutes: summaryReportInterval,
       summaryReportPrompt,
+      watchdogCheckIntervalMinutes: watchdogCheckInterval,
+      watchdogGraceMinutes,
+      watchdogMaxCatchupPerRun,
       nexusApiKey,
       llmProvider,
       llmModel,
@@ -271,50 +263,10 @@ const Settings: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="flex h-screen">
-        {sidebarOpen && (
-        <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <div className="flex items-center gap-2">
-              <img src="/mwlogo.png" alt="Mod Watcher" className="h-12 w-auto" />
-              <span className="text-lg font-bold text-gray-900">Mod Watcher</span>
-              <button
-                type="button"
-                onClick={() => setSidebarOpen(false)}
-                className="ml-auto rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
-                title={t("settings.hideSidebar")}
-                aria-label={t("settings.hideSidebar")}
-              >
-                <PanelLeftClose size={18} />
-              </button>
-            </div>
-          </div>
-
-          <nav className="flex-1 px-3 py-4 space-y-1">
-            <NavLink href="/" icon={<LayoutDashboard size={18} />} label={t("nav.dashboard")} />
-            <NavLink href="/discover" icon={<Search size={18} />} label={t("nav.discover")} />
-            <NavLink href="/favorites" icon={<Heart size={18} />} label={t("nav.favorites")} />
-            <NavLink href="/updates" icon={<Bell size={18} />} label={t("nav.updates")} />
-            <NavLink href="/rules" icon={<SlidersHorizontal size={18} />} label={t("nav.rules")} />
-            <NavLink href="/logs" icon={<FileText size={18} />} label={t("nav.logs")} />
-            <NavLink href="/settings" icon={<SettingsIcon size={18} />} label={t("nav.settings")} active />
-          </nav>
-
-        </aside>
-        )}
+        <AppSidebar active="settings" />
 
         <main className="flex-1 overflow-y-auto p-6">
           <div className="mb-6 flex items-center gap-3">
-            {!sidebarOpen && (
-              <button
-                type="button"
-                onClick={() => setSidebarOpen(true)}
-                className="rounded-md border border-gray-300 bg-white p-2 text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                title={t("settings.showSidebar")}
-                aria-label={t("settings.showSidebar")}
-              >
-                <PanelLeftOpen size={18} />
-              </button>
-            )}
             <h2 className="text-2xl font-bold text-gray-900">{t("settings.title")}</h2>
           </div>
 
@@ -388,6 +340,39 @@ const Settings: React.FC = () => {
 
             <Card>
               <CardHeader>
+                <h3 className="font-semibold">{t("settings.watchdog")}</h3>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Input
+                  label={t("settings.watchdogCheckInterval")}
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={watchdogCheckInterval}
+                  onChange={(e) => setWatchdogCheckInterval(Math.max(1, Number(e.target.value) || 10))}
+                />
+                <Input
+                  label={t("settings.watchdogGraceMinutes")}
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={watchdogGraceMinutes}
+                  onChange={(e) => setWatchdogGraceMinutes(Math.max(1, Number(e.target.value) || 60))}
+                />
+                <Input
+                  label={t("settings.watchdogMaxCatchupPerRun")}
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={watchdogMaxCatchupPerRun}
+                  onChange={(e) => setWatchdogMaxCatchupPerRun(Math.max(1, Number(e.target.value) || 3))}
+                />
+                <p className="text-xs text-gray-500">{t("settings.watchdogHint")}</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
                 <h3 className="font-semibold">{t("settings.credentials")}</h3>
               </CardHeader>
               <CardContent>
@@ -430,10 +415,10 @@ const Settings: React.FC = () => {
                           />
                           <span className="text-sm font-semibold text-gray-900">{provider.priority}. {option?.label ?? provider.provider}</span>
                           <button type="button" onClick={() => moveProvider(provider.provider, -1)} disabled={index === 0} className="ml-auto rounded border px-2 py-1 text-xs disabled:opacity-40">
-                            {t("settings.priorityUp")}
+                            <ArrowUp size={14} />
                           </button>
                           <button type="button" onClick={() => moveProvider(provider.provider, 1)} disabled={index === llmProviders.length - 1} className="rounded border px-2 py-1 text-xs disabled:opacity-40">
-                            {t("settings.priorityDown")}
+                            <ArrowDown size={14} />
                           </button>
                           {result && (
                             <span
@@ -445,30 +430,34 @@ const Settings: React.FC = () => {
                             </span>
                           )}
                         </div>
-                        <div className="grid gap-3 md:grid-cols-3">
-                          <Input
-                            label={t("settings.llmModel")}
-                            value={provider.model}
-                            onChange={(e) => updateProvider(provider.provider, { model: e.target.value })}
-                            placeholder={option?.defaultModel ?? t("settings.llmModelPlaceholder")}
-                          />
-                          <Input
-                            label={t("settings.llmApiKey")}
-                            type="password"
-                            value={provider.apiKey}
-                            onChange={(e) => updateProvider(provider.provider, { apiKey: e.target.value })}
-                            placeholder={provider.provider === "ollama" ? t("settings.optional") : t("settings.llmApiKeyPlaceholder")}
-                          />
-                          <Input
-                            label={t("settings.llmBaseUrl")}
-                            value={provider.baseUrl}
-                            onChange={(e) => updateProvider(provider.provider, { baseUrl: e.target.value })}
-                            placeholder={DEFAULT_PROVIDER_BASE_URLS[provider.provider]}
-                          />
-                        </div>
-                        <p className="mt-2 text-xs text-gray-500">
-                          {t("settings.defaultBaseUrl")}: {DEFAULT_PROVIDER_BASE_URLS[provider.provider]}
-                        </p>
+                        {provider.enabled && (
+                          <>
+                            <div className="grid gap-3 md:grid-cols-3">
+                              <Input
+                                label={t("settings.llmModel")}
+                                value={provider.model}
+                                onChange={(e) => updateProvider(provider.provider, { model: e.target.value })}
+                                placeholder={option?.defaultModel ?? t("settings.llmModelPlaceholder")}
+                              />
+                              <Input
+                                label={t("settings.llmApiKey")}
+                                type="password"
+                                value={provider.apiKey}
+                                onChange={(e) => updateProvider(provider.provider, { apiKey: e.target.value })}
+                                placeholder={provider.provider === "ollama" ? t("settings.optional") : t("settings.llmApiKeyPlaceholder")}
+                              />
+                              <Input
+                                label={t("settings.llmBaseUrl")}
+                                value={provider.baseUrl}
+                                onChange={(e) => updateProvider(provider.provider, { baseUrl: e.target.value })}
+                                placeholder={DEFAULT_PROVIDER_BASE_URLS[provider.provider]}
+                              />
+                            </div>
+                            <p className="mt-2 text-xs text-gray-500">
+                              {t("settings.defaultBaseUrl")}: {DEFAULT_PROVIDER_BASE_URLS[provider.provider]}
+                            </p>
+                          </>
+                        )}
                         {result && (
                           <p className={`mt-1 rounded-md px-2 py-1 text-xs ${result.success ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
                             {result.success ? "测试成功" : "失败原因"}: {result.message}

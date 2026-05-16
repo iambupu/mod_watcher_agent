@@ -9,7 +9,7 @@ vi.mock('@/api/settings', () => ({
 describe('useSettingsSync', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useUIStore.setState({ summaryMode: 'original' });
+    useUIStore.setState({ summaryMode: 'original', settingsSyncedAt: 0 });
   });
 
   it('should fetch settings and update summaryMode in uiStore', async () => {
@@ -47,5 +47,24 @@ describe('useSettingsSync', () => {
 
     const state = useUIStore.getState();
     expect(state.summaryMode).toBe('original');
+  });
+
+  it('should not fetch settings again within sync ttl', async () => {
+    const { getSettings } = await import('@/api/settings');
+    (getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      summaryMode: 'translated',
+    });
+
+    const { useSettingsSync } = await import('@/hooks/useSettingsSync');
+    renderHook(() => useSettingsSync());
+    await waitFor(() => {
+      expect(getSettings).toHaveBeenCalledTimes(1);
+    });
+
+    renderHook(() => useSettingsSync());
+    await waitFor(() => {
+      expect(useUIStore.getState().settingsSyncedAt).toBeGreaterThan(0);
+    });
+    expect(getSettings).toHaveBeenCalledTimes(1);
   });
 });
