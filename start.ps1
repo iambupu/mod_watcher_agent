@@ -1,5 +1,6 @@
 param(
     [switch]$Tray,
+    [switch]$DetachedTray,
     [switch]$Stop,
     [switch]$Status,
     [switch]$DevMode
@@ -29,22 +30,81 @@ function Test-LocalPortReady {
 }
 
 function Get-SystemPython {
+    if ($env:MW_PYTHON) {
+        if (Test-Path $env:MW_PYTHON) {
+            & $env:MW_PYTHON -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" *> $null
+            if ($LASTEXITCODE -eq 0) {
+                return @($env:MW_PYTHON)
+            }
+        }
+    }
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        return @("py", "-3")
+        $oldErrPref = $ErrorActionPreference
+        $oldNativePref = $null
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $oldNativePref = $PSNativeCommandUseErrorActionPreference
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        $pyList = @()
+        try {
+            $ErrorActionPreference = "Continue"
+            $pyList = @(& py -0p 2>&1)
+        } catch {
+            $pyList = @()
+        } finally {
+            $ErrorActionPreference = $oldErrPref
+            if ($null -ne $oldNativePref) {
+                $PSNativeCommandUseErrorActionPreference = $oldNativePref
+            }
+        }
+        if ($LASTEXITCODE -eq 0 -and $pyList) {
+            $candidates = @()
+            foreach ($line in $pyList) {
+                if ($line -match '^\s*-(\d+)\.(\d+)(?:-(32|64))?\s+(.+)$') {
+                    $major = [int]$Matches[1]
+                    $minor = [int]$Matches[2]
+                    $arch = $Matches[3]
+                    $selector = if ($arch) { "-$major.$minor-$arch" } else { "-$major.$minor" }
+                    $candidates += [PSCustomObject]@{
+                        Major = $major
+                        Minor = $minor
+                        Selector = $selector
+                    }
+                }
+            }
+            $sorted = $candidates |
+                Where-Object { $_.Major -ge 3 } |
+                Sort-Object Major, Minor -Descending
+            foreach ($candidate in $sorted) {
+                & py $candidate.Selector -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" *> $null
+                if ($LASTEXITCODE -eq 0) {
+                    return @("py", $candidate.Selector)
+                }
+            }
+        }
     }
     if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @("python")
+        & python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" *> $null
+        if ($LASTEXITCODE -eq 0) {
+            return @("python")
+        }
     }
     return $null
 }
 
 function Ensure-Venv {
     if (Test-Path $venvPython) {
-        return
+        & $venvPython -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" *> $null
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+        Write-Host "[!] Existing .venv is not Python 3.11+; recreating..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force -LiteralPath $venvDir
     }
     $systemPython = Get-SystemPython
     if ($null -eq $systemPython) {
-        Write-Host "[X] Python 3.11+ required" -ForegroundColor Red
+        Write-Host "[X] Python 3.11+ required (Python 3.9 is not supported)." -ForegroundColor Red
+        Write-Host "    Install Python 3.11/3.12/3.13 and retry." -ForegroundColor Yellow
         if (-not $Tray) { Pause }
         exit 1
     }
@@ -69,15 +129,35 @@ function Ensure-EnvFile {
 }
 
 function Ensure-BackendDependencies {
-    & $venvPython -c "import uvicorn, pystray, PIL" 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    $depsReady = $false
+    $oldErrPref = $ErrorActionPreference
+    $oldNativePref = $null
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $oldNativePref = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    try {
+        $ErrorActionPreference = "Continue"
+        & $venvPython -c "import uvicorn, pystray, PIL" *> $null
+        $depsReady = ($LASTEXITCODE -eq 0)
+    } catch {
+        $depsReady = $false
+    } finally {
+        $ErrorActionPreference = $oldErrPref
+        if ($null -ne $oldNativePref) {
+            $PSNativeCommandUseErrorActionPreference = $oldNativePref
+        }
+    }
+    if ($depsReady) {
         Write-Host "[1/3] Backend dependencies OK" -ForegroundColor Gray
         return
     }
     Write-Host "[1/3] Installing backend dependencies..." -ForegroundColor Gray
     Push-Location (Join-Path $root "backend")
     try {
-        & $venvPython -m pip install -e .
+        $pipCacheDir = Join-Path $root ".runtime\pip-cache"
+        New-Item -ItemType Directory -Force -Path $pipCacheDir | Out-Null
+        & $venvPython -m pip install --no-cache-dir --cache-dir $pipCacheDir -e .
         if ($LASTEXITCODE -ne 0) { throw "Backend install failed" }
     } finally {
         Pop-Location
@@ -211,6 +291,26 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 if ($Tray) {
+    if (-not $DetachedTray) {
+        Write-Host ""
+        Write-Host "Startup checks completed." -ForegroundColor Green
+        Write-Host "Press any key to continue in tray mode and close this window..." -ForegroundColor Yellow
+        [void][System.Console]::ReadKey($true)
+
+        $argumentList = @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-WindowStyle", "Hidden",
+            "-File", $MyInvocation.MyCommand.Path,
+            "-Tray",
+            "-DetachedTray"
+        )
+        if ($DevMode) {
+            $argumentList += "-DevMode"
+        }
+        Start-Process -FilePath "powershell.exe" -ArgumentList $argumentList -WindowStyle Hidden
+        exit 0
+    }
     Write-Host "[Manager] Starting tray manager (frontend-mode=$frontendMode)..." -ForegroundColor Cyan
     & $venvPython backend/tray_app.py --frontend-mode $frontendMode
     exit $LASTEXITCODE

@@ -2,15 +2,31 @@
 chcp 65001 >nul
 if /i "%1"=="/stop" goto :stop
 if /i "%1"=="/status" goto :status
+if /i "%1"=="/bg" goto :bg
 
-:: Developer mode: backend on 7500, Vite frontend on 7501, with system tray.
-powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0start.ps1" -DevMode -Tray
+:: Developer mode (foreground): show startup/install logs and errors.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1" -DevMode -Tray
+if errorlevel 1 goto :failed
+goto :eof
+
+:bg
+:: Optional background mode for silent tray startup.
+powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0start.ps1" -DevMode -Tray -DetachedTray
+if errorlevel 1 goto :failed
 goto :eof
 
 :stop
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1" -Stop
+if errorlevel 1 goto :failed
 goto :eof
 
 :status
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1" -Status
 goto :eof
+
+:failed
+echo.
+echo [X] Startup failed (exit code: %errorlevel%).
+echo Press any key to close this window...
+pause >nul
+exit /b %errorlevel%

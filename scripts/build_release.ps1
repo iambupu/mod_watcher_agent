@@ -20,6 +20,25 @@ function Get-VersionFromBackendPyproject {
     throw "Could not find [project].version in $Path"
 }
 
+function Get-Sha256Hex {
+    param([string]$Path)
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    }
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $hashBytes = $sha256.ComputeHash($stream)
+        } finally {
+            $stream.Dispose()
+        }
+    } finally {
+        $sha256.Dispose()
+    }
+    return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
+}
+
 function Copy-TreeFiltered {
     param(
         [string]$Src,
@@ -143,7 +162,7 @@ Copy-TreeFiltered -Src (Join-Path $root "frontend\dist") -Dst (Join-Path $stagin
 Write-Host "[4/4] Creating zip..." -ForegroundColor Cyan
 Compress-Archive -Path (Join-Path $stagingRoot "*") -DestinationPath $zipPath -Force
 
-$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
+$hash = Get-Sha256Hex -Path $zipPath
 $hashPath = Join-Path $outDirAbs "$packageName.sha256"
 "$hash  $([IO.Path]::GetFileName($zipPath))" | Set-Content -LiteralPath $hashPath -Encoding ascii
 
