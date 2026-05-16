@@ -10,12 +10,14 @@ import type {
   WatchRuleCreate,
 } from "@/types";
 
+const EMPTY_COMMON_FILTERS: CommonRuleFilters = {};
+
 function createEmptyDraft(): RuleEditorDraft {
   return {
     name: "",
     enabled: true,
     intervalMinutes: 360,
-    commonFilters: {},
+    commonFilters: { ...EMPTY_COMMON_FILTERS },
     nexusmodsDraft: {
       gameDomainName: "",
       updatedSinceDays: 7,

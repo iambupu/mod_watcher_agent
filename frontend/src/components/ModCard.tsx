@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Download, ThumbsUp, Clock, ExternalLink, Heart, EyeOff, Gamepad2, Languages, Sparkles, ChevronDown, ChevronUp, X } from "lucide-react";
 import { SourceBadge } from "@/components/SourceBadge";
@@ -41,9 +41,11 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
   const { t } = useTranslation();
   const summaryMode = useUIStore((s) => s.summaryMode);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const [summaryOverflow, setSummaryOverflow] = useState(false);
   const [introductionOpen, setIntroductionOpen] = useState(false);
   const [introduction, setIntroduction] = useState(mod.ai_introduction || "");
   const [introError, setIntroError] = useState("");
+  const summaryRef = useRef<HTMLParagraphElement | null>(null);
   const tags = parseTags(mod.tags_json || "[]");
 
   const hasOriginal = !!mod.original_summary;
@@ -71,6 +73,19 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
     : summaryMode === "translated"
       ? mod.translated_summary || ""
       : mod.original_summary || "";
+  useEffect(() => {
+    const el = summaryRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const updateOverflow = () => {
+      setSummaryOverflow(el.scrollHeight > el.clientHeight + 1);
+    };
+    updateOverflow();
+    const observer = new ResizeObserver(updateOverflow);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [summary, fullSummary, summaryMode, summaryExpanded]);
+
+  const canToggleSummary = summaryExpanded || summaryOverflow;
 
   const handleOpenIntroduction = async () => {
     setIntroductionOpen(true);
@@ -108,6 +123,14 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
         <div className="absolute top-2 left-2">
           <div className="flex max-w-[calc(100%-3rem)] flex-wrap gap-1.5">
             <SourceBadge source={mod.source} />
+            {mod.adult_content === true && (
+              <span
+                className="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 shadow-sm"
+                title="Adult content"
+              >
+                R18
+              </span>
+            )}
             {gameLabel && (
               <span
                 className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white/90 px-2 py-0.5 text-xs font-medium text-gray-700 shadow-sm backdrop-blur-sm"
@@ -178,44 +201,55 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
 
         <div className="space-y-2">
           {summary ? (
-            <p className={`text-sm text-gray-500 leading-relaxed whitespace-pre-line ${summaryExpanded ? "" : summaryMode === "bilingual" ? "line-clamp-4" : "line-clamp-3"}`}>
+            <p
+              ref={summaryRef}
+              onClick={(e) => {
+                if (!canToggleSummary) return;
+                e.preventDefault();
+                setSummaryExpanded((v) => !v);
+              }}
+              className={`text-sm text-gray-500 leading-relaxed whitespace-pre-line ${summaryExpanded ? "" : summaryMode === "bilingual" ? "line-clamp-4" : "line-clamp-3"} ${canToggleSummary ? "cursor-pointer" : ""}`}
+              title={canToggleSummary ? (summaryExpanded ? t("mod.collapseSummary") : t("mod.expandSummary")) : undefined}
+            >
               {summaryExpanded ? fullSummary || summary : summary}
             </p>
           ) : (
             <p className="text-sm text-gray-400">{t("mod.noSummary")}</p>
           )}
-          {fullSummary && fullSummary.length > summary.length && (
-            <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); setSummaryExpanded((v) => !v); }}
-              className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-900"
-            >
-              {summaryExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-              {summaryExpanded ? "收起摘要" : "展开摘要"}
-            </button>
-          )}
-          {summaryMode !== "original" && onRegenerateSummary && (
-            <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); onRegenerateSummary(); }}
-              disabled={regeneratingSummary}
-              className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50"
-            >
-              <Languages size={13} />
-              {regeneratingSummary ? t("common.loading") : t("mod.regenerateSummary")}
-            </button>
-          )}
-          {onGenerateIntroduction && (
-            <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); handleOpenIntroduction(); }}
-              disabled={generatingIntroduction}
-              className="inline-flex items-center gap-1 text-xs font-medium text-purple-600 hover:text-purple-700 disabled:opacity-50"
-            >
-              <Sparkles size={13} />
-              {generatingIntroduction ? "生成介绍中" : mod.ai_introduction || introduction ? "查看 AI 介绍" : "AI 介绍"}
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {canToggleSummary && (
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); setSummaryExpanded((v) => !v); }}
+                className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 hover:text-gray-900"
+              >
+                {summaryExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                {summaryExpanded ? t("mod.collapseSummary") : t("mod.expandSummary")}
+              </button>
+            )}
+            {summaryMode !== "original" && onRegenerateSummary && (
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); onRegenerateSummary(); }}
+                disabled={regeneratingSummary}
+                className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-50"
+              >
+                <Languages size={13} />
+                {regeneratingSummary ? t("common.loading") : t("mod.regenerateSummary")}
+              </button>
+            )}
+            {onGenerateIntroduction && (
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); handleOpenIntroduction(); }}
+                disabled={generatingIntroduction}
+                className="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 transition-colors hover:bg-purple-100 disabled:opacity-50"
+              >
+                <Sparkles size={13} />
+                {generatingIntroduction ? "生成介绍中" : mod.ai_introduction || introduction ? "查看 AI 介绍" : "AI 介绍"}
+              </button>
+            )}
+          </div>
         </div>
 
         {tags.length > 0 && (

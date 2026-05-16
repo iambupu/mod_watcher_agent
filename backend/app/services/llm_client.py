@@ -211,4 +211,7 @@ def create_llm_client(
     if provider == "gemini":
         return GeminiClient(api_key)
 
-    return OpenAIClient(api_key, base_url)
+    supported = {"openai", "groq", "deepseek", "openrouter", "anthropic", "gemini", "ollama"}
+    raise ValueError(
+        f"Unsupported LLM provider: {provider!r}. Supported: {', '.join(sorted(supported))}"
+    )

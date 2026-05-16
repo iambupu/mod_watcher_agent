@@ -5,18 +5,14 @@ import {
   Heart,
   RefreshCw,
   Search,
-  LayoutDashboard,
-  Bell,
-  Settings,
-  SlidersHorizontal,
   Loader2,
-  FileText,
   Trash2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Switch } from "@/components/ui/Switch";
 import { ModCard } from "@/components/ModCard";
+import AppSidebar from "@/components/layout/AppSidebar";
 import {
   fetchFavorites,
   updateFavorite,
@@ -26,25 +22,6 @@ import {
 import { fetchModGames, generateModIntroduction } from "@/api/mods";
 import { useUIStore } from "@/stores/uiStore";
 import type { Favorite, ModSource, SummaryMode } from "@/types";
-
-const NavLink: React.FC<{
-  href: string;
-  icon: React.ReactNode;
-  label: string;
-  active?: boolean;
-}> = ({ href, icon, label, active }) => (
-  <a
-    href={href}
-    className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-      active
-        ? "bg-blue-50 text-blue-700"
-        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-    }`}
-  >
-    {icon}
-    {label}
-  </a>
-);
 
 function SkeletonCard() {
   return (
@@ -170,22 +147,7 @@ const Favorites: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="flex h-screen">
-        <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
-          <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
-            <img src="/mwlogo.png" alt="Mod Watcher" className="h-12 w-auto" />
-            <span className="text-lg font-bold text-gray-900">Mod Watcher</span>
-          </div>
-
-          <nav className="flex-1 px-3 py-4 space-y-1">
-            <NavLink href="/" icon={<LayoutDashboard size={18} />} label={t("nav.dashboard")} />
-            <NavLink href="/discover" icon={<Search size={18} />} label={t("nav.discover")} />
-            <NavLink href="/favorites" icon={<Heart size={18} />} label={t("nav.favorites")} active />
-            <NavLink href="/updates" icon={<Bell size={18} />} label={t("nav.updates")} />
-            <NavLink href="/rules" icon={<SlidersHorizontal size={18} />} label={t("nav.rules")} />
-            <NavLink href="/logs" icon={<FileText size={18} />} label={t("nav.logs")} />
-            <NavLink href="/settings" icon={<Settings size={18} />} label={t("nav.settings")} />
-          </nav>
-        </aside>
+        <AppSidebar active="favorites" />
 
         <main className="flex-1 overflow-y-auto p-6">
           <div className="flex items-center justify-between mb-6">

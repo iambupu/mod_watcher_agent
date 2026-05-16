@@ -56,3 +56,24 @@ class SystemNotificationService:
             updated += 1
         self.session.commit()
         return updated
+
+    def get_unseen_events_by_ids(
+        self,
+        event_ids: list[int],
+        limit: int = 50,
+    ) -> list[SystemNotificationEvent]:
+        if not event_ids:
+            return []
+        deduped_ids = sorted({event_id for event_id in event_ids if event_id > 0})
+        if not deduped_ids:
+            return []
+        stmt = (
+            select(SystemNotificationEvent)
+            .where(
+                SystemNotificationEvent.id.in_(deduped_ids),
+                SystemNotificationEvent.seen == False,
+            )
+            .order_by(SystemNotificationEvent.id.asc())
+            .limit(limit)
+        )
+        return list(self.session.exec(stmt).all())

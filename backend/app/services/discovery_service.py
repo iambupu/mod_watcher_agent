@@ -125,19 +125,21 @@ class DiscoveryService:
 
 def _mod_item_to_dict(item: ModItem) -> dict:
     raw = item.raw or {}
-    game = raw.get("game") or {}
+    game = raw.get("game") if isinstance(raw.get("game"), dict) else {}
+    category = item.categories[0] if item.categories and len(item.categories) > 0 else None
+    updated_at_str = item.updated_at.isoformat() if item.updated_at is not None else None
     return {
         "source": item.source,
         "external_id": item.source_id,
         "title": item.name,
         "game": item.game,
         "game_domain": game.get("domainName"),
-        "url": item.url,
+        "url": item.url or "",
         "author": item.author,
-        "category": item.categories[0] if item.categories else None,
-        "version": (item.raw or {}).get("version"),
+        "category": category,
+        "version": raw.get("version"),
         "created_at_remote": raw.get("createdAt"),
-        "updated_at_remote": item.updated_at.isoformat() if item.updated_at else None,
+        "updated_at_remote": updated_at_str,
         "published_at_remote": raw.get("publishedAt"),
         "downloads": item.downloads,
         "unique_downloads": raw.get("uniqueDownloads"),

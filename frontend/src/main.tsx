@@ -6,6 +6,10 @@ import App from "./App";
 import "./index.css";
 import "./app/i18n";
 
+document.title = import.meta.env.DEV
+  ? "Mod Watcher Agent (Dev)"
+  : "Mod Watcher Agent";
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

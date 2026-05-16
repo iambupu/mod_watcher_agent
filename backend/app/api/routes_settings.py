@@ -1,8 +1,9 @@
 import io
 import json
+import platform
 import time
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session
 
@@ -26,6 +27,19 @@ SENSITIVE_KEYS = {
     "proxy_password",
 }
 MASKED_VALUE = "********"
+EXPORT_EXCLUDED_PREFIXES = ("agent_chat_",)
+NUMERIC_SETTING_BOUNDS: dict[str, tuple[int, int]] = {
+    "summary_report_interval_minutes": (0, 10080),
+    "watchdog_check_interval_minutes": (1, 180),
+    "watchdog_grace_minutes": (1, 1440),
+    "watchdog_max_catchup_per_run": (1, 20),
+}
+MIN_LENGTH_SENSITIVE_KEYS: dict[str, int] = {
+    "nexus_api_key": 8,
+    "openai_api_key": 8,
+    "llm_api_key": 8,
+    "telegram_bot_token": 20,
+}
 
 
 def _mask_if_present(value: str) -> str:
@@ -100,13 +114,69 @@ def _prepare_settings_update(
         value = sanitized.get(key)
         if value == MASKED_VALUE:
             sanitized.pop(key, None)
+    for key, min_len in MIN_LENGTH_SENSITIVE_KEYS.items():
+        raw = sanitized.get(key)
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if not value:
+            continue
+        if len(value) < min_len:
+            raise HTTPException(status_code=422, detail=f"{key} is too short")
+    webhook = sanitized.get("discord_webhook_url")
+    if webhook is not None:
+        webhook_value = str(webhook).strip()
+        if webhook_value and not (webhook_value.startswith("https://") or webhook_value.startswith("http://")):
+            raise HTTPException(status_code=422, detail="discord_webhook_url must start with http:// or https://")
 
     if "llm_providers_json" in sanitized:
+        try:
+            providers = json.loads(sanitized["llm_providers_json"])
+        except json.JSONDecodeError:
+            providers = None
+        if isinstance(providers, list):
+            for provider in providers:
+                if not isinstance(provider, dict):
+                    continue
+                enabled = bool(provider.get("enabled"))
+                provider_name = str(provider.get("provider") or "").strip().lower()
+                api_key = str(provider.get("api_key") or "").strip()
+                if enabled and provider_name != "ollama" and api_key and len(api_key) < 8:
+                    raise HTTPException(status_code=422, detail=f"llm provider '{provider_name}' api_key is too short")
         sanitized["llm_providers_json"] = _merge_provider_keys(
             sanitized["llm_providers_json"],
             service.get("llm_providers_json"),
         )
+    for key, (min_v, max_v) in NUMERIC_SETTING_BOUNDS.items():
+        raw = sanitized.get(key)
+        if raw is None:
+            continue
+        try:
+            value = int(str(raw).strip())
+        except ValueError:
+            continue
+        value = max(min_v, min(max_v, value))
+        sanitized[key] = str(value)
     return sanitized
+
+
+def _sanitize_export_settings(raw: dict[str, str]) -> dict[str, str]:
+    export_data: dict[str, str] = {}
+    for key, value in raw.items():
+        if key in SENSITIVE_KEYS:
+            continue
+        export_data[key] = value
+    if "llm_providers_json" in export_data:
+        try:
+            providers = json.loads(export_data["llm_providers_json"])
+            if isinstance(providers, list):
+                for provider in providers:
+                    if isinstance(provider, dict):
+                        provider.pop("api_key", None)
+                export_data["llm_providers_json"] = json.dumps(providers, ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+    return export_data
 
 
 async def _test_llm_provider(provider_config: dict) -> dict:
@@ -149,7 +219,7 @@ def get_settings(
     session: Session = Depends(get_session),
 ):
     service = SettingsService(session)
-    db_settings = service.get_all()
+    db_settings = service.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
 
     merged = dict(service.DEFAULTS)
     merged.update(db_settings)
@@ -168,7 +238,7 @@ def update_settings(
         service.set_batch(_prepare_settings_update(service, items))
         register_jobs(session)
 
-    db_settings = service.get_all()
+    db_settings = service.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
     merged = dict(service.DEFAULTS)
     merged.update(db_settings)
 
@@ -218,7 +288,8 @@ def export_settings(
     session: Session = Depends(get_session),
 ):
     svc = SettingsService(session)
-    data = _redact_settings_for_response(svc.get_all())
+    raw = svc.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
+    data = _sanitize_export_settings(raw)
     json_bytes = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
     return StreamingResponse(
         io.BytesIO(json_bytes),
@@ -235,10 +306,11 @@ def import_settings(
     svc = SettingsService(session)
     count = 0
     for key, value in data.items():
+        if key in SENSITIVE_KEYS:
+            continue
         if (
             isinstance(value, str)
             and value.strip()
-            and value.strip() != MASKED_VALUE
         ):
             svc.set(key, value)
             count += 1
@@ -247,6 +319,9 @@ def import_settings(
 
 @router.post("/auto-start")
 def set_auto_start(data: dict = Body(...), session: Session = Depends(get_session)):
+    if platform.system().lower() != "windows":
+        raise HTTPException(status_code=501, detail="/api/settings/auto-start is only supported on Windows")
+
     import winreg
     enabled = data.get("enabled", False)
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"

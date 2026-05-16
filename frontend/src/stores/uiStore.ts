@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import type { SummaryMode } from "@/types";
 
 interface UIState {
@@ -6,21 +7,36 @@ interface UIState {
   detailDrawerOpen: boolean;
   detailDrawerModId: number | null;
   summaryMode: SummaryMode;
+  settingsSyncedAt: number;
   setSidebarOpen: (open: boolean) => void;
   toggleSidebar: () => void;
   openDetailDrawer: (modId: number) => void;
   closeDetailDrawer: () => void;
   setSummaryMode: (mode: SummaryMode) => void;
+  markSettingsSynced: () => void;
 }
 
-export const useUIStore = create<UIState>((set) => ({
-  sidebarOpen: true,
-  detailDrawerOpen: false,
-  detailDrawerModId: null,
-  summaryMode: "bilingual" as SummaryMode,
-  setSidebarOpen: (open) => set({ sidebarOpen: open }),
-  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
-  openDetailDrawer: (modId) => set({ detailDrawerOpen: true, detailDrawerModId: modId }),
-  closeDetailDrawer: () => set({ detailDrawerOpen: false, detailDrawerModId: null }),
-  setSummaryMode: (mode) => set({ summaryMode: mode }),
-}));
+export const useUIStore = create<UIState>()(
+  persist(
+    (set) => ({
+      sidebarOpen: true,
+      detailDrawerOpen: false,
+      detailDrawerModId: null,
+      summaryMode: "bilingual" as SummaryMode,
+      settingsSyncedAt: 0,
+      setSidebarOpen: (open) => set({ sidebarOpen: open }),
+      toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+      openDetailDrawer: (modId) => set({ detailDrawerOpen: true, detailDrawerModId: modId }),
+      closeDetailDrawer: () => set({ detailDrawerOpen: false, detailDrawerModId: null }),
+      setSummaryMode: (mode) => set({ summaryMode: mode }),
+      markSettingsSynced: () => set({ settingsSyncedAt: Date.now() }),
+    }),
+    {
+      name: "mod-watcher-ui",
+      partialize: (state) => ({
+        sidebarOpen: state.sidebarOpen,
+        summaryMode: state.summaryMode,
+      }),
+    },
+  ),
+);

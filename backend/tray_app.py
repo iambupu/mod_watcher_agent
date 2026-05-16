@@ -47,8 +47,8 @@ FRONTEND_DIR = ROOT_DIR / "frontend"
 
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 7500
-FRONTEND_PORT = 7501
-FRONTEND_URL = f"http://{BACKEND_HOST}:{FRONTEND_PORT}"
+FRONTEND_DEV_PORT = 7501
+DEFAULT_FRONTEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 API_DOCS_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}/docs"
 _MUTEX_HANDLE = None
 _LOCK_FILE_HANDLE = None
@@ -214,22 +214,53 @@ def _acquire_single_instance() -> bool:
         kernel32.CreateMutexW.restype = wintypes.HANDLE
         kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
         kernel32.CloseHandle.restype = wintypes.BOOL
-        mutex_name = "Global\\ModWatcherAgentTray"
-        handle = kernel32.CreateMutexW(None, False, mutex_name)
-        if not handle:
-            raise ctypes.WinError(ctypes.get_last_error())
-        _MUTEX_HANDLE = handle
-        return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
+        # Use Local namespace by default to avoid admin/session privilege issues.
+        for mutex_name in ("Local\\ModWatcherAgentTray", "Global\\ModWatcherAgentTray"):
+            handle = kernel32.CreateMutexW(None, False, mutex_name)
+            if not handle:
+                last_error = ctypes.get_last_error()
+                # Access denied on Global namespace is common for non-admin users.
+                if last_error == 5:
+                    continue
+                break
+            already_exists = ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+            if already_exists:
+                kernel32.CloseHandle(handle)
+                return False
+            _MUTEX_HANDLE = handle
+            return True
 
-    try:
+    def _try_create_lock_file() -> bool:
+        global _LOCK_FILE_HANDLE
         _LOCK_FILE_HANDLE = os.open(
             str(_LOCK_FILE_PATH),
             os.O_CREAT | os.O_EXCL | os.O_RDWR,
         )
         os.write(_LOCK_FILE_HANDLE, str(os.getpid()).encode("ascii"))
         return True
+
+    try:
+        return _try_create_lock_file()
     except FileExistsError:
-        return False
+        # Recover from stale lock file left by an unclean exit.
+        try:
+            raw = _LOCK_FILE_PATH.read_text(encoding="utf-8", errors="ignore").strip()
+            stale_pid = int(raw) if raw.isdigit() else None
+        except Exception:
+            stale_pid = None
+
+        if stale_pid and _is_process_running(stale_pid):
+            return False
+
+        try:
+            _LOCK_FILE_PATH.unlink()
+        except Exception:
+            return False
+
+        try:
+            return _try_create_lock_file()
+        except FileExistsError:
+            return False
 
 
 def _release_single_instance() -> None:
@@ -285,13 +316,24 @@ def _is_process_running(pid: int | None) -> bool:
         return False
     try:
         if sys.platform == "win32":
-            result = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-                capture_output=True,
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+            import ctypes
+
+            process_query_limited_information = 0x1000
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_bool, ctypes.c_uint32)
+            kernel32.OpenProcess.restype = ctypes.c_void_p
+            kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+            kernel32.CloseHandle.restype = ctypes.c_bool
+
+            handle = kernel32.OpenProcess(
+                process_query_limited_information,
+                False,
+                int(pid),
             )
-            return f'"{pid}"' in result.stdout or f",{pid}," in result.stdout
+            if not handle:
+                return False
+            kernel32.CloseHandle(handle)
+            return True
         os.kill(pid, 0)
         return True
     except Exception:
@@ -305,13 +347,35 @@ def _terminate_process_tree(pid: int | None, name: str) -> None:
     _tray_logger.info("停止 %s 进程树 (PID=%s)...", name, pid)
     try:
         if sys.platform == "win32":
-            subprocess.run(
+            result = subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
                 capture_output=True,
                 text=True,
+                encoding="mbcs",
+                errors="replace",
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 timeout=15,
             )
+            if result.returncode != 0:
+                _tray_logger.warning(
+                    "taskkill 停止 %s 失败: %s",
+                    name,
+                    (result.stderr or result.stdout).strip(),
+                )
+                subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        f"Stop-Process -Id {int(pid)} -Force -ErrorAction SilentlyContinue",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    encoding="mbcs",
+                    errors="replace",
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    timeout=15,
+                )
         else:
             os.kill(pid, 15)
     except Exception as exc:
@@ -332,16 +396,41 @@ def _port_owner_pids(port: int) -> set[int]:
             ["powershell", "-NoProfile", "-Command", command],
             capture_output=True,
             text=True,
+            encoding="mbcs",
+            errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=10,
         )
-        return {
+        pids = {
             int(line.strip())
             for line in result.stdout.splitlines()
             if line.strip().isdigit()
         }
+        if pids:
+            return pids
     except Exception as exc:
         _tray_logger.warning("查询端口 %s 占用失败: %s", port, exc)
+
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True,
+            text=True,
+            encoding="mbcs",
+            errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            timeout=10,
+        )
+        pids = set()
+        marker = f":{port}"
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[0].upper() == "TCP" and marker in parts[1]:
+                if parts[3].upper() == "LISTENING" and parts[4].isdigit():
+                    pids.add(int(parts[4]))
+        return pids
+    except Exception as exc:
+        _tray_logger.warning("netstat 查询端口 %s 占用失败: %s", port, exc)
         return set()
 
 
@@ -381,17 +470,18 @@ def _stop_existing_services() -> None:
     """Stop the recorded manager and any remaining service port owners."""
     state = _read_state()
     manager_pid = state.get("manager_pid")
-    ports_ready = _check_port(BACKEND_HOST, BACKEND_PORT) or _check_port(
-        BACKEND_HOST,
-        FRONTEND_PORT,
-    )
 
     current_pid = os.getpid()
-    if manager_pid and ports_ready and int(manager_pid) != current_pid:
-        _terminate_process_tree(int(manager_pid), "manager")
+    if manager_pid:
+        try:
+            manager_pid_int = int(manager_pid)
+        except (TypeError, ValueError):
+            manager_pid_int = None
+        if manager_pid_int and manager_pid_int != current_pid and _is_process_running(manager_pid_int):
+            _terminate_process_tree(manager_pid_int, "manager")
 
     _kill_port_owners(BACKEND_PORT, "后端")
-    _kill_port_owners(FRONTEND_PORT, "前端")
+    _kill_port_owners(FRONTEND_DEV_PORT, "前端")
     _clear_state()
     _tray_logger.info("已停止记录的服务进程")
 
@@ -404,7 +494,9 @@ def _print_status() -> None:
     print(f"  backend_pid : {state.get('backend_pid')}")
     print(f"  frontend_pid: {state.get('frontend_pid')}")
     print(f"  backend_port: {'ready' if _check_port(BACKEND_HOST, BACKEND_PORT) else 'stopped'}")
-    print(f"  frontend_port: {'ready' if _check_port(BACKEND_HOST, FRONTEND_PORT) else 'stopped'}")
+    print(f"  frontend_dev_port: {'ready' if _check_port(BACKEND_HOST, FRONTEND_DEV_PORT) else 'stopped'}")
+    print(f"  frontend_url : {state.get('frontend_url') or DEFAULT_FRONTEND_URL}")
+    print(f"  tray        : {'enabled' if state.get('use_tray') else 'disabled'}")
 
 
 def _create_icon_image() -> Image.Image:
@@ -448,13 +540,17 @@ def _create_icon_image() -> Image.Image:
 class TrayApp:
     """系统托盘应用程序，管理后端和前端进程。"""
 
-    def __init__(self, use_tray: bool = True, open_browser: bool = True):
+    def __init__(self, use_tray: bool = True, open_browser: bool = True, frontend_mode: str = "static"):
         self.backend_proc = None
         self.frontend_proc = None
         self.icon = None
         self.scheduler_paused = False
         self.use_tray = use_tray
         self.open_browser = open_browser
+        self.frontend_mode = frontend_mode
+        self.frontend_port = FRONTEND_DEV_PORT if frontend_mode == "dev" else BACKEND_PORT
+        self.frontend_url = f"http://{BACKEND_HOST}:{self.frontend_port}"
+        self.app_title = "Mod Watcher Agent (Dev)" if frontend_mode == "dev" else "Mod Watcher Agent"
         self.service_job = _WindowsJob()
 
     # ── 子进程启动 ──────────────────────────────
@@ -504,11 +600,14 @@ class TrayApp:
         self._save_state()
 
     def launch_frontend(self):
-        """启动 npm run dev 前端子进程。"""
-        if _check_port(BACKEND_HOST, FRONTEND_PORT):
+        """启动 npm run dev 前端子进程（仅 dev 模式）。"""
+        if self.frontend_mode != "dev":
+            _tray_logger.info("前端 static 模式由后端托管，跳过 dev server")
+            return
+        if _check_port(BACKEND_HOST, FRONTEND_DEV_PORT):
             _tray_logger.info("前端端口已就绪，跳过启动前端")
             return
-        _kill_port_owners(FRONTEND_PORT, "前端")
+        _kill_port_owners(FRONTEND_DEV_PORT, "前端")
         _tray_logger.info("启动前端: npm run dev")
         frontend_log = (LOG_DIR / "frontend_service.log").open("a", encoding="utf-8")
         frontend_log.write("\n=== starting frontend service ===\n")
@@ -524,7 +623,6 @@ class TrayApp:
             env={**os.environ, "MOD_WATCHER_PROCESS_NAME": "ModWatcherFrontend"},
             stdout=frontend_log,
             stderr=subprocess.STDOUT,
-            **self._subprocess_kwargs(),
         )
         self.service_job.add(self.frontend_proc)
         self._save_state()
@@ -533,7 +631,7 @@ class TrayApp:
 
     def _open_panel(self, icon, item):
         """打开前端面板。"""
-        _open_url(FRONTEND_URL)
+        _open_url(self.frontend_url)
 
     def _open_api_docs(self, icon, item):
         """打开 API 文档。"""
@@ -579,12 +677,12 @@ class TrayApp:
                 if "error" in result:
                     self.icon.notify(
                         f"检查失败: {result['error']}",
-                        "Mod Watcher Agent",
+                        self.app_title,
                     )
                 else:
                     self.icon.notify(
                         "已触发新 Mod 发现任务，稍后查看结果",
-                        "Mod Watcher Agent",
+                        self.app_title,
                     )
         threading.Thread(target=_run, daemon=True).start()
 
@@ -597,12 +695,12 @@ class TrayApp:
                 if "error" in result:
                     self.icon.notify(
                         f"检查失败: {result['error']}",
-                        "Mod Watcher Agent",
+                        self.app_title,
                     )
                 else:
                     self.icon.notify(
                         "已触发收藏更新检查，稍后查看结果",
-                        "Mod Watcher Agent",
+                        self.app_title,
                     )
         threading.Thread(target=_run, daemon=True).start()
 
@@ -618,12 +716,12 @@ class TrayApp:
 
         if self.icon:
             msg = "调度检查已暂停" if self.scheduler_paused else "调度检查已恢复"
-            self.icon.notify(msg, "Mod Watcher Agent")
+            self.icon.notify(msg, self.app_title)
             self.icon.update_menu(self._build_menu())
 
     def _open_settings(self, icon, item):
         """打开设置页面。"""
-        _open_url(f"{FRONTEND_URL}/settings")
+        _open_url(f"{self.frontend_url}/settings")
 
     # ── 菜单构建 ────────────────────────────────
 
@@ -654,15 +752,18 @@ class TrayApp:
 
         self.launch_backend()
 
-        frontend_ready = False
+        frontend_ready = self.frontend_mode != "dev"
         if _wait_for_port(BACKEND_HOST, BACKEND_PORT):
             _tray_logger.info("后端就绪")
-            self.launch_frontend()
-            if _wait_for_port(BACKEND_HOST, FRONTEND_PORT):
-                _tray_logger.info("前端就绪")
-                frontend_ready = True
+            if self.frontend_mode == "dev":
+                self.launch_frontend()
+                if _wait_for_port(BACKEND_HOST, FRONTEND_DEV_PORT):
+                    _tray_logger.info("前端就绪")
+                    frontend_ready = True
+                else:
+                    _tray_logger.warning("⚠ 前端启动超时 (30s)")
             else:
-                _tray_logger.warning("⚠ 前端启动超时 (30s)")
+                frontend_ready = True
         else:
             _tray_logger.warning("⚠ 后端启动超时 (30s)")
 
@@ -672,11 +773,11 @@ class TrayApp:
             raise SystemExit(1)
 
         if frontend_ready:
-            _tray_logger.info("打开前端面板: %s", FRONTEND_URL)
+            _tray_logger.info("打开前端面板: %s", self.frontend_url)
         else:
-            _tray_logger.info("前端未确认就绪，仍尝试打开面板: %s", FRONTEND_URL)
+            _tray_logger.info("前端未确认就绪，仍尝试打开面板: %s", self.frontend_url)
         if self.open_browser:
-            _open_url(FRONTEND_URL)
+            _open_url(self.frontend_url)
 
         if not self.use_tray:
             atexit.register(self._cleanup)
@@ -696,7 +797,7 @@ class TrayApp:
         self.icon = pystray.Icon(
             "mod_watcher_agent",
             icon_img,
-            "Mod Watcher Agent",
+            self.app_title,
             menu,
         )
 
@@ -727,7 +828,7 @@ class TrayApp:
         self._terminate_proc(self.frontend_proc, "frontend")
         self.service_job.close()
         _kill_port_owners(BACKEND_PORT, "后端")
-        _kill_port_owners(FRONTEND_PORT, "前端")
+        _kill_port_owners(FRONTEND_DEV_PORT, "前端")
         state = _read_state()
         if state.get("manager_pid") == os.getpid():
             _clear_state()
@@ -743,6 +844,8 @@ class TrayApp:
 
     def _wait_and_launch_frontend(self):
         """后台线程：等待后端就绪，然后启动前端。"""
+        if self.frontend_mode != "dev":
+            return
         if _wait_for_port(BACKEND_HOST, BACKEND_PORT):
             _tray_logger.info("后端就绪")
             self.launch_frontend()
@@ -755,7 +858,7 @@ class TrayApp:
                     if self.icon:
                         self.icon.notify(
                             "后端启动超时，请检查日志",
-                            "Mod Watcher Agent",
+                            self.app_title,
                         )
                         break
                 except Exception:
@@ -781,7 +884,9 @@ class TrayApp:
                 "backend_name": "ModWatcherBackend",
                 "frontend_pid": self.frontend_proc.pid if self.frontend_proc else None,
                 "frontend_name": "ModWatcherFrontend",
-                "frontend_url": FRONTEND_URL,
+                "frontend_url": self.frontend_url,
+                "frontend_mode": self.frontend_mode,
+                "use_tray": self.use_tray,
                 "updated_at": time.time(),
             }
         )
@@ -793,7 +898,7 @@ class TrayApp:
             _tray_logger.info("清理旧服务状态，当前管理器将重新接管端口")
         _clear_state()
         _kill_port_owners(BACKEND_PORT, "后端")
-        _kill_port_owners(FRONTEND_PORT, "前端")
+        _kill_port_owners(FRONTEND_DEV_PORT, "前端")
 
 
 # ─────────────────────────────────────────────────
@@ -822,6 +927,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Print recorded service state and port readiness.",
     )
+    parser.add_argument(
+        "--frontend-mode",
+        choices=["static", "dev"],
+        default="static",
+        help="Frontend serving mode: static (backend hosted) or dev (npm run dev).",
+    )
     args = parser.parse_args()
     os.environ["MOD_WATCHER_PROCESS_NAME"] = "ModWatcherManager"
     _set_windows_process_title("ModWatcherManager")
@@ -835,10 +946,40 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if not _acquire_single_instance():
-        _tray_logger.info("检测到已有实例，打开现有前端并退出")
-        if not args.no_browser:
-            _open_url(FRONTEND_URL)
-        sys.exit(0)
+        state = _read_state()
+        requested_mode = args.frontend_mode
+        requested_use_tray = not args.no_tray
+        existing_mode = state.get("frontend_mode") or "static"
+        existing_use_tray = bool(state.get("use_tray"))
+        backend_ready = _check_port(BACKEND_HOST, BACKEND_PORT)
+        requested_frontend_ready = (
+            backend_ready
+            if requested_mode != "dev"
+            else _check_port(BACKEND_HOST, FRONTEND_DEV_PORT)
+        )
+        tray_requirement_met = (not requested_use_tray) or existing_use_tray
 
-    app = TrayApp(use_tray=not args.no_tray, open_browser=not args.no_browser)
+        if existing_mode == requested_mode and backend_ready and requested_frontend_ready and tray_requirement_met:
+            _tray_logger.info("检测到已有健康实例，打开前端并退出")
+            if not args.no_browser:
+                _open_url(state.get("frontend_url") or DEFAULT_FRONTEND_URL)
+            sys.exit(0)
+
+        _tray_logger.warning(
+            "检测到已有实例但模式、托盘或端口状态不匹配 (existing=%s/%s, requested=%s/%s)，清理后接管",
+            existing_mode,
+            "tray" if existing_use_tray else "no-tray",
+            requested_mode,
+            "tray" if requested_use_tray else "no-tray",
+        )
+        _stop_existing_services()
+        if not _acquire_single_instance():
+            _tray_logger.error("无法接管实例，请手动结束残留 python 进程后重试")
+            sys.exit(1)
+
+    app = TrayApp(
+        use_tray=not args.no_tray,
+        open_browser=not args.no_browser,
+        frontend_mode=args.frontend_mode,
+    )
     app.start()

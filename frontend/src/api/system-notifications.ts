@@ -19,6 +19,10 @@ interface MarkSeenResponse {
   updated: number;
 }
 
+interface DispatchWindowsResponse {
+  dispatched_ids: number[];
+}
+
 export async function fetchRecentNotifications(sinceId = 0): Promise<SystemNotificationEvent[]> {
   const data = await get<RecentResponse>("/system-notifications/recent", {
     since_id: String(sinceId),
@@ -32,4 +36,13 @@ export async function markNotificationsSeen(eventIds: number[]): Promise<number>
     event_ids: eventIds,
   });
   return data.updated;
+}
+
+export async function dispatchWindowsNotifications(
+  events: SystemNotificationEvent[],
+): Promise<number[]> {
+  const data = await post<DispatchWindowsResponse>("/system-notifications/dispatch-windows", {
+    event_ids: events.map((e) => e.id),
+  });
+  return data.dispatched_ids;
 }

@@ -13,7 +13,7 @@ class Settings:
     TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
     DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai")
     POLL_INTERVAL_MINUTES: int = int(
@@ -26,7 +26,7 @@ class Settings:
         origin.strip()
         for origin in os.getenv(
             "CORS_ORIGINS",
-            "http://localhost:5173,http://127.0.0.1:5173",
+            "http://localhost:7501,http://127.0.0.1:7501",
         ).split(",")
         if origin.strip()
     ]

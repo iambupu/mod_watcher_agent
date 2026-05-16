@@ -7,6 +7,8 @@ services:
       - "7500:7500"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=sqlite:///./data/mod_watcher.db
     volumes:
       - backend_data:/app/data
       - backend_log:/app/log
@@ -21,7 +23,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "80:80"
+      - "7501:80"
     depends_on:
       backend:
         condition: service_healthy

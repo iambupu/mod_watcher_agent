@@ -27,7 +27,7 @@ export const ModDetailDrawer: React.FC<ModDetailDrawerProps> = ({
   const { t } = useTranslation();
   const summaryMode = useUIStore((s) => s.summaryMode);
 
-  if (!mod) return null;
+  if (!mod || typeof mod.id !== "number" || mod.id <= 0) return null;
 
   return (
     <Drawer open={open} onClose={onClose} title={t("mod.detail")}>

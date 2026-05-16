@@ -2,14 +2,9 @@
 chcp 65001 >nul
 if /i "%1"=="/stop" goto :stop
 if /i "%1"=="/status" goto :status
-if /i "%1"=="/debug" goto :normal
-:: Default: non-developer friendly launcher.
-call "%~dp0start-user.bat"
-goto :eof
 
-:normal
-:: Developer mode: run frontend dev server with system tray (requires Node.js).
-call "%~dp0start-debug.bat"
+:: Non-developer mode: static frontend hosted by backend, no Node.js required.
+powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0start.ps1" -Tray
 goto :eof
 
 :stop

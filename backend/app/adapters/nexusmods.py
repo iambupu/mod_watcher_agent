@@ -70,7 +70,7 @@ class NexusModsAdapter(BaseAdapter):
         headers = {
             "Content-Type": "application/json",
             "Application-Name": "ModWatcherAgent",
-            "Application-Version": "0.1.0",
+            "Application-Version": "0.1.1",
         }
         if self.api_key:
             headers["apikey"] = self.api_key

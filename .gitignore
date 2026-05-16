@@ -28,6 +28,7 @@ Thumbs.db
 # Build artifacts
 *.pyc
 *.pyo
+release/
 
 # Suggested additions
 # Virtualenvs
@@ -79,3 +80,21 @@ Thumbs.db
 
 # Local runtime database
 mod_watcher.db
+
+# Build artifacts (TypeScript)
+frontend/tsc_err.txt
+frontend/tsc_out*.txt
+frontend/tsc_verify.txt
+frontend/test_error.ts
+*.tsbuildinfo
+
+# Log files
+backend/logs/
+log/
+
+# Duplicate test setup file
+frontend/src/test-setup.ts
+
+# Local scratch docs
+AGENETS.md
+REASONIX.md
