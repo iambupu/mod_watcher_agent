@@ -50,11 +50,60 @@ export const RuleTestResultPanel: React.FC<RuleTestResultPanelProps> = ({ result
                 <li key={reason} className="flex items-start gap-2 text-sm text-gray-600">
                   <span className="text-red-400 mt-0.5">&#x2022;</span>
                   <span>
-                    {reason}: {count}
+                    {t(`rules.test.reason.${reason}`, reason)}: {count}
                   </span>
                 </li>
               ))}
             </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {result.rejectedItems.length > 0 && (
+        <Card>
+          <CardHeader>
+            <h3 className="text-sm font-semibold text-gray-700">
+              {t("rules.test.rejectedItems", { count: result.rejectedItems.length })}
+            </h3>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {result.rejectedItems.map((item, idx) => (
+                <div
+                  key={`${item.source}-${item.externalId}-${idx}`}
+                  className="rounded-md border border-gray-100 px-3 py-2 text-sm"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-800 truncate">{item.title || item.externalId}</span>
+                    {item.externalId && (
+                      <span className="text-xs text-gray-400">{item.externalId}</span>
+                    )}
+                    <Badge variant="warning">{t(`rules.test.stage.${item.stage}`, item.stage)}</Badge>
+                  </div>
+                  <div className="mt-1 text-xs text-gray-600">
+                    {t(`rules.test.reason.${item.reason}`, item.reason)}
+                  </div>
+                  {item.llmFeedback && (
+                    <div className="mt-1 rounded bg-gray-50 px-2 py-1 text-xs text-gray-500">
+                      {t("rules.test.llmFeedback")}: {item.llmFeedback}
+                    </div>
+                  )}
+                  <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
+                    <span>{item.game}</span>
+                    {item.url && (
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-500 hover:underline truncate"
+                      >
+                        {item.url}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}

@@ -1,32 +1,25 @@
 import React, { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/Input";
+import { TokenInput } from "@/components/rules/TokenInput";
 import { useRuleEditorStore } from "@/stores/ruleEditorStore";
+import type { NexusModsRuleConfig } from "@/types";
 
-const QUERY_MODE_OPTIONS = [
+type NexusQueryMode = NonNullable<NexusModsRuleConfig["queryMode"]>;
+type NexusSortBy = NonNullable<NexusModsRuleConfig["sortBy"]>;
+
+const QUERY_MODE_OPTIONS: { value: "" | NexusQueryMode; labelKey: string }[] = [
   { value: "", labelKey: "rules.nexusmods.queryModeAll" },
   { value: "updated", labelKey: "rules.nexusmods.queryModeUpdated" },
-  { value: "trending", labelKey: "rules.nexusmods.queryModeTrending" },
-  { value: "newest", labelKey: "rules.nexusmods.queryModeNewest" },
+  { value: "created", labelKey: "rules.nexusmods.queryModeCreated" },
 ];
 
-const SORT_BY_OPTIONS = [
-  { value: "updated_desc", labelKey: "rules.sortUpdatedDesc" },
+const SORT_BY_OPTIONS: { value: NexusSortBy; labelKey: string }[] = [
+  { value: "updatedAt_desc", labelKey: "rules.sortUpdatedDesc" },
+  { value: "createdAt_desc", labelKey: "rules.sortCreatedDesc" },
   { value: "downloads_desc", labelKey: "rules.sortDownloadsDesc" },
   { value: "endorsements_desc", labelKey: "rules.sortEndorsementsDesc" },
-  { value: "first_seen_desc", labelKey: "rules.sortFirstSeenDesc" },
 ];
-
-function parseTagInput(raw: string): string[] {
-  return raw
-    .split(/[,，]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function tagsToString(tags?: string[]): string {
-  return (tags || []).join(", ");
-}
 
 export const NexusModsRulePanel: React.FC = () => {
   const { t } = useTranslation();
@@ -85,14 +78,6 @@ export const NexusModsRulePanel: React.FC = () => {
     [updateNexusConfig, validate, setFieldError],
   );
 
-  const handleTagsChange = useCallback(
-    (field: "categoryNames" | "tags", raw: string) => {
-      const parsed = parseTagInput(raw);
-      updateNexusConfig({ [field]: parsed });
-    },
-    [updateNexusConfig],
-  );
-
   const selectClass =
     "rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm bg-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 
@@ -104,12 +89,16 @@ export const NexusModsRulePanel: React.FC = () => {
           <span className="text-red-500 ml-0.5">*</span>
         </label>
         <Input
+          label=""
           value={nexusConfig.gameDomainName}
           onChange={(e) => handleChange("gameDomainName", e.target.value)}
           onBlur={(e) => handleBlur("gameDomainName", e.target.value)}
           placeholder={t("rules.nexusmods.gameDomainNamePlaceholder")}
           error={errors.gameDomainName}
         />
+        <p className="mt-1 text-xs leading-5 text-gray-500">
+          {t("rules.nexusmods.gameDomainNameHelp")}
+        </p>
       </div>
 
       <div>
@@ -125,6 +114,9 @@ export const NexusModsRulePanel: React.FC = () => {
           placeholder={t("rules.nexusmods.updatedSinceDaysPlaceholder") || "7"}
           error={errors.updatedSinceDays}
         />
+        <p className="mt-1 text-xs leading-5 text-gray-500">
+          {t("rules.nexusmods.updatedSinceDaysHelp")}
+        </p>
       </div>
 
       <div className="flex flex-col gap-1">
@@ -135,7 +127,13 @@ export const NexusModsRulePanel: React.FC = () => {
           id="nm-query-mode"
           className={selectClass}
           value={nexusConfig.queryMode || ""}
-          onChange={(e) => updateNexusConfig({ queryMode: e.target.value || undefined })}
+          onChange={(e) =>
+            updateNexusConfig({
+              queryMode: e.target.value
+                ? (e.target.value as NexusQueryMode)
+                : undefined,
+            })
+          }
         >
           {QUERY_MODE_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -143,6 +141,9 @@ export const NexusModsRulePanel: React.FC = () => {
             </option>
           ))}
         </select>
+        <p className="text-xs leading-5 text-gray-500">
+          {t("rules.nexusmods.queryModeHelp")}
+        </p>
       </div>
 
       <div className="flex flex-col gap-1">
@@ -153,7 +154,13 @@ export const NexusModsRulePanel: React.FC = () => {
           id="nm-sort-by"
           className={selectClass}
           value={nexusConfig.sortBy || ""}
-          onChange={(e) => updateNexusConfig({ sortBy: e.target.value || undefined })}
+          onChange={(e) =>
+            updateNexusConfig({
+              sortBy: e.target.value
+                ? (e.target.value as NexusSortBy)
+                : undefined,
+            })
+          }
         >
           {SORT_BY_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -161,29 +168,26 @@ export const NexusModsRulePanel: React.FC = () => {
             </option>
           ))}
         </select>
+        <p className="text-xs leading-5 text-gray-500">
+          {t("rules.nexusmods.sortByHelp")}
+        </p>
       </div>
 
-      <div>
-        <label className="text-sm font-medium text-gray-700">
-          {t("rules.nexusmods.categoryNames")}
-        </label>
-        <Input
-          value={tagsToString(nexusConfig.categoryNames)}
-          onChange={(e) => handleTagsChange("categoryNames", e.target.value)}
-          placeholder={t("rules.nexusmods.categoryNamesPlaceholder")}
-        />
-      </div>
+      <TokenInput
+        label={t("rules.nexusmods.categoryNames")}
+        description={t("rules.nexusmods.categoryNamesHelp")}
+        placeholder={t("rules.nexusmods.categoryNamesPlaceholder")}
+        values={nexusConfig.categoryNames}
+        onChange={(categoryNames) => updateNexusConfig({ categoryNames })}
+      />
 
-      <div>
-        <label className="text-sm font-medium text-gray-700">
-          {t("rules.nexusmods.tags")}
-        </label>
-        <Input
-          value={tagsToString(nexusConfig.tags)}
-          onChange={(e) => handleTagsChange("tags", e.target.value)}
-          placeholder={t("rules.nexusmods.tagsPlaceholder")}
-        />
-      </div>
+      <TokenInput
+        label={t("rules.nexusmods.tags")}
+        description={t("rules.nexusmods.tagsHelp")}
+        placeholder={t("rules.nexusmods.tagsPlaceholder")}
+        values={nexusConfig.tags}
+        onChange={(tags) => updateNexusConfig({ tags })}
+      />
     </div>
   );
 };

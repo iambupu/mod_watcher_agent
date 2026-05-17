@@ -8,6 +8,7 @@ import { SourceTabs } from "@/components/rules/SourceTabs";
 import { NexusModsRulePanel } from "@/components/rules/NexusModsRulePanel";
 import { LoversLabRulePanel } from "@/components/rules/LoversLabRulePanel";
 import { CommonFilterSection } from "@/components/rules/CommonFilterSection";
+import { LlmFilterSection } from "@/components/rules/LlmFilterSection";
 import { NotificationSection } from "@/components/rules/NotificationSection";
 import { RuleTestResultPanel } from "@/components/rules/RuleTestResultPanel";
 import { RuleEditorActions } from "@/components/rules/RuleEditorActions";
@@ -18,7 +19,7 @@ import {
   updateRule,
   testRule,
 } from "@/api/rules";
-import type { RuleTestResponse, RuleTestRequest, WatchRule } from "@/types";
+import type { CommonRuleFilters, RuleTestResponse, RuleTestRequest, WatchRule } from "@/types";
 
 export const RuleEditorPage: React.FC = () => {
   const { t } = useTranslation();
@@ -30,6 +31,8 @@ export const RuleEditorPage: React.FC = () => {
   const isEditMode = editingRuleId !== null;
 
   const activeSource = useRuleEditorStore((s) => s.activeSource);
+  const commonFilters = useRuleEditorStore((s) => s.draft.commonFilters);
+  const updateCommonFilter = useRuleEditorStore((s) => s.updateCommonFilter);
   const resetDraft = useRuleEditorStore((s) => s.resetDraft);
   const loadRule = useRuleEditorStore((s) => s.loadRule);
   const getSubmitData = useRuleEditorStore((s) => s.getSubmitData);
@@ -41,6 +44,8 @@ export const RuleEditorPage: React.FC = () => {
     queryKey: ["rule", editingRuleId],
     queryFn: () => fetchRuleById(editingRuleId!),
     enabled: isEditMode,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   useEffect(() => {
@@ -96,6 +101,10 @@ export const RuleEditorPage: React.FC = () => {
 
   const handleCancel = () => {
     navigate("/rules");
+  };
+
+  const handleCommonFilterChange = (patch: Partial<CommonRuleFilters>) => {
+    updateCommonFilter(patch);
   };
 
   const handleTest = () => {
@@ -175,8 +184,12 @@ export const RuleEditorPage: React.FC = () => {
             {t("rules.filters")}
           </h2>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <CommonFilterSection />
+          <LlmFilterSection
+            llmFilter={commonFilters.llmFilter}
+            onChange={handleCommonFilterChange}
+          />
         </CardContent>
       </Card>
 

@@ -25,6 +25,7 @@ export const AdultPolicyField: React.FC<AdultPolicyFieldProps> = ({
       <label className="text-sm font-semibold text-gray-800">
         {t("rules.adultPolicy")}
       </label>
+      <p className="text-xs text-gray-500">{t("rules.filters.adultPolicyHelp")}</p>
       <select
         value={adultPolicy ?? "exclude"}
         onChange={(e) =>

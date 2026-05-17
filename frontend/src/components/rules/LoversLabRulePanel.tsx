@@ -2,7 +2,9 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/Input";
 import { useRuleEditorStore } from "@/stores/ruleEditorStore";
-import type { AccessMode } from "@/types";
+import type { AccessMode, LoversLabRuleConfig } from "@/types";
+
+type UpdateDetection = NonNullable<LoversLabRuleConfig["updateDetection"]>;
 
 export const LoversLabRulePanel: React.FC = () => {
   const { t } = useTranslation();
@@ -10,19 +12,19 @@ export const LoversLabRulePanel: React.FC = () => {
   const updateLoversLabConfig = useRuleEditorStore((s) => s.updateLoversLabConfig);
 
   const accessModeOptions: { value: AccessMode; labelKey: string }[] = [
-    { value: "feed", labelKey: "rules.loverslab.accessModeFeed" },
+    { value: "rss", labelKey: "rules.loverslab.accessModeRss" },
     { value: "page", labelKey: "rules.loverslab.accessModePage" },
     { value: "both", labelKey: "rules.loverslab.accessModeBoth" },
   ];
 
-  const showFeedUrls = loverslabDraft.accessMode === "feed" || loverslabDraft.accessMode === "both";
+  const showFeedUrls = loverslabDraft.accessMode === "rss" || loverslabDraft.accessMode === "both";
   const showPageUrls = loverslabDraft.accessMode === "page" || loverslabDraft.accessMode === "both";
 
-  const updateDetectionOptions = [
+  const updateDetectionOptions: { value: "" | UpdateDetection; labelKey: string }[] = [
     { value: "", labelKey: "rules.loverslab.updateDetection.none" },
-    { value: "timestamp", labelKey: "rules.loverslab.updateDetection.timestamp" },
-    { value: "checksum", labelKey: "rules.loverslab.updateDetection.checksum" },
-    { value: "version_compare", labelKey: "rules.loverslab.updateDetection.versionCompare" },
+    { value: "published_time", labelKey: "rules.loverslab.updateDetection.publishedTime" },
+    { value: "updated_time", labelKey: "rules.loverslab.updateDetection.updatedTime" },
+    { value: "page_hash", labelKey: "rules.loverslab.updateDetection.pageHash" },
   ];
 
   return (
@@ -115,7 +117,13 @@ export const LoversLabRulePanel: React.FC = () => {
         <select
           className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           value={loverslabDraft.updateDetection || ""}
-          onChange={(e) => updateLoversLabConfig({ updateDetection: e.target.value || undefined })}
+          onChange={(e) =>
+            updateLoversLabConfig({
+              updateDetection: e.target.value
+                ? (e.target.value as UpdateDetection)
+                : undefined,
+            })
+          }
         >
           {updateDetectionOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>

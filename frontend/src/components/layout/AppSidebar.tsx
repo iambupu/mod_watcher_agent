@@ -38,7 +38,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const appVersion = import.meta.env.VITE_APP_VERSION || "0.1.1";
+  const appVersion = import.meta.env.VITE_APP_VERSION || "0.1.2";
 
   return (
     <aside className={`${sidebarOpen ? "w-64" : "w-20"} bg-white border-r border-gray-200 flex flex-col transition-all duration-150`}>
@@ -114,7 +114,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
               </div>
               <div className="rounded-lg border border-gray-100 px-3 py-2">
                 <p className="text-xs text-gray-500">{t("about.changelog")}</p>
-                <p>{t("about.changelogText")}</p>
+                <p style={{ whiteSpace: "pre-wrap" }}>{t("about.changelogText")}</p>
               </div>
               <div className="rounded-lg border border-gray-100 px-3 py-2">
                 <p className="text-xs text-gray-500">{t("about.usage")}</p>

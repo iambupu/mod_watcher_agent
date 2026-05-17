@@ -23,13 +23,27 @@ export const RuleEditorActions: React.FC<RuleEditorActionsProps> = ({
   const name = useRuleEditorStore((s) => s.draft.name);
 
   const saveDisabled = !isDirty || !name.trim() || saving;
+  const commitFocusedInput = () => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  };
 
   return (
     <div className="flex items-center gap-3 pt-4 border-t border-gray-200">
-      <Button onClick={onSave} disabled={saveDisabled}>
+      <Button
+        onMouseDown={commitFocusedInput}
+        onClick={onSave}
+        disabled={saveDisabled}
+      >
         {t("rules.actions.saveRule")}
       </Button>
-      <Button variant="outline" onClick={onTest} disabled={testing}>
+      <Button
+        variant="outline"
+        onMouseDown={commitFocusedInput}
+        onClick={onTest}
+        disabled={testing}
+      >
         {t("rules.actions.testRule")}
       </Button>
       <Button variant="ghost" onClick={onCancel}>

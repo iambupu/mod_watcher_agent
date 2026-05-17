@@ -22,9 +22,10 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     Discovers mods by parsing LoversLab RSS feeds, optionally filtered
     by game tags specified in the watch rule.
-    """
 
-    source = "loverslab"
+    Note: this class is not auto-registered (source = None).
+    Use LoversLabAdapter (source = "loverslab") for unified dispatch.
+    """
 
     def __init__(self, **kwargs):
         pass

@@ -31,9 +31,10 @@ class LoversLabPageAdapter(BaseAdapter):
     Enriches mod data from individual file detail pages, extracting
     version, download stats, description, images, changelog, and
     update timestamps that are not available from the RSS feed.
-    """
 
-    source = "loverslab"
+    Note: this class is not auto-registered (source = None).
+    Use LoversLabAdapter (source = "loverslab") for unified dispatch.
+    """
 
     def __init__(self, **kwargs):
         self._client: httpx.AsyncClient | None = None

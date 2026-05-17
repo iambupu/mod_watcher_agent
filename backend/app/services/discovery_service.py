@@ -10,6 +10,7 @@ from app.models.mod import Mod
 from app.models.mod_item import ModItem
 from app.models.watch_rule import WatchRule
 from app.services.filter_service import FilterService
+from app.services.llm_client import create_llm_filter_client
 from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ class DiscoveryService:
 
             all_mods: list[dict] = [_mod_item_to_dict(item) for item in raw_items]
 
-            filter_service = FilterService()
+            filter_service = FilterService(llm_client=create_llm_filter_client(self.session))
             filtered = filter_service.apply_filters(rule, all_mods, self.session)
 
             now = datetime.now(timezone.utc).isoformat()

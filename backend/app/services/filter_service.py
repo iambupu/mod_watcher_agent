@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -16,22 +15,48 @@ class FilterService:
       2. LLM-assisted filter (only if llmFilter.enabled=true)
     """
 
-    def __init__(self, llm_client: Callable[..., list[dict]] | None = None):
+    def __init__(self, llm_client: Callable[..., Any] | None = None):
         self.llm_client = llm_client
 
     def apply_filters(
         self, rule: Any, mods: list[dict], db_session: Session
     ) -> list[dict]:
         filters = self._parse_filters(rule)
+        self.rejected_reasons: dict[str, int] = {}
+        self.rejected_items: list[dict] = []
 
-        passed = [
-            m for m in mods if self._passes_deterministic(m, filters)
-        ]
+        deterministic_passed: list[dict] = []
+        for mod in mods:
+            reject_reason = self._get_deterministic_reject_reason(mod, filters)
+            if reject_reason is None:
+                deterministic_passed.append(mod)
+                continue
+            self._record_rejection(mod, reject_reason, stage="deterministic")
+
+        self.stats = {
+            "passed_deterministic": len(deterministic_passed),
+            # If LLM filter is disabled, semantic equals deterministic pass count.
+            "passed_llm": len(deterministic_passed),
+        }
 
         if filters.llmFilter.enabled and self.llm_client:
-            passed = self._apply_llm_filter(passed, filters)
+            llm_passed = self._apply_llm_filter(deterministic_passed, filters)
+        else:
+            llm_passed = deterministic_passed
 
-        return self._deduplicate(passed, db_session)
+        self.stats["passed_llm"] = len(llm_passed)
+
+        deduplicated = self._deduplicate(llm_passed, db_session)
+        accepted_ids = {
+            f"{m.get('source', '')}:{m.get('external_id', '')}" for m in deduplicated
+        }
+        for mod in llm_passed:
+            mod_key = f"{mod.get('source', '')}:{mod.get('external_id', '')}"
+            if mod_key in accepted_ids:
+                continue
+            self._record_rejection(mod, "already_exists_or_ignored", stage="deduplicate")
+
+        return deduplicated
 
     def _parse_filters(self, rule: Any) -> CommonRuleFilters:
         if hasattr(rule, "filters_json"):
@@ -40,110 +65,88 @@ class FilterService:
             return rule
         raise ValueError(f"Cannot parse filters from rule type: {type(rule)}")
 
-    def _passes_deterministic(
+    def _get_deterministic_reject_reason(
         self, mod: dict, filters: CommonRuleFilters
-    ) -> bool:
-        if not self._filter_by_keywords(
-            mod, filters.includeKeywords, filters.excludeKeywords
-        ):
-            return False
-        if not self._filter_by_stats(
-            mod,
-            filters.minDownloads,
-            filters.minEndorsements,
-            filters.minLikes,
-        ):
-            return False
-        if not self._filter_by_updated_within(mod, filters.updatedWithinDays):
-            return False
-        if not self._filter_by_adult(mod, filters.adultPolicy):
-            return False
-        if not self._filter_by_missing_metrics(mod, filters):
-            return False
-        return True
+    ) -> str | None:
+        text = ((mod.get("title") or "") + " " + (mod.get("original_summary") or "")).lower()
+        include_keywords = filters.includeKeywords or []
+        exclude_keywords = filters.excludeKeywords or []
+        if include_keywords and not any(kw.lower() in text for kw in include_keywords):
+            return "include_keywords_mismatch"
+        if exclude_keywords and any(kw.lower() in text for kw in exclude_keywords):
+            return "exclude_keywords_hit"
 
-    def _filter_by_keywords(
-        self,
-        mod: dict,
-        include_keywords: list[str],
-        exclude_keywords: list[str],
-    ) -> bool:
-        text = (mod.get("title") or "") + " " + (mod.get("original_summary") or "")
-        text = text.lower()
+        downloads = mod.get("downloads")
+        endorsements = mod.get("endorsements")
+        likes = mod.get("likes")
+        if filters.minDownloads is not None and (downloads or 0) < filters.minDownloads:
+            return "min_downloads_not_met"
+        if filters.minEndorsements is not None and (endorsements or 0) < filters.minEndorsements:
+            return "min_endorsements_not_met"
+        if filters.minLikes is not None and (likes or 0) < filters.minLikes:
+            return "min_likes_not_met"
 
-        if include_keywords:
-            if not any(kw.lower() in text for kw in include_keywords):
-                return False
+        if filters.updatedWithinDays is not None:
+            updated_str = mod.get("updated_at_remote") or mod.get("published_at_remote")
+            if updated_str:
+                try:
+                    updated = datetime.fromisoformat(updated_str)
+                    age_hours = (datetime.now(timezone.utc) - updated).total_seconds() / 3600
+                    if age_hours > filters.updatedWithinDays * 24:
+                        return "updated_within_days_not_met"
+                except (ValueError, TypeError):
+                    pass
 
-        if exclude_keywords:
-            if any(kw.lower() in text for kw in exclude_keywords):
-                return False
-
-        return True
-
-    def _filter_by_stats(
-        self,
-        mod: dict,
-        min_downloads: int | None,
-        min_endorsements: int | None,
-        min_likes: int | None,
-    ) -> bool:
-        if min_downloads is not None and (mod.get("downloads") or 0) < min_downloads:
-            return False
-        if min_endorsements is not None and (mod.get("endorsements") or 0) < min_endorsements:
-            return False
-        if min_likes is not None and (mod.get("likes") or 0) < min_likes:
-            return False
-        return True
-
-    def _filter_by_updated_within(
-        self, mod: dict, updated_within_days: int | None
-    ) -> bool:
-        if updated_within_days is None:
-            return True
-        updated_str = mod.get("updated_at_remote") or mod.get("published_at_remote")
-        if not updated_str:
-            return True
-        try:
-            updated = datetime.fromisoformat(updated_str)
-            age_hours = (
-                datetime.now(timezone.utc) - updated
-            ).total_seconds() / 3600
-            return age_hours <= updated_within_days * 24
-        except (ValueError, TypeError):
-            return True
-
-    def _filter_by_adult(self, mod: dict, adult_policy: str) -> bool:
         is_adult = bool(mod.get("adult_content"))
+        if filters.adultPolicy == "exclude" and is_adult:
+            return "adult_content_excluded"
+        if filters.adultPolicy == "only" and not is_adult:
+            return "adult_content_only_not_met"
 
-        if adult_policy == "exclude" and is_adult:
-            return False
+        if filters.missingMetricsPolicy == "reject":
+            has_downloads = (downloads or 0) > 0
+            has_endorsements = (endorsements or 0) > 0
+            has_likes = (likes or 0) > 0
+            if not (has_downloads or has_endorsements or has_likes):
+                return "missing_metrics_rejected"
 
-        if adult_policy == "only" and not is_adult:
-            return False
-
-        return True
-
-    def _filter_by_missing_metrics(
-        self, mod: dict, filters: CommonRuleFilters
-    ) -> bool:
-        if filters.missingMetricsPolicy != "reject":
-            return True
-
-        has_downloads = (mod.get("downloads") or 0) > 0
-        has_endorsements = (mod.get("endorsements") or 0) > 0
-        has_likes = (mod.get("likes") or 0) > 0
-
-        if not (has_downloads or has_endorsements or has_likes):
-            return False
-        return True
+        return None
 
     def _apply_llm_filter(
         self, mods: list[dict], filters: CommonRuleFilters
     ) -> list[dict]:
         if not mods:
             return []
-        return self.llm_client(mods, filters.llmFilter)
+        llm_result: Any = None
+        try:
+            llm_result = self.llm_client(mods, filters.llmFilter, return_details=True)
+        except TypeError:
+            llm_result = self.llm_client(mods, filters.llmFilter)
+
+        if isinstance(llm_result, dict) and isinstance(llm_result.get("items"), list):
+            passed = llm_result.get("items") or []
+            details = llm_result.get("details") or []
+            for detail in details:
+                if detail.get("decision") == "reject":
+                    mod = detail.get("mod") or {}
+                    self._record_rejection(
+                        mod,
+                        "llm_rejected",
+                        stage="llm",
+                        llm_feedback=detail.get("feedback") or "",
+                    )
+            return passed
+
+        passed = llm_result if isinstance(llm_result, list) else []
+        passed_keys = {
+            f"{m.get('source', '')}:{m.get('external_id', '')}" for m in passed
+        }
+        for mod in mods:
+            mod_key = f"{mod.get('source', '')}:{mod.get('external_id', '')}"
+            if mod_key in passed_keys:
+                continue
+            self._record_rejection(mod, "llm_rejected", stage="llm")
+        return passed
 
     def _deduplicate(
         self, mods: list[dict], db_session: Session
@@ -167,3 +170,25 @@ class FilterService:
             if f"{m['source']}:{m['external_id']}" not in existing_ids
             and f"{m['source']}:{m['external_id']}" not in ignored_ids
         ]
+
+    def _record_rejection(
+        self,
+        mod: dict,
+        reason: str,
+        *,
+        stage: str,
+        llm_feedback: str = "",
+    ) -> None:
+        self.rejected_reasons[reason] = self.rejected_reasons.get(reason, 0) + 1
+        self.rejected_items.append(
+            {
+                "source": mod.get("source", ""),
+                "externalId": str(mod.get("external_id", "")),
+                "title": mod.get("title", ""),
+                "game": mod.get("game", ""),
+                "url": mod.get("url", ""),
+                "reason": reason,
+                "stage": stage,
+                "llmFeedback": llm_feedback,
+            }
+        )

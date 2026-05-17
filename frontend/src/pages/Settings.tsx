@@ -17,7 +17,7 @@ const PROVIDER_OPTIONS: { provider: LlmProvider; label: string; defaultModel: st
   { provider: "anthropic", label: "Anthropic", defaultModel: "claude-3-5-haiku-latest" },
   { provider: "gemini", label: "Google Gemini", defaultModel: "gemini-2.0-flash" },
   { provider: "groq", label: "Groq", defaultModel: "mixtral-8x7b-32768" },
-  { provider: "deepseek", label: "DeepSeek", defaultModel: "deepseek-chat" },
+  { provider: "deepseek", label: "DeepSeek", defaultModel: "deepseek-v4-flash" },
   { provider: "openrouter", label: "OpenRouter", defaultModel: "gpt-4o-mini" },
 ];
 
@@ -385,6 +385,7 @@ const Settings: React.FC = () => {
                     placeholder="nexusmods.com personal API key"
                     help={{ titleKey: "settings.help.nexusKey.title", stepsKey: "settings.help.nexusKey.steps", stepCount: 4 }}
                   />
+                  <p className="text-xs text-amber-600">{t("settings.plaintextWarning")}</p>
                 </div>
               </CardContent>
             </Card>

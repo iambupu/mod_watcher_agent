@@ -5,15 +5,18 @@ import type { RuleTestResponse } from "@/types";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, options?: Record<string, unknown>) => {
+    t: (key: string, options?: Record<string, unknown> | string) => {
       if (key === "rules.test.title") return "Rule Test Results";
       if (key === "rules.test.scanned") return "Scanned";
       if (key === "rules.test.normalized") return "Normalized";
       if (key === "rules.test.passedDeterministic") return "Passed Deterministic Filter";
       if (key === "rules.test.passedLlm") return "Passed LLM Filter";
       if (key === "rules.test.rejectedReasons") return "Rejected Reasons";
+      if (key === "rules.test.rejectedItems") return `Rejected Items ${(options as Record<string, unknown>)?.count}`;
+      if (key === "rules.test.llmFeedback") return "LLM Feedback";
       if (key === "rules.test.noResults") return "No Results";
-      if (key === "rules.matchCount") return `Matched ${options?.count} items`;
+      if (key === "rules.matchCount") return `Matched ${(options as Record<string, unknown>)?.count} items`;
+      if (typeof options === "string") return options;
       return key;
     },
     i18n: { language: "en-US" },
@@ -27,6 +30,7 @@ function makeResult(overrides?: Partial<RuleTestResponse>): RuleTestResponse {
     passedDeterministicFilters: 42,
     passedLlmFilters: 30,
     rejectedReasons: {},
+    rejectedItems: [],
     items: [],
     ...overrides,
   };
@@ -67,6 +71,32 @@ describe("RuleTestResult", () => {
     expect(screen.getByText("Rejected Reasons")).toBeInTheDocument();
     expect(screen.getByText("Downloads too low: 2")).toBeInTheDocument();
     expect(screen.getByText("Adult content excluded: 1")).toBeInTheDocument();
+  });
+
+  it("renders_rejected_item_details", () => {
+    render(
+      <RuleTestResultPanel
+        result={makeResult({
+          rejectedReasons: { llm_rejected: 1 },
+          rejectedItems: [
+            {
+              source: "nexusmods",
+              externalId: "1001",
+              title: "Rejected Mod",
+              game: "Skyrim",
+              url: "https://example.com/mod/1001",
+              reason: "llm_rejected",
+              stage: "llm",
+              llmFeedback: "not relevant",
+            },
+          ],
+        })}
+      />
+    );
+
+    expect(screen.getByText("Rejected Items 1")).toBeInTheDocument();
+    expect(screen.getByText("Rejected Mod")).toBeInTheDocument();
+    expect(screen.getByText("LLM Feedback: not relevant")).toBeInTheDocument();
   });
 
   it("renders_item_list", () => {

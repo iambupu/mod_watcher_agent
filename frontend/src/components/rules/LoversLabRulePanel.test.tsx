@@ -48,7 +48,7 @@ describe("LoversLabRulePanel", () => {
     expect(screen.queryByPlaceholderText("rules.loverslab.feedUrlsPlaceholder")).not.toBeInTheDocument();
 
     const select = container.querySelectorAll("select")[0] as HTMLSelectElement;
-    await user.selectOptions(select, "feed");
+    await user.selectOptions(select, "rss");
 
     expect(screen.getByPlaceholderText("rules.loverslab.feedUrlsPlaceholder")).toBeInTheDocument();
   });
@@ -58,7 +58,7 @@ describe("LoversLabRulePanel", () => {
     const { container } = render(<LoversLabRulePanel />);
 
     const select = container.querySelectorAll("select")[0] as HTMLSelectElement;
-    await user.selectOptions(select, "feed");
+    await user.selectOptions(select, "rss");
 
     expect(screen.getByPlaceholderText("rules.loverslab.feedUrlsPlaceholder")).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("rules.loverslab.pageUrlsPlaceholder")).not.toBeInTheDocument();
@@ -96,7 +96,7 @@ describe("LoversLabRulePanel", () => {
           feedUrls: ["https://example.com/feed1", "https://example.com/feed2"],
           pageUrls: ["https://example.com/page1"],
           maxItemsPerRun: 50,
-          updateDetection: "timestamp",
+          updateDetection: "page_hash",
         },
       },
     });

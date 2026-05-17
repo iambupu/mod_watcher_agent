@@ -33,7 +33,7 @@ class SettingsService:
                 "provider": "deepseek",
                 "enabled": False,
                 "priority": 3,
-                "model": "deepseek-chat",
+                "model": "deepseek-v4-flash",
                 "api_key": "",
                 "base_url": "https://api.deepseek.com/v1",
             },

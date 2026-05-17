@@ -1,6 +1,9 @@
 import json
 import logging
+import concurrent.futures
+import socket
 from datetime import datetime, timezone
+from ipaddress import ip_address
 from urllib.parse import urlparse
 
 import httpx
@@ -22,6 +25,7 @@ from app.schemas.watch_rule import (
 )
 from app.services.discovery_service import DiscoveryService, _mod_item_to_dict
 from app.services.filter_service import FilterService
+from app.services.llm_client import create_llm_filter_client
 from app.services.settings_service import SettingsService
 
 router = APIRouter(prefix="/api/rules", tags=["rules"])
@@ -69,12 +73,22 @@ def _import_rules_payload_from_url(url: str) -> list[dict]:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         raise HTTPException(status_code=422, detail="Only http/https URLs are allowed")
+
+    # SSRF guard: resolve host and reject private / loopback / link-local IPs.
+    _require_public_host(parsed.hostname)
+
     try:
         with httpx.Client(timeout=15.0, follow_redirects=True) as client:
             resp = client.get(url)
             resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch rules from URL: {exc}") from exc
+
+    # Re-check the final URL after redirects.
+    if str(resp.url) != url:
+        final = urlparse(str(resp.url))
+        _require_public_host(final.hostname)
+
     try:
         data = resp.json()
     except ValueError as exc:
@@ -84,6 +98,24 @@ def _import_rules_payload_from_url(url: str) -> list[dict]:
     if isinstance(data, list):
         return data
     raise HTTPException(status_code=422, detail="Imported JSON must be an array or {\"rules\": [...]}")
+
+
+def _require_public_host(hostname: str | None) -> None:
+    if not hostname:
+        raise HTTPException(status_code=422, detail="URL must include a hostname")
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(socket.getaddrinfo, hostname, None)
+            addrs = future.result(timeout=30.0)
+    except (socket.gaierror, concurrent.futures.TimeoutError, ValueError):
+        raise HTTPException(status_code=422, detail="Unable to resolve host")
+    for _family, _type, _proto, _name, sockaddr in addrs:
+        try:
+            ip = ip_address(sockaddr[0])
+        except ValueError:
+            continue
+        if ip.is_loopback or ip.is_private or ip.is_link_local:
+            raise HTTPException(status_code=422, detail="Private or loopback hosts are not allowed")
 
 
 @router.get("", response_model=list[WatchRuleRead])
@@ -299,21 +331,26 @@ async def test_rule(
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     all_mods = [_mod_item_to_dict(item) for item in raw_items]
-    filtered_items = FilterService().apply_filters(preview_rule, all_mods, session)
+    filter_service = FilterService(llm_client=create_llm_filter_client(session))
+    filtered_items = filter_service.apply_filters(preview_rule, all_mods, session)
     scanned = len(raw_items)
     normalized = len(all_mods)
-    passed_deterministic = len(filtered_items)
 
     response = RuleTestResponse(
         scanned=scanned,
         normalized=normalized,
-        passedDeterministicFilters=passed_deterministic,
-        passedLlmFilters=passed_deterministic,
-        rejectedReasons={
-            "filtered": max(0, normalized - passed_deterministic),
-        },
+        passedDeterministicFilters=filter_service.stats["passed_deterministic"],
+        passedLlmFilters=filter_service.stats["passed_llm"],
+        rejectedReasons=filter_service.rejected_reasons,
+        rejectedItems=filter_service.rejected_items[:100],
         items=filtered_items[:20],
     )
+    if filter_service.rejected_items:
+        logger.info(
+            "Rule test rejected items for '%s': %s",
+            rule_data.name,
+            json.dumps(filter_service.rejected_items[:100], ensure_ascii=False),
+        )
     return response
 
 

@@ -18,6 +18,9 @@ export const MissingMetricsPolicyField: React.FC<
       <label className="text-sm font-semibold text-gray-800">
         {t("rules.filters.missingMetricsPolicy")}
       </label>
+      <p className="text-xs text-gray-500">
+        {t("rules.filters.missingMetricsPolicyHelp")}
+      </p>
       <select
         value={missingMetricsPolicy ?? "pass"}
         onChange={(e) =>
