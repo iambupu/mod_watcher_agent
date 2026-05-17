@@ -105,6 +105,36 @@ def _merge_provider_keys(
     return json.dumps(incoming, ensure_ascii=False)
 
 
+def _restore_masked_provider_api_keys(
+    providers: list[dict],
+    existing_json: str | None,
+) -> list[dict]:
+    existing_map: dict[str, str] = {}
+    if existing_json:
+        try:
+            existing = json.loads(existing_json)
+            if isinstance(existing, list):
+                for item in existing:
+                    if isinstance(item, dict):
+                        provider = str(item.get("provider") or "")
+                        if provider:
+                            existing_map[provider] = str(item.get("api_key") or "")
+        except json.JSONDecodeError:
+            pass
+
+    restored: list[dict] = []
+    for item in providers:
+        if not isinstance(item, dict):
+            continue
+        copied = dict(item)
+        provider = str(copied.get("provider") or "")
+        api_key = str(copied.get("api_key") or "")
+        if api_key == MASKED_VALUE:
+            copied["api_key"] = existing_map.get(provider, "")
+        restored.append(copied)
+    return restored
+
+
 def _prepare_settings_update(
     service: SettingsService,
     items: dict[str, str],
@@ -268,13 +298,14 @@ async def test_llm_providers(
     body: dict = Body(default={}),
     session: Session = Depends(get_session),
 ):
+    svc = SettingsService(session)
     providers = body.get("providers")
     if not isinstance(providers, list):
-        svc = SettingsService(session)
         try:
             providers = json.loads(svc.get("llm_providers_json") or "[]")
         except json.JSONDecodeError:
             providers = []
+    providers = _restore_masked_provider_api_keys(providers, svc.get("llm_providers_json"))
     enabled = [p for p in providers if isinstance(p, dict) and p.get("enabled")]
     enabled.sort(key=lambda p: int(p.get("priority") or 999))
     results = []

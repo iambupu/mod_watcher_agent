@@ -15,7 +15,11 @@ Set-Location $root
 $venvDir = Join-Path $root ".venv"
 $venvPython = Join-Path $venvDir "Scripts\\python.exe"
 $env:LOG_DIR = Join-Path $root "log"
+$backendPort = if ($env:MW_BACKEND_PORT) { [int]$env:MW_BACKEND_PORT } else { 17500 }
+$frontendDevPort = if ($env:MW_FRONTEND_DEV_PORT) { [int]$env:MW_FRONTEND_DEV_PORT } else { 17501 }
 $frontendMode = if ($DevMode) { "dev" } else { "static" }
+$nodeCmd = $null
+$npmCmd = $null
 
 function Test-LocalPortReady {
     param([int]$Port)
@@ -176,36 +180,204 @@ function Ensure-FrontendStaticBuild {
     exit 1
 }
 
+function Test-NodeRuntime {
+    param([string]$NodePath)
+
+    $script = @"
+const cp = require('child_process');
+const major = Number(process.versions.node.split('.')[0]);
+if (!Number.isFinite(major) || major < 18) {
+  console.log('Node.js 18+ required, found ' + process.version);
+  process.exit(2);
+}
+const result = cp.spawnSync(process.execPath, ['-v'], { encoding: 'utf8' });
+if (result.error) {
+  console.log(String(result.error.code || result.error.message || 'spawn failed'));
+  process.exit(3);
+}
+console.log(process.version);
+"@
+
+    $oldErrPref = $ErrorActionPreference
+    $oldNativePref = $null
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $oldNativePref = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = @(& $NodePath -e $script 2>&1)
+        $ok = ($LASTEXITCODE -eq 0)
+        $message = ($output | Out-String).Trim()
+        return [PSCustomObject]@{
+            Ok = $ok
+            Message = $message
+            Major = if ($message -match '^v(\d+)\.') { [int]$Matches[1] } else { 0 }
+        }
+    } catch {
+        $message = ($_.Exception.Message -replace "\r?\n", " " -replace "At [A-Za-z]:\\.*$", "").Trim()
+        return [PSCustomObject]@{
+            Ok = $false
+            Message = $message
+            Major = 0
+        }
+    } finally {
+        $ErrorActionPreference = $oldErrPref
+        if ($null -ne $oldNativePref) {
+            $PSNativeCommandUseErrorActionPreference = $oldNativePref
+        }
+    }
+}
+
+function Get-NpmForNode {
+    param([string]$NodePath)
+
+    $nodeDir = Split-Path -Parent $NodePath
+    $localNpm = Join-Path $nodeDir "npm.cmd"
+    if (Test-Path $localNpm) {
+        return $localNpm
+    }
+    $globalNpm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if ($globalNpm) {
+        return $globalNpm.Source
+    }
+    return "npm.cmd"
+}
+
+function Resolve-NodeRuntime {
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    if ($env:MW_NODE) {
+        $candidates.Add($env:MW_NODE)
+    }
+
+    foreach ($cmd in @(Get-Command node.exe -All -ErrorAction SilentlyContinue)) {
+        if ($cmd.Source) {
+            $candidates.Add($cmd.Source)
+        }
+    }
+
+    $commonPaths = @(
+        (Join-Path $env:ProgramFiles "nodejs\node.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "nodejs\node.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\nodejs\node.exe"),
+        (Join-Path $env:LOCALAPPDATA "Reasonix\node.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\LM Studio\resources\app\.webpack\bin\node.exe")
+    )
+    foreach ($path in $commonPaths) {
+        if ($path) {
+            $candidates.Add($path)
+        }
+    }
+
+    $nvmRoots = @(
+        (Join-Path $env:APPDATA "nvm"),
+        (Join-Path $env:LOCALAPPDATA "nvm")
+    )
+    foreach ($nvmRoot in $nvmRoots) {
+        if (Test-Path $nvmRoot) {
+            foreach ($node in @(Get-ChildItem -Path $nvmRoot -Filter node.exe -Recurse -ErrorAction SilentlyContinue)) {
+                $candidates.Add($node.FullName)
+            }
+        }
+    }
+
+    $runtimeRoots = @(
+        (Join-Path $env:LOCALAPPDATA "JetBrains\acp-agents\.runtimes\node"),
+        (Join-Path $env:LOCALAPPDATA "OpenAI\Codex\bin"),
+        (Join-Path $env:LOCALAPPDATA "Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\OpenAI\Codex\bin")
+    )
+    foreach ($runtimeRoot in $runtimeRoots) {
+        if (Test-Path $runtimeRoot) {
+            foreach ($node in @(Get-ChildItem -Path $runtimeRoot -Filter node.exe -Recurse -ErrorAction SilentlyContinue)) {
+                $candidates.Add($node.FullName)
+            }
+        }
+    }
+
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    $failures = New-Object System.Collections.Generic.List[string]
+    $working = New-Object System.Collections.Generic.List[object]
+    $ordinal = 0
+    foreach ($candidate in $candidates) {
+        $ordinal += 1
+        if (-not $candidate) {
+            continue
+        }
+        $resolved = $candidate
+        if (Test-Path $candidate) {
+            $resolved = (Resolve-Path -LiteralPath $candidate).Path
+        }
+        if (-not $seen.Add($resolved.ToLowerInvariant())) {
+            continue
+        }
+        if (-not (Test-Path $resolved)) {
+            continue
+        }
+
+        $check = Test-NodeRuntime $resolved
+        if ($check.Ok) {
+            $working.Add([PSCustomObject]@{
+                Node = $resolved
+                Npm = Get-NpmForNode $resolved
+                Version = $check.Message
+                Major = $check.Major
+                Ordinal = $ordinal
+                LtsRank = if ($check.Major -eq 22) { 0 } elseif ($check.Major -eq 20) { 1 } else { 2 }
+            })
+            continue
+        }
+        $failures.Add("$resolved => $($check.Message)")
+    }
+
+    if ($working.Count -gt 0) {
+        return $working |
+            Sort-Object LtsRank, @{ Expression = "Major"; Descending = $true }, Ordinal |
+            Select-Object -First 1
+    }
+
+    if ($failures.Count -gt 0) {
+        Write-Host "[X] Checked Node candidates, none can run Vite safely:" -ForegroundColor Red
+        foreach ($failure in $failures) {
+            Write-Host "    $failure" -ForegroundColor Red
+        }
+    }
+    return $null
+}
+
 function Ensure-FrontendDevDependencies {
-    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-        Write-Host "[X] Node.js 18+ required for development mode" -ForegroundColor Red
+    $runtime = Resolve-NodeRuntime
+    if ($null -eq $runtime) {
+        Write-Host "[X] Node.js 18+ with working child_process.spawn is required for debug mode" -ForegroundColor Red
+        Write-Host "    Install Node.js LTS 20/22, or set MW_NODE to a working node.exe path." -ForegroundColor Yellow
         if (-not $Tray) { Pause }
         exit 1
     }
-    node -e "const r=require('child_process').spawnSync(process.execPath,['-v'],{encoding:'utf8'}); if (r.error) { console.error(r.error.code || r.error.message); process.exit(1); }" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[X] Node.js cannot spawn child processes on this machine" -ForegroundColor Red
-        Write-Host "    Development mode needs a working Node.js LTS install (recommended: Node 20 or 22)." -ForegroundColor Yellow
-        Write-Host "    User mode does not require Node.js: use start-user.bat or start.bat." -ForegroundColor Yellow
-        if (-not $Tray) { Pause }
-        exit 1
-    }
+
+    $script:nodeCmd = $runtime.Node
+    $script:npmCmd = $runtime.Npm
+    $env:MW_NODE = $script:nodeCmd
+    $env:MW_NPM_CMD = $script:npmCmd
+    $nodeDir = Split-Path -Parent $script:nodeCmd
+    $env:PATH = "$nodeDir;$env:PATH"
+    Write-Host "[2/3] Node runtime OK ($($runtime.Version), $($script:nodeCmd))" -ForegroundColor Gray
+
     $nodeModules = Join-Path $root "frontend\\node_modules"
     # esbuild ships inside vite's own node_modules in recent npm versions
     $esbuildBin = Join-Path $root "frontend\\node_modules\\vite\\node_modules\\esbuild\\bin\\esbuild"
     if (Test-Path $nodeModules) {
         Push-Location (Join-Path $root "frontend")
         try {
-            & node $esbuildBin --version 2>$null | Out-Null
+            & $script:nodeCmd $esbuildBin --version 2>$null | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "[2/3] Frontend dependencies OK" -ForegroundColor Gray
                 return
             }
             Write-Host "[2/3] Frontend dependencies need repair..." -ForegroundColor Yellow
             Push-Location (Join-Path $root "frontend\node_modules\vite")
-            npm rebuild esbuild --silent
+            & $script:npmCmd rebuild esbuild --silent
             Pop-Location
-            & node $esbuildBin --version 2>$null | Out-Null
+            & $script:nodeCmd $esbuildBin --version 2>$null | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "[2/3] Frontend dependencies repaired" -ForegroundColor Gray
                 return
@@ -222,12 +394,12 @@ function Ensure-FrontendDevDependencies {
     Push-Location (Join-Path $root "frontend")
     try {
         if (Test-Path (Join-Path $root "frontend\\package-lock.json")) {
-            npm ci --silent
+            & $script:npmCmd ci --silent
         } else {
-            npm install --silent
+            & $script:npmCmd install --silent
         }
         if ($LASTEXITCODE -ne 0) { throw "Frontend install failed" }
-        & node $esbuildBin --version 2>$null | Out-Null
+        & $script:nodeCmd $esbuildBin --version 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Frontend dependency validation failed" }
         Write-Host "[2/3] Frontend dependencies OK" -ForegroundColor Gray
     } finally {
@@ -264,9 +436,9 @@ if ($Status) {
     exit $LASTEXITCODE
 }
 
-$serviceReady = Test-LocalPortReady 7500
+$serviceReady = Test-LocalPortReady $backendPort
 if ($frontendMode -eq "dev") {
-    $serviceReady = $serviceReady -and (Test-LocalPortReady 7501)
+    $serviceReady = $serviceReady -and (Test-LocalPortReady $frontendDevPort)
 }
 if ($serviceReady) {
     Write-Host "[i] Service already running; delegating to manager." -ForegroundColor Yellow
@@ -282,10 +454,10 @@ Ensure-Prerequisites
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  App      : http://localhost:7500" -ForegroundColor White
-Write-Host "  API Docs : http://localhost:7500/docs" -ForegroundColor White
+Write-Host "  App      : http://localhost:$backendPort" -ForegroundColor White
+Write-Host "  API Docs : http://localhost:$backendPort/docs" -ForegroundColor White
 if ($frontendMode -eq "dev") {
-    Write-Host "  Frontend : http://localhost:7501" -ForegroundColor White
+    Write-Host "  Frontend : http://localhost:$frontendDevPort" -ForegroundColor White
 }
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""

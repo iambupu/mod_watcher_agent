@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="mwlogo.png" alt="Mod Watcher Agent" width="160" />
+  <img src="docs/mwlogo.png" alt="Mod Watcher Agent" width="160" />
 </p>
 
 <h1 align="center">Mod Watcher Agent</h1>
@@ -8,8 +8,21 @@
 
 核心原则：只保存公开元数据，不下载、不镜像、不绕过权限。
 
+<p align="center">
+  <img src="docs/ModWatcherAgent.png" alt="ModWatcherAgent" width="95%" />
+</p>
+
+<p align="center">
+  <img src="docs/ModWatcherAgentFavorites.png" alt="ModWatcherAgentFavorites" width="95%" />
+</p>
+
+<p align="center">
+  <img src="docs/ModWatcherAgentAgent.png" alt="ModWatcherAgentAgent" width="95%" />
+</p>
+
 ## 目录
 
+- [目录](#目录)
 - [概览](#概览)
 - [你是普通用户还是开发者？](#你是普通用户还是开发者)
 - [普通用户快速开始](#普通用户快速开始)
@@ -35,8 +48,8 @@
 
 默认端口：
 
-- 应用（发布版前端 + API）：`http://localhost:7500`
-- 前端开发服务器（Vite，仅开发者）：`http://localhost:7501`
+- 应用（发布版前端 + API）：`http://localhost:17500`
+- 前端开发服务器（Vite，仅开发者）：`http://localhost:17501`
 
 ## 普通用户快速开始
 
@@ -44,7 +57,7 @@
 
 1. 解压 Release 包（需包含 `frontend/dist`）。
 2. 双击 `start-user.bat`。
-3. 打开 `http://localhost:7500`，进入「设置」填写必要的 API Key 与通知配置。
+3. 打开 `http://localhost:17500`，进入「设置」填写必要的 API Key 与通知配置。
 
 常用命令：
 
@@ -68,7 +81,7 @@
 
 适用场景：你要改代码、调试前端/后端、跑测试。
 
-前置：Python 3.11+、Node.js（建议 20/22 LTS）。
+前置：Python 3.11+、Node.js（建议 20/22 LTS）。开发者模式会启动 Vite，Node 必须能正常执行 `child_process.spawn`。
 
 一键启动（源码模式）：
 
@@ -84,7 +97,7 @@ cd backend
 copy .env.example .env
 python -m venv ..\.venv
 ..\.venv\Scripts\python -m pip install -e .[dev]
-..\.venv\Scripts\python -m uvicorn app.main:app --reload --port 7500
+..\.venv\Scripts\python -m uvicorn app.main:app --reload --port 17500
 
 # 前端（开发）
 cd ..\frontend
@@ -97,6 +110,19 @@ npm run dev
 ```powershell
 .\start-user.bat /stop
 ```
+
+指定 Python / Node 运行时：
+
+启动脚本会自动发现 Python 3.11+ 和可用的 Node。若机器上安装了多个版本，或默认发现结果不可用，可以通过环境变量指定：
+
+```powershell
+$env:MW_PYTHON = "C:\Users\you\AppData\Local\Programs\Python\Python312\python.exe"
+$env:MW_NODE = "C:\Program Files\nodejs\node.exe"
+.\start-debug.bat
+```
+
+- `MW_PYTHON`：用于创建/校验 `.venv`，要求 Python 3.11+。
+- `MW_NODE`：用于开发者模式启动 Vite，要求 Node 18+，且能正常执行 `child_process.spawn`。
 
 ## Docker 部署
 
@@ -116,16 +142,16 @@ docker compose up -d
 
 Docker 默认：
 
-- 应用（Nginx）：`http://localhost:7501`
-- 后端 API：`http://localhost:7500`
+- 应用（Nginx）：`http://localhost:17501`
+- 后端 API：`http://localhost:17500`
 
 说明：Docker Compose 使用仓库根目录 `.env`（被 `docker-compose.yml` 的 `env_file: .env` 引用）。
 
 ## 常见问题与排查
 
 - 页面显示 `{"detail":"Not Found"}`：确认是否使用了发布版前端（`frontend/dist/index.html`），或停止旧进程后重启。
-- `7501` 被占用：可能是旧的前端开发实例未停止，运行 `start.bat /stop` 后重启。
-- Vite 报 `spawn EPERM`：尝试安装 Node 20/22 LTS 并重启终端。
+- `17501` 被占用：可能是旧的前端开发实例未停止，运行 `start.bat /stop` 后重启。
+- Vite 报 `spawn EPERM`：`start-debug.bat` 会自动扫描可用 Node；如果全部失败，安装 Node 20/22 LTS，或用 `MW_NODE` 指向一个可用的 `node.exe`。
 
 ## 配置说明（常用）
 

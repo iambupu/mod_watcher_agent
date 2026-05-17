@@ -30,6 +30,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="127.0.0.1",
-        port=7500,
+        port=17500,
         log_config=None,
     )

@@ -44,8 +44,9 @@ describe("NotificationSection", () => {
     render(<NotificationSection />);
     expect(screen.getByText("rules.notification.mode")).toBeInTheDocument();
     expect(screen.getByText("rules.notification.channels")).toBeInTheDocument();
-    expect(screen.getByLabelText("Telegram")).toBeInTheDocument();
-    expect(screen.getByLabelText("Discord")).toBeInTheDocument();
+    expect(screen.getByLabelText("rules.notification.channelDesktop")).toBeInTheDocument();
+    expect(screen.getByLabelText("rules.notification.channelTelegram")).toBeInTheDocument();
+    expect(screen.getByLabelText("rules.notification.channelDiscord")).toBeInTheDocument();
   });
 
   it("hides mode and channels when notification disabled", async () => {
@@ -75,27 +76,34 @@ describe("NotificationSection", () => {
     const user = userEvent.setup();
     render(<NotificationSection />);
 
-    const telegramCb = screen.getByLabelText("Telegram");
-    const discordCb = screen.getByLabelText("Discord");
+    const desktopCb = screen.getByLabelText("rules.notification.channelDesktop");
+    const telegramCb = screen.getByLabelText("rules.notification.channelTelegram");
+    const discordCb = screen.getByLabelText("rules.notification.channelDiscord");
 
     // Initially unchecked
+    expect(desktopCb).not.toBeChecked();
     expect(telegramCb).not.toBeChecked();
     expect(discordCb).not.toBeChecked();
 
+    // Check system notifications
+    await user.click(desktopCb);
+    let state = useRuleEditorStore.getState();
+    expect(state.draft.notification.channels).toEqual(["desktop"]);
+
     // Check Telegram
     await user.click(telegramCb);
-    let state = useRuleEditorStore.getState();
-    expect(state.draft.notification.channels).toEqual(["telegram"]);
+    state = useRuleEditorStore.getState();
+    expect(state.draft.notification.channels).toEqual(["desktop", "telegram"]);
 
     // Check Discord
     await user.click(discordCb);
     state = useRuleEditorStore.getState();
-    expect(state.draft.notification.channels).toEqual(["telegram", "discord"]);
+    expect(state.draft.notification.channels).toEqual(["desktop", "telegram", "discord"]);
 
     // Uncheck Telegram
     await user.click(telegramCb);
     state = useRuleEditorStore.getState();
-    expect(state.draft.notification.channels).toEqual(["discord"]);
+    expect(state.draft.notification.channels).toEqual(["desktop", "discord"]);
   });
 
   it("reads notification config from store", () => {

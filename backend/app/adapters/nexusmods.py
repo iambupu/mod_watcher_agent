@@ -70,7 +70,7 @@ class NexusModsAdapter(BaseAdapter):
         headers = {
             "Content-Type": "application/json",
             "Application-Name": "ModWatcherAgent",
-            "Application-Version": "0.1.1",
+            "Application-Version": "0.1.2",
         }
         if self.api_key:
             headers["apikey"] = self.api_key
@@ -100,17 +100,18 @@ class NexusModsAdapter(BaseAdapter):
                 ]
             }
         ]
-        date_field = "updatedAt" if config.queryMode == "updated" else "createdAt"
-        clauses.append(
-            {
-                date_field: [
-                    {
-                        "op": "GTE",
-                        "value": _unix_timestamp_days_ago(config.updatedSinceDays),
-                    }
-                ]
-            }
-        )
+        if config.queryMode is not None:
+            date_field = "updatedAt" if config.queryMode == "updated" else "createdAt"
+            clauses.append(
+                {
+                    date_field: [
+                        {
+                            "op": "GTE",
+                            "value": _unix_timestamp_days_ago(config.updatedSinceDays),
+                        }
+                    ]
+                }
+            )
         for category_name in config.categoryNames:
             if category_name:
                 clauses.append(

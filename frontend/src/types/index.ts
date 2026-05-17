@@ -117,13 +117,13 @@ export type RuleSource = ModSource;
 export type LlmFilterMode = "assist_only" | "must_pass";
 export type NotifyMode = "instant" | "daily_digest" | "weekly_digest";
 export type MissingMetricsPolicy = "pass" | "reject";
-export type AccessMode = "feed" | "page" | "both";
+export type AccessMode = "rss" | "page" | "both";
 
 export interface NexusModsRuleConfig {
   gameDomainName: string;
   updatedSinceDays: number;
-  queryMode?: string;
-  sortBy?: string;
+  queryMode?: "updated" | "created";
+  sortBy?: "updatedAt_desc" | "createdAt_desc" | "downloads_desc" | "endorsements_desc";
   categoryNames?: string[];
   tags?: string[];
 }
@@ -134,7 +134,7 @@ export interface LoversLabRuleConfig {
   feedUrls?: string[];
   pageUrls?: string[];
   maxItemsPerRun?: number;
-  updateDetection?: string;
+  updateDetection?: "published_time" | "updated_time" | "page_hash";
 }
 
 export interface LlmFilterConfig {
@@ -186,6 +186,16 @@ export interface RuleTestResponse {
   passedDeterministicFilters: number;
   passedLlmFilters: number;
   rejectedReasons: Record<string, number>;
+  rejectedItems: {
+    source: string;
+    externalId: string;
+    title: string;
+    game: string;
+    url: string;
+    reason: string;
+    stage: "deterministic" | "llm" | "deduplicate" | string;
+    llmFeedback?: string;
+  }[];
   items: ModItem[];
 }
 

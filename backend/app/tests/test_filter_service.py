@@ -256,37 +256,45 @@ class TestApplyFiltersV2:
 class TestKeywordFilter:
     def test_include_match(self, service):
         mod = _make_mod(title="Awesome Sword Mod")
-        assert service._filter_by_keywords(mod, ["sword"], []) is True
+        filters = CommonRuleFilters(includeKeywords=["sword"], excludeKeywords=[])
+        assert service._get_deterministic_reject_reason(mod, filters) is None
 
     def test_include_no_match(self, service):
         mod = _make_mod(title="Awesome Armor Mod")
-        assert service._filter_by_keywords(mod, ["sword"], []) is False
+        filters = CommonRuleFilters(includeKeywords=["sword"], excludeKeywords=[])
+        assert service._get_deterministic_reject_reason(mod, filters) == "include_keywords_mismatch"
 
     def test_exclude_match(self, service):
         mod = _make_mod(title="Cheat Sword Mod")
-        assert service._filter_by_keywords(mod, [], ["cheat"]) is False
+        filters = CommonRuleFilters(includeKeywords=[], excludeKeywords=["cheat"])
+        assert service._get_deterministic_reject_reason(mod, filters) == "exclude_keywords_hit"
 
     def test_exclude_no_match(self, service):
         mod = _make_mod(title="Legit Sword Mod")
-        assert service._filter_by_keywords(mod, [], ["cheat"]) is True
+        filters = CommonRuleFilters(includeKeywords=[], excludeKeywords=["cheat"])
+        assert service._get_deterministic_reject_reason(mod, filters) is None
 
     def test_empty_keywords_pass(self, service):
         mod = _make_mod(title="Anything")
-        assert service._filter_by_keywords(mod, [], []) is True
+        filters = CommonRuleFilters(includeKeywords=[], excludeKeywords=[])
+        assert service._get_deterministic_reject_reason(mod, filters) is None
 
 
 class TestAdultFilter:
     def test_include_passes_all(self, service):
-        assert service._filter_by_adult(_make_mod(adult_content=True), "include") is True
-        assert service._filter_by_adult(_make_mod(adult_content=False), "include") is True
+        filters = CommonRuleFilters(adultPolicy="include")
+        assert service._get_deterministic_reject_reason(_make_mod(adult_content=True), filters) is None
+        assert service._get_deterministic_reject_reason(_make_mod(adult_content=False), filters) is None
 
     def test_exclude_blocks_adult(self, service):
-        assert service._filter_by_adult(_make_mod(adult_content=True), "exclude") is False
-        assert service._filter_by_adult(_make_mod(adult_content=False), "exclude") is True
+        filters = CommonRuleFilters(adultPolicy="exclude")
+        assert service._get_deterministic_reject_reason(_make_mod(adult_content=True), filters) == "adult_content_excluded"
+        assert service._get_deterministic_reject_reason(_make_mod(adult_content=False), filters) is None
 
     def test_only_blocks_non_adult(self, service):
-        assert service._filter_by_adult(_make_mod(adult_content=True), "only") is True
-        assert service._filter_by_adult(_make_mod(adult_content=False), "only") is False
+        filters = CommonRuleFilters(adultPolicy="only")
+        assert service._get_deterministic_reject_reason(_make_mod(adult_content=True), filters) is None
+        assert service._get_deterministic_reject_reason(_make_mod(adult_content=False), filters) == "adult_content_only_not_met"
 
 
 class TestDeduplicate:

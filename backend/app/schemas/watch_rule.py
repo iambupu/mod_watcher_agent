@@ -15,7 +15,7 @@ class NexusModsRuleConfig(BaseModel):
     gameName: Optional[str] = Field(default=None, description="Human-readable game name")
     gameId: Optional[str] = Field(default=None, description="NexusMods internal game ID")
     updatedSinceDays: int = Field(ge=1, le=365, description="Monitor mods updated within this many days")
-    queryMode: Literal["updated", "created"] = Field(default="updated", description="Query by updated or created time")
+    queryMode: Optional[Literal["updated", "created"]] = Field(default=None, description="Query by updated or created time; omit for all")
     categoryNames: list[str] = Field(default_factory=list, description="NexusMods category names to include")
     tags: list[str] = Field(default_factory=list, description="Tags to filter by")
     sortBy: Literal[
@@ -28,7 +28,7 @@ class NexusModsRuleConfig(BaseModel):
 
 class LoversLabRuleConfig(BaseModel):
     gameLabel: str = Field(description="Game label, e.g. Skyrim SE / Fallout 4")
-    accessMode: Literal["rss", "page"] = Field(description="Access mode: RSS feed or page scraping")
+    accessMode: Literal["rss", "page", "both"] = Field(default="rss", description="Access mode: RSS feed, page scraping, or both")
     feedUrls: list[str] = Field(default_factory=list, description="RSS feed URLs (required for RSS mode)")
     pageUrls: list[str] = Field(default_factory=list, description="Page URLs (required for page mode)")
     updatedSinceDays: Optional[int] = Field(default=None, ge=1, le=365, description="Monitor within this many days")
@@ -136,10 +136,22 @@ class RuleTestRequest(BaseModel):
     dryRun: bool = Field(default=True, description="If true, do not persist results")
 
 
+class RuleTestRejectedItem(BaseModel):
+    source: str = Field(default="", description="Source platform")
+    externalId: str = Field(default="", description="Source item id")
+    title: str = Field(default="", description="Mod title")
+    game: str = Field(default="", description="Game name")
+    url: str = Field(default="", description="Mod URL")
+    reason: str = Field(default="", description="Machine-readable rejection reason")
+    stage: str = Field(default="", description="deterministic | llm | deduplicate")
+    llmFeedback: str = Field(default="", description="Optional LLM feedback text")
+
+
 class RuleTestResponse(BaseModel):
     scanned: int = Field(description="Number of items scanned")
     normalized: int = Field(description="Number of items after normalization")
     passedDeterministicFilters: int = Field(description="Items that passed deterministic filters")
     passedLlmFilters: int = Field(description="Items that passed LLM filters")
     rejectedReasons: dict[str, int] = Field(default_factory=dict, description="Counts grouped by rejection reason")
+    rejectedItems: list[RuleTestRejectedItem] = Field(default_factory=list, description="Rejected items with reasons")
     items: list[dict] = Field(default_factory=list, description="Preview items that passed all filters")

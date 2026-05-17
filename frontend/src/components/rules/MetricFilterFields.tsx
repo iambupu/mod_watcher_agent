@@ -38,11 +38,15 @@ export const MetricFilterFields: React.FC<MetricFilterFieldsProps> = ({
       <label className="block text-sm font-semibold text-gray-800">
         {t("rules.metrics")}
       </label>
+      <p className="text-xs text-gray-500">{t("rules.filters.metricsHelp")}</p>
       <div className="grid grid-cols-2 gap-2">
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-600">
             {t("rules.minDownloads")}
           </label>
+          <p className="text-xs text-gray-500">
+            {t("rules.filters.minDownloadsHelp")}
+          </p>
           <input
             type="number"
             min={0}
@@ -55,6 +59,9 @@ export const MetricFilterFields: React.FC<MetricFilterFieldsProps> = ({
           <label className="text-xs font-medium text-gray-600">
             {t("rules.minEndorsements")}
           </label>
+          <p className="text-xs text-gray-500">
+            {t("rules.filters.minEndorsementsHelp")}
+          </p>
           <input
             type="number"
             min={0}
@@ -67,6 +74,9 @@ export const MetricFilterFields: React.FC<MetricFilterFieldsProps> = ({
           <label className="text-xs font-medium text-gray-600">
             {t("rules.minLikes")}
           </label>
+          <p className="text-xs text-gray-500">
+            {t("rules.filters.minLikesHelp")}
+          </p>
           <input
             type="number"
             min={0}
@@ -79,6 +89,9 @@ export const MetricFilterFields: React.FC<MetricFilterFieldsProps> = ({
           <label className="text-xs font-medium text-gray-600">
             {t("rules.filters.updatedWithinDays")}
           </label>
+          <p className="text-xs text-gray-500">
+            {t("rules.filters.updatedWithinDaysHelp")}
+          </p>
           <input
             type="number"
             min={0}

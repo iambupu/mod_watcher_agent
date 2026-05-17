@@ -6,7 +6,6 @@ import { KeywordFilterEditor } from "./KeywordFilterEditor";
 import { MetricFilterFields } from "./MetricFilterFields";
 import { AdultPolicyField } from "./AdultPolicyField";
 import { MissingMetricsPolicyField } from "./MissingMetricsPolicyField";
-import { LlmFilterSection } from "./LlmFilterSection";
 
 export const CommonFilterSection: React.FC = () => {
   const { t } = useTranslation();
@@ -22,7 +21,10 @@ export const CommonFilterSection: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-4 rounded-lg border border-gray-200 p-4">
-      <h3 className="text-base font-semibold text-gray-900">{t("rules.filters.commonFilters")}</h3>
+      <div>
+        <h3 className="text-base font-semibold text-gray-900">{t("rules.filters.commonFilters")}</h3>
+        <p className="mt-1 text-xs text-gray-500">{t("rules.filters.commonFiltersHelp")}</p>
+      </div>
       <KeywordFilterEditor
         includeKeywords={includeKeywords}
         excludeKeywords={excludeKeywords}
@@ -41,10 +43,6 @@ export const CommonFilterSection: React.FC = () => {
       />
       <MissingMetricsPolicyField
         missingMetricsPolicy={commonFilters.missingMetricsPolicy}
-        onChange={handleChange}
-      />
-      <LlmFilterSection
-        llmFilter={commonFilters.llmFilter}
         onChange={handleChange}
       />
     </div>

@@ -5,7 +5,7 @@ import { useRuleEditorStore } from "@/stores/ruleEditorStore";
 import type { NotifyMode } from "@/types";
 
 const NOTIFY_MODES: NotifyMode[] = ["instant", "daily_digest", "weekly_digest"];
-const CHANNELS = ["telegram", "discord"] as const;
+const CHANNELS = ["desktop", "telegram", "discord"] as const;
 
 export const NotificationSection: React.FC = () => {
   const { t } = useTranslation();
@@ -16,6 +16,11 @@ export const NotificationSection: React.FC = () => {
     instant: "rules.notification.modeInstant",
     daily_digest: "rules.notification.modeDaily",
     weekly_digest: "rules.notification.modeWeekly",
+  };
+  const channelLabelKey: Record<(typeof CHANNELS)[number], string> = {
+    desktop: "rules.notification.channelDesktop",
+    telegram: "rules.notification.channelTelegram",
+    discord: "rules.notification.channelDiscord",
   };
 
   const toggleChannel = (channel: string) => {
@@ -75,7 +80,7 @@ export const NotificationSection: React.FC = () => {
                     onChange={() => toggleChannel(ch)}
                     className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
-                  {ch === "telegram" ? "Telegram" : "Discord"}
+                  {t(channelLabelKey[ch])}
                 </label>
               ))}
             </div>

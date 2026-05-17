@@ -49,6 +49,7 @@ frontend/.vite/
 # IDEs
 .vscode/
 .idea/
+.codex/
 
 # Logs and runtime data
 logs/
@@ -97,4 +98,5 @@ frontend/src/test-setup.ts
 
 # Local scratch docs
 AGENETS.md
+PLAN_repair.md
 REASONIX.md

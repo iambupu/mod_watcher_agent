@@ -4,17 +4,18 @@ services:
   backend:
     build: ./backend
     ports:
-      - "7500:7500"
+      - "17500:17500"
     env_file:
       - .env
     environment:
       - DATABASE_URL=sqlite:///./data/mod_watcher.db
+      - LOCAL_ONLY_API=false
     volumes:
       - backend_data:/app/data
       - backend_log:/app/log
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:7500/')"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:17500/')"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -23,7 +24,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "7501:80"
+      - "17501:80"
     depends_on:
       backend:
         condition: service_healthy

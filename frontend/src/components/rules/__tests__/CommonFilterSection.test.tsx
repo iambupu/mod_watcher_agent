@@ -68,6 +68,21 @@ describe("KeywordFilterEditor", () => {
     expect(changed).toEqual({ includeKeywords: ["test"] });
   });
 
+  it("adds keyword on blur when input is not empty", () => {
+    let changed: Partial<CommonRuleFilters> | null = null;
+    render(
+      <KeywordFilterEditor
+        includeKeywords={[]}
+        excludeKeywords={[]}
+        onChange={(p) => (changed = p)}
+      />,
+    );
+    const inputs = screen.getAllByPlaceholderText("rules.excludeKeywords...");
+    fireEvent.change(inputs[0], { target: { value: "nsfw" } });
+    fireEvent.blur(inputs[0]);
+    expect(changed).toEqual({ excludeKeywords: ["nsfw"] });
+  });
+
   it("removes keyword when X button clicked", () => {
     let changed: Partial<CommonRuleFilters> | null = null;
     render(
@@ -191,12 +206,12 @@ describe("LlmFilterSection", () => {
 });
 
 describe("CommonFilterSection", () => {
-  it("renders with store data and integrates 5 sub-components", () => {
+  it("renders with store data and integrates deterministic filter sub-components", () => {
     render(<CommonFilterSection />);
     expect(screen.getByText("rules.filters.keywordFilter")).toBeInTheDocument();
     expect(screen.getByText("rules.metrics")).toBeInTheDocument();
     expect(screen.getByText("rules.adultPolicy")).toBeInTheDocument();
     expect(screen.getByText("rules.filters.missingMetricsPolicy")).toBeInTheDocument();
-    expect(screen.getByText("rules.filters.llmFilter")).toBeInTheDocument();
+    expect(screen.queryByText("rules.filters.llmFilter")).not.toBeInTheDocument();
   });
 });

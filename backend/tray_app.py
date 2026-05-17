@@ -46,8 +46,8 @@ BACKEND_DIR = ROOT_DIR / "backend"
 FRONTEND_DIR = ROOT_DIR / "frontend"
 
 BACKEND_HOST = "127.0.0.1"
-BACKEND_PORT = 7500
-FRONTEND_DEV_PORT = 7501
+BACKEND_PORT = int(os.getenv("MW_BACKEND_PORT", "17500"))
+FRONTEND_DEV_PORT = int(os.getenv("MW_FRONTEND_DEV_PORT", "17501"))
 DEFAULT_FRONTEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 API_DOCS_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}/docs"
 _MUTEX_HANDLE = None
@@ -612,7 +612,7 @@ class TrayApp:
         frontend_log = (LOG_DIR / "frontend_service.log").open("a", encoding="utf-8")
         frontend_log.write("\n=== starting frontend service ===\n")
         frontend_log.flush()
-        npm_cmd = "npm.cmd" if sys.platform == "win32" else "npm"
+        npm_cmd = os.getenv("MW_NPM_CMD") or ("npm.cmd" if sys.platform == "win32" else "npm")
         self.frontend_proc = subprocess.Popen(
             [
                 npm_cmd,
@@ -752,8 +752,10 @@ class TrayApp:
 
         self.launch_backend()
 
+        backend_ready = False
         frontend_ready = self.frontend_mode != "dev"
         if _wait_for_port(BACKEND_HOST, BACKEND_PORT):
+            backend_ready = True
             _tray_logger.info("后端就绪")
             if self.frontend_mode == "dev":
                 self.launch_frontend()
@@ -767,7 +769,12 @@ class TrayApp:
         else:
             _tray_logger.warning("⚠ 后端启动超时 (30s)")
 
-        if not frontend_ready:
+        if not backend_ready or not frontend_ready:
+            _tray_logger.error(
+                "服务启动失败 (backend_ready=%s, frontend_ready=%s)",
+                backend_ready,
+                frontend_ready,
+            )
             self._log_failed_child_status()
             self.stop()
             raise SystemExit(1)

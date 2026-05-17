@@ -55,6 +55,7 @@ const TagInput: React.FC<{
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
+        onBlur={handleAdd}
         placeholder={placeholder}
         className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
       />
@@ -74,11 +75,17 @@ export const KeywordFilterEditor: React.FC<KeywordFilterEditorProps> = ({
       <h4 className="text-sm font-semibold text-gray-800 mb-2">
         {t("rules.filters.keywordFilter")}
       </h4>
+      <p className="mb-3 text-xs text-gray-500">
+        {t("rules.filters.keywordFilterHelp")}
+      </p>
       <div className="flex flex-col gap-3">
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">
             {t("rules.includeKeywords")}
           </label>
+          <p className="mb-1 text-xs text-gray-500">
+            {t("rules.filters.includeKeywordsHelp")}
+          </p>
           <TagInput
             tags={includeKeywords}
             placeholder={t("rules.includeKeywords") + "..."}
@@ -96,6 +103,9 @@ export const KeywordFilterEditor: React.FC<KeywordFilterEditorProps> = ({
           <label className="block text-xs font-medium text-gray-600 mb-1">
             {t("rules.excludeKeywords")}
           </label>
+          <p className="mb-1 text-xs text-gray-500">
+            {t("rules.filters.excludeKeywordsHelp")}
+          </p>
           <TagInput
             tags={excludeKeywords}
             placeholder={t("rules.excludeKeywords") + "..."}

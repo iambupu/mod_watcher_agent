@@ -1,7 +1,14 @@
 from abc import ABC, abstractmethod
+import json
 import logging
+import re
+from typing import Any
 
 import httpx
+from sqlmodel import Session as _Session
+
+from app.schemas.watch_rule import LlmFilterConfig
+from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +17,7 @@ DEFAULT_MODELS = {
     "anthropic": "claude-3-5-haiku-latest",
     "gemini": "gemini-2.0-flash",
     "groq": "mixtral-8x7b-32768",
-    "deepseek": "deepseek-chat",
+    "deepseek": "deepseek-v4-flash",
     "openrouter": "gpt-4o-mini",
     "ollama": "llama3.2",
 }
@@ -215,3 +222,154 @@ def create_llm_client(
     raise ValueError(
         f"Unsupported LLM provider: {provider!r}. Supported: {', '.join(sorted(supported))}"
     )
+
+
+# ---------------------------------------------------------------------------
+#  LLM-assisted rule filter (synchronous, used by FilterService)
+# ---------------------------------------------------------------------------
+
+_MAX_MODS_PER_LLM_CALL = 50
+_REQUEST_TIMEOUT = 30.0
+
+
+def create_llm_filter_client(session: _Session):
+    """Return a synchronous LLM filter callable, or None if not configured.
+
+    Reads llm_providers_json from DB settings, picks the first enabled
+    provider with an API key, and returns ``fn(mods, llm_config)``.
+    """
+
+    svc = SettingsService(session)
+    raw = svc.get("llm_providers_json") or "[]"
+    try:
+        providers: list[dict] = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("llm_providers_json is not valid JSON")
+        return None
+
+    enabled = [p for p in providers if p.get("enabled") and p.get("api_key")]
+    if not enabled:
+        return None
+
+    enabled.sort(key=lambda p: int(p.get("priority", 999)))
+    primary = enabled[0]
+
+    def _llm_filter(
+        mods: list[dict],
+        llm_config: LlmFilterConfig,
+        return_details: bool = False,
+    ) -> list[dict] | dict:
+        if not mods:
+            return {"items": [], "details": []} if return_details else []
+        system_prompt = (
+            "You are a mod filter. Given a list of mods (index, title, summary), "
+            "return ONLY a JSON array of the indices that SHOULD BE KEPT "
+            "(i.e. that match the filter criteria). "
+            "Do not include any other text."
+        )
+
+        kept: list[dict] = []
+        details: list[dict] = []
+        for start in range(0, len(mods), _MAX_MODS_PER_LLM_CALL):
+            batch = mods[start:start + _MAX_MODS_PER_LLM_CALL]
+
+            mod_list = []
+            for i, m in enumerate(batch):
+                mod_list.append({
+                    "index": i,
+                    "title": (m.get("title") or "")[:300],
+                    "summary": (m.get("original_summary") or "")[:500],
+                })
+
+            user_prompt = (
+                f"Filter criteria:\n{llm_config.prompt}\n\n"
+                f"Mods to evaluate:\n{json.dumps(mod_list, ensure_ascii=False)}"
+            )
+
+            try:
+                resp = httpx.post(
+                    f"{primary['base_url'].rstrip('/')}/chat/completions",
+                    json={
+                        "model": primary["model"],
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "temperature": 0.1,
+                    },
+                    headers={
+                        "Authorization": f"Bearer {primary['api_key']}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=_REQUEST_TIMEOUT,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                json_match = re.search(r"\[[\d\s,]*\]", content)
+                if not json_match:
+                    logger.warning("LLM response had no index array: %s", content[:200])
+                    if llm_config.mode == "assist_only":
+                        kept.extend(batch)
+                        if return_details:
+                            for mod in batch:
+                                details.append(
+                                    {
+                                        "mod": mod,
+                                        "decision": "keep",
+                                        "feedback": "llm_no_index_array_assist_only_fallback",
+                                    }
+                                )
+                    elif return_details:
+                        for mod in batch:
+                            details.append(
+                                {
+                                    "mod": mod,
+                                    "decision": "reject",
+                                    "feedback": "llm_no_index_array_rejected_in_must_pass",
+                                }
+                            )
+                    continue
+
+                indices: list[int] = json.loads(json_match.group(0))
+                kept_idx = {i for i in indices if 0 <= i < len(batch)}
+                if return_details:
+                    for i, mod in enumerate(batch):
+                        details.append(
+                            {
+                                "mod": mod,
+                                "decision": "keep" if i in kept_idx else "reject",
+                                "feedback": content[:500],
+                            }
+                        )
+                kept.extend([batch[i] for i in indices if 0 <= i < len(batch)])
+
+            except Exception:
+                logger.exception("LLM filter call failed for provider %s", primary.get("provider"))
+                if llm_config.mode == "assist_only":
+                    kept.extend(batch)
+                    if return_details:
+                        for mod in batch:
+                            details.append(
+                                {
+                                    "mod": mod,
+                                    "decision": "keep",
+                                    "feedback": "llm_error_assist_only_fallback",
+                                }
+                            )
+                elif return_details:
+                    for mod in batch:
+                        details.append(
+                            {
+                                "mod": mod,
+                                "decision": "reject",
+                                "feedback": "llm_error_rejected_in_must_pass",
+                            }
+                        )
+
+        if return_details:
+            return {"items": kept, "details": details}
+        return kept
+
+    return _llm_filter

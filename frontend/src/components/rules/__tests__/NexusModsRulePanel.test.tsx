@@ -32,22 +32,27 @@ vi.mock("react-i18next", () => ({
       const map: Record<string, string> = {
         "rules.nexusmods.gameDomainName": "Game Domain Name",
         "rules.nexusmods.gameDomainNamePlaceholder": "e.g. skyrimspecialedition",
+        "rules.nexusmods.gameDomainNameHelp": "Game domain help",
         "rules.nexusmods.updatedSinceDays": "Updated Since (Days)",
         "rules.nexusmods.updatedSinceDaysPlaceholder": "e.g. 7",
+        "rules.nexusmods.updatedSinceDaysHelp": "Updated days help",
         "rules.nexusmods.queryMode": "Query Mode",
+        "rules.nexusmods.queryModeHelp": "Query mode help",
         "rules.nexusmods.queryModeAll": "All",
         "rules.nexusmods.queryModeUpdated": "Recently Updated",
-        "rules.nexusmods.queryModeTrending": "Trending",
-        "rules.nexusmods.queryModeNewest": "Newest",
+        "rules.nexusmods.queryModeCreated": "Recently Created",
         "rules.nexusmods.sortBy": "Sort By",
+        "rules.nexusmods.sortByHelp": "Sort by help",
         "rules.sortUpdatedDesc": "Updated (Desc)",
+        "rules.sortCreatedDesc": "Created (Desc)",
         "rules.sortDownloadsDesc": "Downloads (Desc)",
         "rules.sortEndorsementsDesc": "Endorsements (Desc)",
-        "rules.sortFirstSeenDesc": "First Seen (Desc)",
         "rules.nexusmods.categoryNames": "Category Names",
         "rules.nexusmods.categoryNamesPlaceholder": "Enter category names",
+        "rules.nexusmods.categoryNamesHelp": "Category names help",
         "rules.nexusmods.tags": "Tags Filter",
         "rules.nexusmods.tagsPlaceholder": "Enter tags",
+        "rules.nexusmods.tagsHelp": "Tags help",
         "rules.nexusmods.errors.gameDomainNameRequired": "Game domain name is required",
         "rules.nexusmods.errors.updatedSinceDaysNumeric": "Days must be a valid number",
       };
@@ -110,25 +115,25 @@ describe("NexusModsRulePanel", () => {
     const options = Array.from(select.querySelectorAll("option"));
     const labels = options.map((o) => o.textContent);
     expect(labels).toContain("Updated (Desc)");
+    expect(labels).toContain("Created (Desc)");
     expect(labels).toContain("Downloads (Desc)");
     expect(labels).toContain("Endorsements (Desc)");
-    expect(labels).toContain("First Seen (Desc)");
   });
 
-  it("allows input for category names and tags", async () => {
+  it("adds category names and tags with Enter", async () => {
     const user = userEvent.setup();
     render(<NexusModsRulePanel />);
 
     const categoryInput = screen.getByPlaceholderText("Enter category names");
-    await user.type(categoryInput, "armor, weapons");
+    await user.type(categoryInput, "armor{Enter}");
     expect(mockUpdateNexusConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ categoryNames: expect.any(Array) }),
+      expect.objectContaining({ categoryNames: ["armor"] }),
     );
 
     const tagsInput = screen.getByPlaceholderText("Enter tags");
-    await user.type(tagsInput, "lore-friendly, hd");
+    await user.type(tagsInput, "lore-friendly, hd{Enter}");
     expect(mockUpdateNexusConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: expect.any(Array) }),
+      expect.objectContaining({ tags: ["lore-friendly, hd"] }),
     );
   });
 
@@ -156,14 +161,8 @@ describe("NexusModsRulePanel", () => {
     const daysInput = screen.getByPlaceholderText("e.g. 7") as HTMLInputElement;
     expect(daysInput.value).toBe("30");
 
-    const categoryInput = screen.getByPlaceholderText(
-      "Enter category names",
-    ) as HTMLInputElement;
-    expect(categoryInput.value).toBe("armor");
+    expect(screen.getByText("armor")).toBeInTheDocument();
 
-    const tagsInput = screen.getByPlaceholderText(
-      "Enter tags",
-    ) as HTMLInputElement;
-    expect(tagsInput.value).toBe("hd");
+    expect(screen.getByText("hd")).toBeInTheDocument();
   });
 });
