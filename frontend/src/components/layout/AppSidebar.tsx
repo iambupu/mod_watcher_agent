@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Bell,
+  BellRing,
   FileText,
   Heart,
   LayoutDashboard,
@@ -14,7 +15,10 @@ import {
   Info,
   X,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useUIStore } from "@/stores/uiStore";
+import { NotificationCenter } from "@/components/NotificationCenter";
+import { fetchUnreadCount } from "@/api/notifications";
 
 type NavKey = "agent" | "dashboard" | "discover" | "favorites" | "updates" | "rules" | "logs" | "settings";
 
@@ -38,7 +42,15 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const appVersion = import.meta.env.VITE_APP_VERSION || "0.1.2";
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const appVersion = import.meta.env.VITE_APP_VERSION || "0.2.0";
+
+  const { data: unread } = useQuery({
+    queryKey: ["notifications-unread-count"],
+    queryFn: fetchUnreadCount,
+    refetchInterval: 10000,
+  });
+  const unreadCount = unread?.count ?? 0;
 
   return (
     <aside className={`${sidebarOpen ? "w-64" : "w-20"} bg-white border-r border-gray-200 flex flex-col transition-all duration-150`}>
@@ -66,9 +78,9 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
               title={t(item.labelKey)}
               className={`flex items-center rounded-lg text-sm font-medium transition-colors ${
                 sidebarOpen ? "gap-3 px-4 py-2.5" : "justify-center px-2 py-2.5"
-              } ${
+                } ${
                 isActive
-                  ? "bg-blue-50 text-blue-700"
+                  ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100"
                   : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
               }`}
             >
@@ -78,7 +90,25 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
           );
         })}
       </nav>
-      <div className={`border-t border-gray-200 py-3 ${sidebarOpen ? "px-3" : "px-2"}`}>
+      <div className={`border-t border-gray-200 py-3 flex flex-col gap-1 ${sidebarOpen ? "px-3" : "px-2"}`}>
+        <button
+          type="button"
+          onClick={() => setNotifyOpen(true)}
+          className={`relative w-full flex items-center rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 ${
+            sidebarOpen ? "gap-2 px-3 py-2" : "justify-center px-2 py-2"
+          }`}
+          title={t("notifications.title")}
+        >
+          {unreadCount > 0 ? <BellRing size={16} className="text-blue-600" /> : <Bell size={16} />}
+          {sidebarOpen && <span>{t("notifications.title")}</span>}
+          {unreadCount > 0 && (
+            <span className={sidebarOpen ? "ml-auto" : "absolute -top-1 -right-1"}>
+              <span className="inline-flex items-center justify-center rounded-full bg-red-500 min-w-[18px] h-[18px] px-1 text-[10px] font-bold text-white">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            </span>
+          )}
+        </button>
         <button
           type="button"
           onClick={() => setAboutOpen(true)}
@@ -91,10 +121,11 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
           {sidebarOpen && <span>{t("about.title")}</span>}
         </button>
       </div>
+      <NotificationCenter open={notifyOpen} onClose={() => setNotifyOpen(false)} />
       {aboutOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-xl bg-white shadow-xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-3">
               <h3 className="text-base font-semibold text-gray-900">Mod Watcher（模组巡望者）</h3>
               <button
                 type="button"
@@ -104,20 +135,24 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
                 <X size={16} />
               </button>
             </div>
-            <div className="space-y-4 px-4 py-4 text-sm text-gray-700">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm text-gray-700">
               <div className="flex justify-center pb-1">
                 <img src="/mwlogo.png" alt="Mod Watcher" className="h-40 w-auto" />
               </div>
-              <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                <p className="text-xs text-gray-500">{t("about.version")}</p>
+              <div className="rounded-lg border border-blue-100 bg-gradient-to-r from-blue-50 to-sky-50 px-3 py-2">
+                <p className="mb-1 inline-flex items-center rounded-full bg-blue-600/10 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-blue-700">
+                  {t("about.version")}
+                </p>
                 <p className="font-medium">v{appVersion}</p>
               </div>
-              <div className="rounded-lg border border-gray-100 px-3 py-2">
-                <p className="text-xs text-gray-500">{t("about.changelog")}</p>
+              <div className="rounded-lg border border-emerald-100 bg-gradient-to-r from-emerald-50 to-white px-3 py-2">
+                <p className="mb-2 inline-flex items-center rounded-full bg-emerald-600/10 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-emerald-700">
+                  {t("about.changelog")}
+                </p>
                 <p style={{ whiteSpace: "pre-wrap" }}>{t("about.changelogText")}</p>
               </div>
               <div className="rounded-lg border border-gray-100 px-3 py-2">
-                <p className="text-xs text-gray-500">{t("about.usage")}</p>
+                <p className="mb-1 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-slate-700">{t("about.usage")}</p>
                 <p>{t("about.usageText")}</p>
                 <a
                   href="https://github.com/iambupu/mod_watcher_agent/blob/main/README.md"
@@ -129,7 +164,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
                 </a>
               </div>
               <div className="rounded-lg border border-gray-100 px-3 py-2">
-                <p className="text-xs text-gray-500">{t("about.developer")}</p>
+                <p className="mb-1 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-slate-700">{t("about.developer")}</p>
                 <p>{t("about.developerText")}</p>
                 <a
                   href="https://github.com/iambupu"

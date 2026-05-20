@@ -1,10 +1,9 @@
 import logging
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
-from sqlalchemy import text
-from sqlalchemy import inspect
-from sqlmodel import SQLModel, Session, create_engine
+from sqlalchemy import inspect, text
+from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import settings
 
@@ -24,7 +23,9 @@ def init_db() -> None:
     alembic_ini = Path(__file__).resolve().parents[1] / "alembic.ini"
     try:
         from alembic.config import Config as AlembicConfig
+
         from alembic import command
+
         cfg = AlembicConfig(str(alembic_ini))
         inspector = inspect(engine)
         has_alembic_version = inspector.has_table("alembic_version")
@@ -45,11 +46,33 @@ def init_db() -> None:
         logger.exception("Alembic upgrade failed; falling back to manual migrations.")
 
     # ── Fallback: lightweight runtime migration for existing SQLite DBs ──
+    _apply_lightweight_migrations()
+
+
+def _apply_lightweight_migrations() -> None:
+    """Keep older local SQLite databases compatible with the current models."""
+    if engine.dialect.name != "sqlite":
+        return
     with engine.begin() as conn:
         cols = conn.execute(text("PRAGMA table_info('watch_rules')")).fetchall()
         col_names = {str(row[1]) for row in cols}
         if "interval_minutes" not in col_names:
             conn.execute(text("ALTER TABLE watch_rules ADD COLUMN interval_minutes INTEGER DEFAULT 360"))
+
+        notification_cols = conn.execute(text("PRAGMA table_info('notifications')")).fetchall()
+        notification_col_names = {str(row[1]) for row in notification_cols}
+        if notification_cols and "read" not in notification_col_names:
+            conn.execute(text("ALTER TABLE notifications ADD COLUMN read BOOLEAN DEFAULT 0 NOT NULL"))
+
+        agent_message_cols = conn.execute(text("PRAGMA table_info('agent_messages')")).fetchall()
+        agent_message_col_names = {str(row[1]) for row in agent_message_cols}
+        if agent_message_cols and "llm_provider" not in agent_message_col_names:
+            conn.execute(text("ALTER TABLE agent_messages ADD COLUMN llm_provider VARCHAR(64)"))
+        if agent_message_cols and "llm_model" not in agent_message_col_names:
+            conn.execute(text("ALTER TABLE agent_messages ADD COLUMN llm_model VARCHAR(128)"))
+        if agent_message_cols and "response_cards_json" not in agent_message_col_names:
+            conn.execute(text("ALTER TABLE agent_messages ADD COLUMN response_cards_json TEXT"))
+
         # Deduplicate legacy rows before adding the unique index.
         conn.execute(
             text(

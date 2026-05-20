@@ -1,11 +1,20 @@
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
 from app.models.system_notification import SystemNotificationEvent
+from app.services.settings_service import SettingsService
+from app.services.windows_notifier import send_windows_notification
 
 logger = logging.getLogger(__name__)
+
+DESKTOP_DISPATCH_EVENT_TYPES = {
+    "daily_digest_complete",
+    "weekly_digest_complete",
+    "llm_summary_report_complete",
+    "job_failed",
+}
 
 
 class SystemNotificationService:
@@ -21,7 +30,7 @@ class SystemNotificationService:
         mod_id: int | None = None,
         related_url: str | None = None,
     ) -> SystemNotificationEvent:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         event = SystemNotificationEvent(
             event_type=event_type,
             title=title,
@@ -32,7 +41,23 @@ class SystemNotificationService:
         )
         self.session.add(event)
         self.session.commit()
+        self.session.refresh(event)
+        if (
+            event_type in DESKTOP_DISPATCH_EVENT_TYPES
+            and self._desktop_notifications_enabled()
+            and send_windows_notification(title, message)
+        ):
+            event.seen = True
+            self.session.add(event)
+            self.session.commit()
         return event
+
+    def _desktop_notifications_enabled(self) -> bool:
+        settings = SettingsService(self.session)
+        return (
+            settings.get("notifications_enabled") != "false"
+            and settings.get("system_notifications_enabled") != "false"
+        )
 
     def get_recent_events(
         self, since_id: int = 0, limit: int = 50
@@ -71,7 +96,7 @@ class SystemNotificationService:
             select(SystemNotificationEvent)
             .where(
                 SystemNotificationEvent.id.in_(deduped_ids),
-                SystemNotificationEvent.seen == False,
+                SystemNotificationEvent.seen.is_(False),
             )
             .order_by(SystemNotificationEvent.id.asc())
             .limit(limit)
