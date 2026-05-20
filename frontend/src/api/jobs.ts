@@ -17,6 +17,17 @@ export interface JobRun {
   metadata_json?: string | null;
 }
 
+export interface SummaryReportResult {
+  generated: boolean;
+  reason?: string;
+  provider?: string;
+  model?: string;
+  report?: string;
+  window_minutes?: number;
+  items_scanned: number;
+  items_matched: number;
+}
+
 export interface JobRunList {
   items: JobRun[];
 }
@@ -51,6 +62,10 @@ export function queueSummaryGeneration(): Promise<{ status: string }> {
 
 export function runSummaryGeneration(): Promise<QueuedJob> {
   return post<QueuedJob>("/jobs/generate-summaries/run");
+}
+
+export function runSummaryReport(): Promise<SummaryReportResult> {
+  return post<SummaryReportResult>("/jobs/summary-report/run");
 }
 
 export function runDiscoveryAll(): Promise<QueuedJob> {

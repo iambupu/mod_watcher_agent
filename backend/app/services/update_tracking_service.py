@@ -1,7 +1,6 @@
-from datetime import datetime, timezone
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
+
 from app.models.update_event import ModUpdateEvent
-from app.models.favorite import Favorite
 
 
 class UpdateTrackingService:
@@ -20,7 +19,7 @@ class UpdateTrackingService:
     ) -> tuple[list[ModUpdateEvent], int]:
         """Query update events with optional filters. Returns (items, total)."""
         query = select(ModUpdateEvent)
-        count_query = select(ModUpdateEvent)
+        count_query = select(func.count()).select_from(ModUpdateEvent)
 
         if mod_id is not None:
             query = query.where(ModUpdateEvent.mod_id == mod_id)
@@ -32,7 +31,7 @@ class UpdateTrackingService:
             query = query.where(ModUpdateEvent.seen == seen)
             count_query = count_query.where(ModUpdateEvent.seen == seen)
 
-        total = len(self.session.exec(count_query).all())
+        total = int(self.session.exec(count_query).one() or 0)
         query = query.order_by(ModUpdateEvent.detected_at.desc()).offset(offset).limit(limit)
         items = self.session.exec(query).all()
         return items, total
@@ -50,8 +49,9 @@ class UpdateTrackingService:
 
     def get_unseen_count(self) -> int:
         """Get count of unseen update events."""
-        return len(
-            self.session.exec(
-                select(ModUpdateEvent).where(ModUpdateEvent.seen == False)  # noqa: E712
-            ).all()
+        query = (
+            select(func.count())
+            .select_from(ModUpdateEvent)
+            .where(ModUpdateEvent.seen == False)  # noqa: E712
         )
+        return int(self.session.exec(query).one() or 0)
