@@ -28,7 +28,8 @@ function Test-LocalPortReady {
         $tcp.Connect("127.0.0.1", $Port)
         $tcp.Close()
         return $true
-    } catch {
+    }
+    catch {
         return $false
     }
 }
@@ -53,9 +54,11 @@ function Get-SystemPython {
         try {
             $ErrorActionPreference = "Continue"
             $pyList = @(& py -0p 2>&1)
-        } catch {
+        }
+        catch {
             $pyList = @()
-        } finally {
+        }
+        finally {
             $ErrorActionPreference = $oldErrPref
             if ($null -ne $oldNativePref) {
                 $PSNativeCommandUseErrorActionPreference = $oldNativePref
@@ -70,15 +73,15 @@ function Get-SystemPython {
                     $arch = $Matches[3]
                     $selector = if ($arch) { "-$major.$minor-$arch" } else { "-$major.$minor" }
                     $candidates += [PSCustomObject]@{
-                        Major = $major
-                        Minor = $minor
+                        Major    = $major
+                        Minor    = $minor
                         Selector = $selector
                     }
                 }
             }
             $sorted = $candidates |
-                Where-Object { $_.Major -ge 3 } |
-                Sort-Object Major, Minor -Descending
+            Where-Object { $_.Major -ge 3 } |
+            Sort-Object Major, Minor -Descending
             foreach ($candidate in $sorted) {
                 & py $candidate.Selector -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" *> $null
                 if ($LASTEXITCODE -eq 0) {
@@ -115,7 +118,8 @@ function Ensure-Venv {
     Write-Host "[0/3] Creating virtual environment (.venv)..." -ForegroundColor Gray
     if ($systemPython.Length -gt 1) {
         & $systemPython[0] $systemPython[1] -m venv $venvDir
-    } else {
+    }
+    else {
         & $systemPython[0] -m venv $venvDir
     }
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPython)) {
@@ -144,9 +148,11 @@ function Ensure-BackendDependencies {
         $ErrorActionPreference = "Continue"
         & $venvPython -c "import uvicorn, pystray, PIL" *> $null
         $depsReady = ($LASTEXITCODE -eq 0)
-    } catch {
+    }
+    catch {
         $depsReady = $false
-    } finally {
+    }
+    finally {
         $ErrorActionPreference = $oldErrPref
         if ($null -ne $oldNativePref) {
             $PSNativeCommandUseErrorActionPreference = $oldNativePref
@@ -163,7 +169,8 @@ function Ensure-BackendDependencies {
         New-Item -ItemType Directory -Force -Path $pipCacheDir | Out-Null
         & $venvPython -m pip install --no-cache-dir --cache-dir $pipCacheDir -e .
         if ($LASTEXITCODE -ne 0) { throw "Backend install failed" }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 }
@@ -210,18 +217,20 @@ console.log(process.version);
         $ok = ($LASTEXITCODE -eq 0)
         $message = ($output | Out-String).Trim()
         return [PSCustomObject]@{
-            Ok = $ok
+            Ok      = $ok
             Message = $message
-            Major = if ($message -match '^v(\d+)\.') { [int]$Matches[1] } else { 0 }
+            Major   = if ($message -match '^v(\d+)\.') { [int]$Matches[1] } else { 0 }
         }
-    } catch {
+    }
+    catch {
         $message = ($_.Exception.Message -replace "\r?\n", " " -replace "At [A-Za-z]:\\.*$", "").Trim()
         return [PSCustomObject]@{
-            Ok = $false
+            Ok      = $false
             Message = $message
-            Major = 0
+            Major   = 0
         }
-    } finally {
+    }
+    finally {
         $ErrorActionPreference = $oldErrPref
         if ($null -ne $oldNativePref) {
             $PSNativeCommandUseErrorActionPreference = $oldNativePref
@@ -260,9 +269,7 @@ function Resolve-NodeRuntime {
     $commonPaths = @(
         (Join-Path $env:ProgramFiles "nodejs\node.exe"),
         (Join-Path ${env:ProgramFiles(x86)} "nodejs\node.exe"),
-        (Join-Path $env:LOCALAPPDATA "Programs\nodejs\node.exe"),
-        (Join-Path $env:LOCALAPPDATA "Reasonix\node.exe"),
-        (Join-Path $env:LOCALAPPDATA "Programs\LM Studio\resources\app\.webpack\bin\node.exe")
+        (Join-Path $env:LOCALAPPDATA "Programs\nodejs\node.exe")
     )
     foreach ($path in $commonPaths) {
         if ($path) {
@@ -318,13 +325,13 @@ function Resolve-NodeRuntime {
         $check = Test-NodeRuntime $resolved
         if ($check.Ok) {
             $working.Add([PSCustomObject]@{
-                Node = $resolved
-                Npm = Get-NpmForNode $resolved
-                Version = $check.Message
-                Major = $check.Major
-                Ordinal = $ordinal
-                LtsRank = if ($check.Major -eq 22) { 0 } elseif ($check.Major -eq 20) { 1 } else { 2 }
-            })
+                    Node    = $resolved
+                    Npm     = Get-NpmForNode $resolved
+                    Version = $check.Message
+                    Major   = $check.Major
+                    Ordinal = $ordinal
+                    LtsRank = if ($check.Major -eq 24) { 0 } elseif ($check.Major -eq 22) { 1 } elseif ($check.Major -eq 20) { 2 } else { 3 }
+                })
             continue
         }
         $failures.Add("$resolved => $($check.Message)")
@@ -332,8 +339,8 @@ function Resolve-NodeRuntime {
 
     if ($working.Count -gt 0) {
         return $working |
-            Sort-Object LtsRank, @{ Expression = "Major"; Descending = $true }, Ordinal |
-            Select-Object -First 1
+        Sort-Object LtsRank, @{ Expression = "Major"; Descending = $true }, Ordinal |
+        Select-Object -First 1
     }
 
     if ($failures.Count -gt 0) {
@@ -382,27 +389,31 @@ function Ensure-FrontendDevDependencies {
                 Write-Host "[2/3] Frontend dependencies repaired" -ForegroundColor Gray
                 return
             }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
     }
     if (Test-Path $nodeModules) {
         Write-Host "[2/3] Reinstalling frontend dependencies..." -ForegroundColor Gray
-    } else {
+    }
+    else {
         Write-Host "[2/3] Installing frontend dependencies..." -ForegroundColor Gray
     }
     Push-Location (Join-Path $root "frontend")
     try {
         if (Test-Path (Join-Path $root "frontend\\package-lock.json")) {
             & $script:npmCmd ci --silent
-        } else {
+        }
+        else {
             & $script:npmCmd install --silent
         }
         if ($LASTEXITCODE -ne 0) { throw "Frontend install failed" }
         & $script:nodeCmd $esbuildBin --version 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Frontend dependency validation failed" }
         Write-Host "[2/3] Frontend dependencies OK" -ForegroundColor Gray
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 }
@@ -413,9 +424,34 @@ function Ensure-Prerequisites {
     Ensure-BackendDependencies
     if ($frontendMode -eq "dev") {
         Ensure-FrontendDevDependencies
-    } else {
+    }
+    else {
         Ensure-FrontendStaticBuild
     }
+}
+
+function Wait-ServiceReady {
+    param(
+        [int]$BackendPort,
+        [string]$FrontendMode,
+        [int]$FrontendDevPort,
+        [int]$MaxWaitSeconds = 45
+    )
+
+    $elapsed = 0
+    while ($elapsed -lt $MaxWaitSeconds) {
+        $backendReady = Test-LocalPortReady $BackendPort
+        $frontendReady = $true
+        if ($FrontendMode -eq "dev") {
+            $frontendReady = Test-LocalPortReady $FrontendDevPort
+        }
+        if ($backendReady -and $frontendReady) {
+            return $true
+        }
+        Start-Sleep -Seconds 1
+        $elapsed += 1
+    }
+    return $false
 }
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -444,7 +480,8 @@ if ($serviceReady) {
     Write-Host "[i] Service already running; delegating to manager." -ForegroundColor Yellow
     if ($Tray) {
         & $venvPython backend/tray_app.py --frontend-mode $frontendMode
-    } else {
+    }
+    else {
         & $venvPython backend/tray_app.py --no-tray --frontend-mode $frontendMode
     }
     exit $LASTEXITCODE
@@ -464,11 +501,6 @@ Write-Host ""
 
 if ($Tray) {
     if (-not $DetachedTray) {
-        Write-Host ""
-        Write-Host "Startup checks completed." -ForegroundColor Green
-        Write-Host "Press any key to continue in tray mode and close this window..." -ForegroundColor Yellow
-        [void][System.Console]::ReadKey($true)
-
         $argumentList = @(
             "-NoProfile",
             "-ExecutionPolicy", "Bypass",
@@ -481,6 +513,19 @@ if ($Tray) {
             $argumentList += "-DevMode"
         }
         Start-Process -FilePath "powershell.exe" -ArgumentList $argumentList -WindowStyle Hidden
+
+        Write-Host ""
+        Write-Host "[Manager] Starting tray manager and probing service readiness..." -ForegroundColor Cyan
+        $ready = Wait-ServiceReady -BackendPort $backendPort -FrontendMode $frontendMode -FrontendDevPort $frontendDevPort -MaxWaitSeconds 45
+        if (-not $ready) {
+            Write-Host "[X] Service probe timed out. Backend/frontend did not become ready in time." -ForegroundColor Red
+            Write-Host "    Check logs: log\\tray.log, log\\backend_service.log, log\\frontend_service.log" -ForegroundColor Yellow
+            exit 1
+        }
+
+        Write-Host "Startup checks completed and services are healthy." -ForegroundColor Green
+        Write-Host "Press any key to close this window and keep running in tray mode..." -ForegroundColor Yellow
+        [void][System.Console]::ReadKey($true)
         exit 0
     }
     Write-Host "[Manager] Starting tray manager (frontend-mode=$frontendMode)..." -ForegroundColor Cyan
