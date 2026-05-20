@@ -1,6 +1,6 @@
-import os
 import json
-from datetime import datetime, timezone
+import os
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
@@ -26,7 +26,7 @@ class SettingsService:
                 "enabled": False,
                 "priority": 2,
                 "model": "gpt-4o-mini",
-                "api_key": os.getenv("OPENAI_API_KEY", ""),
+                "api_key": "",
                 "base_url": "https://api.openai.com/v1",
             },
             {
@@ -36,6 +36,46 @@ class SettingsService:
                 "model": "deepseek-v4-flash",
                 "api_key": "",
                 "base_url": "https://api.deepseek.com/v1",
+            },
+            {
+                "provider": "siliconflow",
+                "enabled": False,
+                "priority": 4,
+                "model": "Qwen/Qwen3-8B",
+                "api_key": "",
+                "base_url": "https://api.siliconflow.cn/v1",
+            },
+            {
+                "provider": "xai",
+                "enabled": False,
+                "priority": 5,
+                "model": "grok-4.20-reasoning",
+                "api_key": "",
+                "base_url": "https://api.x.ai/v1",
+            },
+            {
+                "provider": "kimi",
+                "enabled": False,
+                "priority": 6,
+                "model": "kimi-k2.6",
+                "api_key": "",
+                "base_url": "https://api.moonshot.cn/v1",
+            },
+            {
+                "provider": "qwen",
+                "enabled": False,
+                "priority": 7,
+                "model": "qwen-plus",
+                "api_key": "",
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            },
+            {
+                "provider": "minimax",
+                "enabled": False,
+                "priority": 8,
+                "model": "MiniMax-M2.7",
+                "api_key": "",
+                "base_url": "https://api.minimax.io/v1",
             },
         ]
 
@@ -53,14 +93,14 @@ class SettingsService:
             "watchdog_check_interval_minutes": "10",
             "watchdog_grace_minutes": "60",
             "watchdog_max_catchup_per_run": "3",
-            "nexus_api_key": os.getenv("NEXUS_API_KEY", ""),
-            "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
-            "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
-            "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
-            "discord_webhook_url": os.getenv("DISCORD_WEBHOOK_URL", ""),
+            "nexus_api_key": "",
+            "openai_api_key": "",
+            "telegram_bot_token": "",
+            "telegram_chat_id": "",
+            "discord_webhook_url": "",
             "llm_provider": os.getenv("LLM_PROVIDER", "openai"),
             "llm_model": os.getenv("LLM_MODEL", ""),
-            "llm_api_key": os.getenv("LLM_API_KEY", "") or os.getenv("OPENAI_API_KEY", ""),
+            "llm_api_key": "",
             "llm_base_url": os.getenv("LLM_BASE_URL", ""),
             "llm_providers_json": json.dumps(cls._default_llm_providers(), ensure_ascii=False),
             "auto_start": "false",
@@ -73,19 +113,18 @@ class SettingsService:
             "proxy_port": "",
             "proxy_username": "",
             "proxy_password": "",
+            "access_profile": os.getenv("MW_ACCESS_PROFILE", "local_relaxed"),
+            "allow_lan": "true" if os.getenv("MW_ALLOW_LAN", "").strip().lower() in {"1", "true", "yes", "on"} else "false",
+            "bind_host": os.getenv("MW_BIND_HOST", "127.0.0.1"),
         }
 
     def __init__(self, session: Session) -> None:
         self.session = session
         self.DEFAULTS = self.build_defaults()
-        # Preserve legacy callers/tests that read class-level DEFAULTS.
-        type(self).DEFAULTS = self.DEFAULTS
 
     def init_defaults(self) -> None:
         for key, value in self.DEFAULTS.items():
             if self.get(key) is None:
-                self.set(key, value)
-            elif key == "summary_language" and self.get(key) == "en":
                 self.set(key, value)
 
     def get_all(self, exclude_prefixes: tuple[str, ...] = ()) -> dict[str, str]:
@@ -100,7 +139,7 @@ class SettingsService:
         return row.value if row else None
 
     def set(self, key: str, value: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         existing = self.session.exec(
             select(Setting).where(Setting.key == key)
         ).first()
@@ -113,7 +152,7 @@ class SettingsService:
         self.session.commit()
 
     def set_batch(self, items: dict[str, str]) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         existing_rows = self.session.exec(
             select(Setting).where(Setting.key.in_(list(items.keys())))
         ).all()
