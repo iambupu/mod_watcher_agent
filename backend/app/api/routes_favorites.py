@@ -7,8 +7,8 @@ from app.models.mod import Mod
 from app.models.summary import ModSummary
 from app.schemas.favorite import (
     FavoriteCreate,
-    FavoriteUpdate,
     FavoriteRead,
+    FavoriteUpdate,
 )
 from app.services.favorite_service import FavoriteService
 from app.services.settings_service import SettingsService
@@ -93,7 +93,7 @@ async def create_favorite(
         summary_by_mod = _build_summary_map(session, [fav.mod_id])
         return _favorite_to_read(session, fav, summary_by_mod)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/{favorite_id}", response_model=FavoriteRead)
@@ -122,8 +122,8 @@ async def update_favorite(
         fav = await service.update_favorite(favorite_id, **update_dict)
         summary_by_mod = _build_summary_map(session, [fav.mod_id])
         return _favorite_to_read(session, fav, summary_by_mod)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Favorite not found")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail="Favorite not found") from e
 
 
 @router.delete("/{favorite_id}", status_code=204)
@@ -135,5 +135,5 @@ async def delete_favorite(
     service = FavoriteService(session)
     try:
         await service.remove_favorite(favorite_id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Favorite not found")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail="Favorite not found") from e

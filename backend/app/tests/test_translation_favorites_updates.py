@@ -18,9 +18,9 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.db import get_session
 from app.main import app as fastapi_app
+from app.models.favorite import Favorite
 from app.models.mod import Mod
 from app.models.summary import ModSummary
-from app.models.favorite import Favorite
 from app.models.update_event import ModUpdateEvent
 
 

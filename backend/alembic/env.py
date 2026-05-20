@@ -1,9 +1,9 @@
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
-from alembic import context
 from sqlmodel import SQLModel
 
+from alembic import context
 from app.config import settings
 from app.models import *  # noqa: F403, ensure all models are imported
 

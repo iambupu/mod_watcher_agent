@@ -143,9 +143,8 @@ class TestCheckUpdate:
             adapter, "fetch_mod_detail",
             new_callable=AsyncMock,
             return_value=mock_detail,
-        ):
-            with patch.object(service, "_adapter_class", return_value=adapter):
-                result = await service.check_update(fav.id)
+        ), patch.object(service, "_adapter_class", return_value=adapter):
+            result = await service.check_update(fav.id)
 
         assert result is not None
         assert isinstance(result, ModUpdateEvent)
@@ -178,16 +177,15 @@ class TestCheckUpdate:
             adapter, "fetch_mod_detail",
             new_callable=AsyncMock,
             return_value=None,
-        ):
-            with patch.object(service, "_adapter_class", return_value=adapter):
-                result = await service.check_update(fav.id)
+        ), patch.object(service, "_adapter_class", return_value=adapter):
+            result = await service.check_update(fav.id)
         assert result is None
 
 
 class TestCheckAllFavorites:
     @pytest.mark.asyncio
     async def test_checks_all_enabled_favorites(self, service, mod, session):
-        fav = await service.add_favorite(mod.id)
+        await service.add_favorite(mod.id)
         mock_detail = {
             "version": "2.0.0",
             "updated_at_remote": "2025-06-01T12:00:00Z",
@@ -197,9 +195,8 @@ class TestCheckAllFavorites:
             adapter, "fetch_mod_detail",
             new_callable=AsyncMock,
             return_value=mock_detail,
-        ):
-            with patch.object(service, "_adapter_class", return_value=adapter):
-                events = await service.check_all_favorites()
+        ), patch.object(service, "_adapter_class", return_value=adapter):
+            events = await service.check_all_favorites()
         assert len(events) == 1
         assert events[0].new_version == "2.0.0"
 
@@ -216,7 +213,6 @@ class TestCheckAllFavorites:
             adapter, "fetch_mod_detail",
             new_callable=AsyncMock,
             return_value=mock_detail,
-        ):
-            with patch.object(service, "_adapter_class", return_value=adapter):
-                events = await service.check_all_favorites()
+        ), patch.object(service, "_adapter_class", return_value=adapter):
+            events = await service.check_all_favorites()
         assert len(events) == 0

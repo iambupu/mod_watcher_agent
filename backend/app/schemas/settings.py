@@ -1,4 +1,4 @@
-from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -7,4 +7,4 @@ class SettingsRead(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    settings: dict[str, Optional[str]]
+    settings: dict[str, str | None]

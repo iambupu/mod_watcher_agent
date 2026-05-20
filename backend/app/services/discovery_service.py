@@ -1,6 +1,5 @@
-import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -30,15 +29,15 @@ class DiscoveryService:
             if not rule.enabled:
                 raise ValueError(f"WatchRule id={rule_id} is disabled")
 
-            AdapterClass = BaseAdapter.adapters.get(rule.source)
-            if AdapterClass is None:
+            adapter_class = BaseAdapter.adapters.get(rule.source)
+            if adapter_class is None:
                 raise ValueError(
                     f"Unknown source '{rule.source}' for rule id={rule_id}"
                 )
 
             # Read API key from DB settings for NexusMods (supports settings-page configured key)
             nexus_api_key = rule.source == "nexusmods" and SettingsService(self.session).get("nexus_api_key") or ""
-            adapter = AdapterClass(api_key=nexus_api_key) if rule.source == "nexusmods" else AdapterClass()
+            adapter = adapter_class(api_key=nexus_api_key) if rule.source == "nexusmods" else adapter_class()
             raw_items: list[ModItem] = await adapter.fetch(rule.source_config_json)
 
             all_mods: list[dict] = [_mod_item_to_dict(item) for item in raw_items]
@@ -46,7 +45,7 @@ class DiscoveryService:
             filter_service = FilterService(llm_client=create_llm_filter_client(self.session))
             filtered = filter_service.apply_filters(rule, all_mods, self.session)
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             results: list[dict] = []
 
             for mod_dict in filtered:

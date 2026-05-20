@@ -1,20 +1,20 @@
-from typing import Optional
+
 from pydantic import BaseModel
 
 
 class UpdateEventRead(BaseModel):
     id: int
     mod_id: int
-    favorite_id: Optional[int] = None
-    old_version: Optional[str] = None
-    new_version: Optional[str] = None
-    old_updated_at: Optional[str] = None
-    new_updated_at: Optional[str] = None
-    raw_changelog: Optional[str] = None
-    change_summary: Optional[str] = None
+    favorite_id: int | None = None
+    old_version: str | None = None
+    new_version: str | None = None
+    old_updated_at: str | None = None
+    new_updated_at: str | None = None
+    raw_changelog: str | None = None
+    change_summary: str | None = None
     detected_at: str
     seen: bool
-    translated_summary: Optional[str] = None
+    translated_summary: str | None = None
 
     model_config = {"from_attributes": True}
 

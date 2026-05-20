@@ -1,5 +1,4 @@
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
@@ -25,7 +24,7 @@ class FavoriteService:
         ).first()
         if existing:
             return existing
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         fav = Favorite(
             mod_id=mod_id,
             user_note=user_note,
@@ -53,7 +52,7 @@ class FavoriteService:
         for key, value in fields.items():
             if hasattr(fav, key) and value is not None:
                 setattr(fav, key, value)
-        fav.updated_at = datetime.now(timezone.utc).isoformat()
+        fav.updated_at = datetime.now(UTC).isoformat()
         self.session.add(fav)
         self.session.commit()
         self.session.refresh(fav)
@@ -83,7 +82,7 @@ class FavoriteService:
         if new_updated and new_updated != old_updated:
             changed = True
         if not changed:
-            fav.last_checked_at = datetime.now(timezone.utc).isoformat()
+            fav.last_checked_at = datetime.now(UTC).isoformat()
             self.session.add(fav)
             self.session.commit()
             return None
@@ -94,13 +93,13 @@ class FavoriteService:
             new_version=new_version,
             old_updated_at=old_updated,
             new_updated_at=new_updated,
-            detected_at=datetime.now(timezone.utc).isoformat(),
+            detected_at=datetime.now(UTC).isoformat(),
             seen=False,
         )
         self.session.add(event)
         fav.last_known_version = new_version
         fav.last_known_updated_at = new_updated
-        fav.last_checked_at = datetime.now(timezone.utc).isoformat()
+        fav.last_checked_at = datetime.now(UTC).isoformat()
         self.session.add(fav)
         self.session.commit()
         self.session.refresh(event)
@@ -114,7 +113,7 @@ class FavoriteService:
 
     async def check_all_favorites(self) -> list[ModUpdateEvent]:
         favs = self.session.exec(
-            select(Favorite).where(Favorite.tracking_enabled == True)
+            select(Favorite).where(Favorite.tracking_enabled.is_(True))
         ).all()
         events: list[ModUpdateEvent] = []
         for fav in favs:
