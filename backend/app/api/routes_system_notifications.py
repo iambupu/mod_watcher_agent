@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Query, Depends
-from sqlmodel import Session
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+from sqlmodel import Session
 
 from app.db import get_session
 from app.services.system_notification_service import SystemNotificationService

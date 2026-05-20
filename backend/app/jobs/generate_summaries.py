@@ -2,15 +2,15 @@
 
 Triggers: After discovery jobs complete, or on schedule.
 """
-import logging
 import json
+import logging
 
 from sqlmodel import Session
 
 from app.db import engine
 from app.jobs.tracked_jobs import run_tracked_job
-from app.services.summary_service import SUMMARY_GENERATION_LOCK, SummaryService
 from app.services.settings_service import SettingsService
+from app.services.summary_service import SUMMARY_GENERATION_LOCK, SummaryService
 
 logger = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.mod import Mod
-from app.schemas.watch_rule import CommonRuleFilters, LlmFilterConfig
+from app.schemas.watch_rule import CommonRuleFilters
 from app.services.filter_service import FilterService
 
 
@@ -147,7 +147,8 @@ class TestApplyFiltersV2:
         assist_only means LLM result is advisory; mods still pass both
         deterministic AND LLM stages. Since we mock the LLM to approve all,
         everything should pass."""
-        llm_mock = lambda mods, config: mods
+        def llm_mock(mods, config):
+            return mods
         svc = FilterService(llm_client=llm_mock)
         rule = FakeRuleV2(
             llmFilter={
