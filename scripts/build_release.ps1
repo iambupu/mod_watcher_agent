@@ -128,7 +128,7 @@ New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
 
 Write-Host "[3/4] Copying release contents..." -ForegroundColor Cyan
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination (Join-Path $stagingRoot "README.md") -Force
-Copy-Item -LiteralPath (Join-Path $root "mwlogo.png") -Destination (Join-Path $stagingRoot "mwlogo.png") -Force
+Copy-Item -LiteralPath (Join-Path $root "docs\mwlogo.png") -Destination (Join-Path $stagingRoot "mwlogo.png") -Force
 Copy-Item -LiteralPath (Join-Path $root ".env.example") -Destination (Join-Path $stagingRoot ".env.example") -Force
 
 Copy-Item -LiteralPath (Join-Path $root "start-user.bat") -Destination (Join-Path $stagingRoot "start-user.bat") -Force

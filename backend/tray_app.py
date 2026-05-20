@@ -6,16 +6,17 @@ Mod Watcher Agent — System Tray Launcher
 左键点击图标打开前端面板。
 """
 
-import sys
-import os
 import argparse
+import atexit
+import contextlib
 import json
+import logging
+import os
+import socket
 import subprocess
+import sys
 import threading
 import time
-import socket
-import atexit
-import logging
 from pathlib import Path
 
 try:
@@ -186,7 +187,7 @@ def _check_port(host: str, port: int, timeout: float = 1.0) -> bool:
         sock = socket.create_connection((host, port), timeout=timeout)
         sock.close()
         return True
-    except (socket.timeout, ConnectionRefusedError, OSError):
+    except (TimeoutError, ConnectionRefusedError, OSError):
         return False
 
 
@@ -281,10 +282,8 @@ def _release_single_instance() -> None:
     if _LOCK_FILE_HANDLE is not None:
         os.close(_LOCK_FILE_HANDLE)
         _LOCK_FILE_HANDLE = None
-        try:
+        with contextlib.suppress(FileNotFoundError):
             _LOCK_FILE_PATH.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def _wait_for_port(host: str, port: int, max_wait: float = 30.0) -> bool:
@@ -425,9 +424,14 @@ def _port_owner_pids(port: int) -> set[int]:
         marker = f":{port}"
         for line in result.stdout.splitlines():
             parts = line.split()
-            if len(parts) >= 5 and parts[0].upper() == "TCP" and marker in parts[1]:
-                if parts[3].upper() == "LISTENING" and parts[4].isdigit():
-                    pids.add(int(parts[4]))
+            if (
+                len(parts) >= 5
+                and parts[0].upper() == "TCP"
+                and marker in parts[1]
+                and parts[3].upper() == "LISTENING"
+                and parts[4].isdigit()
+            ):
+                pids.add(int(parts[4]))
         return pids
     except Exception as exc:
         _tray_logger.warning("netstat 查询端口 %s 占用失败: %s", port, exc)
@@ -460,10 +464,8 @@ def _write_state(state: dict) -> None:
 
 
 def _clear_state() -> None:
-    try:
+    with contextlib.suppress(FileNotFoundError):
         _STATE_FILE_PATH.unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _stop_existing_services() -> None:
@@ -591,7 +593,11 @@ class TrayApp:
                 str(BACKEND_PORT),
             ],
             cwd=str(BACKEND_DIR),
-            env={**os.environ, "MOD_WATCHER_PROCESS_NAME": "ModWatcherBackend"},
+            env={
+                **os.environ,
+                "MOD_WATCHER_PROCESS_NAME": "ModWatcherBackend",
+                "MW_BIND_HOST": BACKEND_HOST,
+            },
             stdout=backend_log,
             stderr=subprocess.STDOUT,
             **self._subprocess_kwargs(),
@@ -654,8 +660,8 @@ class TrayApp:
 
     def _api_post(self, path: str) -> dict:
         """发送 POST 请求到后端 API，返回 JSON 字典。"""
-        import urllib.request
         import json
+        import urllib.request
 
         url = f"http://{BACKEND_HOST}:{BACKEND_PORT}/api{path}"
         try:
