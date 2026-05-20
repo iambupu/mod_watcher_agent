@@ -1,5 +1,7 @@
 """Tests for SettingsService."""
 
+import json
+
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -65,6 +67,21 @@ class TestSettingsService:
         assert service.get("game_domain") == "customdomain"
         assert service.get("adult_policy") == "include"
 
+    def test_default_llm_providers_include_openai_compatible_cn_and_global_providers(self, service):
+        providers = json.loads(service.DEFAULTS["llm_providers_json"])
+        by_name = {provider["provider"]: provider for provider in providers}
+        expected = {
+            "siliconflow": ("Qwen/Qwen3-8B", "https://api.siliconflow.cn/v1"),
+            "xai": ("grok-4.20-reasoning", "https://api.x.ai/v1"),
+            "kimi": ("kimi-k2.6", "https://api.moonshot.cn/v1"),
+            "qwen": ("qwen-plus", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            "minimax": ("MiniMax-M2.7", "https://api.minimax.io/v1"),
+        }
+        for name, (model, base_url) in expected.items():
+            assert by_name[name]["enabled"] is False
+            assert by_name[name]["model"] == model
+            assert by_name[name]["base_url"] == base_url
+
     def test_updated_at_is_set_on_insert(self, service):
         service.set("test_key", "test_value")
         row = service.session.exec(
@@ -114,4 +131,4 @@ class TestDefaultsMerge:
         service = SettingsService(session)
         merged = dict(service.DEFAULTS)
         merged.update(service.get_all())
-        assert merged == SettingsService.DEFAULTS
+        assert merged == service.DEFAULTS

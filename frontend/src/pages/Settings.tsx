@@ -6,9 +6,10 @@ import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import AppSidebar from "@/components/layout/AppSidebar";
+import { ApiError, getSecurityToken, setSecurityToken } from "@/api/client";
 
 import { NotificationSettings } from "@/components/NotificationSettings";
-import { DEFAULT_PROVIDER_BASE_URLS, fetchSettings, updateSettings, testLlmProviders, testTelegram, testDiscord, exportSettings, importSettings, type LlmProviderTestResult } from "@/api/settings";
+import { DEFAULT_PROVIDER_BASE_URLS, fetchSettings, updateSettings, testLlmProviders, testTelegram, testDiscord, exportSettings, importSettings, setAutoStart as applyAutoStart, type LlmProviderTestResult } from "@/api/settings";
 import type { UserSettings, UILanguage, LlmProvider, LlmProviderConfig } from "@/types";
 
 const PROVIDER_OPTIONS: { provider: LlmProvider; label: string; defaultModel: string }[] = [
@@ -19,6 +20,11 @@ const PROVIDER_OPTIONS: { provider: LlmProvider; label: string; defaultModel: st
   { provider: "groq", label: "Groq", defaultModel: "mixtral-8x7b-32768" },
   { provider: "deepseek", label: "DeepSeek", defaultModel: "deepseek-v4-flash" },
   { provider: "openrouter", label: "OpenRouter", defaultModel: "gpt-4o-mini" },
+  { provider: "siliconflow", label: "硅基流动 (SiliconFlow)", defaultModel: "Qwen/Qwen3-8B" },
+  { provider: "xai", label: "xAI", defaultModel: "grok-4.20-reasoning" },
+  { provider: "kimi", label: "Kimi", defaultModel: "kimi-k2.6" },
+  { provider: "qwen", label: "通义千问 (Qwen)", defaultModel: "qwen-plus" },
+  { provider: "minimax", label: "MiniMax", defaultModel: "MiniMax-M2.7" },
 ];
 
 function normalizeProviders(providers: LlmProviderConfig[]): LlmProviderConfig[] {
@@ -79,8 +85,14 @@ const Settings: React.FC = () => {
   const [proxyPort, setProxyPort] = useState("");
   const [proxyUsername, setProxyUsername] = useState("");
   const [proxyPassword, setProxyPassword] = useState("");
+  const [accessProfile, setAccessProfile] = useState<"local_relaxed" | "local_strict" | "shared_lan">("local_relaxed");
+  const [allowLan, setAllowLan] = useState(false);
+  const [bindHost, setBindHost] = useState("127.0.0.1");
+  const [securityToken, setSecurityTokenInput] = useState("");
   const [saved, setSaved] = useState(false);
+  const [savingAutoStart, setSavingAutoStart] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [proxyErrors, setProxyErrors] = useState<{ host?: string; port?: string }>({});
   const [importMsg, setImportMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -116,8 +128,34 @@ const Settings: React.FC = () => {
       setProxyPort(settings.proxyPort);
       setProxyUsername(settings.proxyUsername);
       setProxyPassword(settings.proxyPassword);
+      setAccessProfile(settings.accessProfile);
+      setAllowLan(settings.allowLan);
+      setBindHost(settings.bindHost);
+      setSecurityTokenInput(getSecurityToken());
     }
   }, [settings]);
+
+  const map422ToFieldErrors = (detail: unknown): Record<string, string> => {
+    if (typeof detail !== "string") return {};
+    const text = detail.trim();
+    const keys = [
+      "watchdog_check_interval_minutes",
+      "watchdog_grace_minutes",
+      "watchdog_max_catchup_per_run",
+      "summary_report_interval_minutes",
+      "discord_webhook_url",
+      "llm_providers_json",
+    ];
+    for (const key of keys) {
+      if (text.includes(key)) {
+        return { [key]: text };
+      }
+    }
+    if (text.includes("llm provider")) {
+      return { llm_providers_json: text };
+    }
+    return {};
+  };
 
   const mutation = useMutation({
     mutationFn: updateSettings,
@@ -125,10 +163,16 @@ const Settings: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
       setSaved(true);
       setSaveError(null);
+      setFieldErrors({});
       setTimeout(() => setSaved(false), 3000);
     },
     onError: (err: Error) => {
       setSaveError(err.message);
+      if (err instanceof ApiError && err.status === 422) {
+        setFieldErrors(map422ToFieldErrors(err.detail));
+      } else {
+        setFieldErrors({});
+      }
     },
   });
 
@@ -167,11 +211,14 @@ const Settings: React.FC = () => {
       proxyPort,
       proxyUsername,
       proxyPassword,
+      accessProfile,
+      allowLan,
+      bindHost,
     };
     return payload;
   };
 
-  const handleSaveSettings = () => {
+  const handleSaveSettings = async () => {
     if (proxyEnabled) {
       const errs: { host?: string; port?: string } = {};
       if (!proxyHost.trim()) errs.host = t("settings.required") || "Required";
@@ -180,6 +227,22 @@ const Settings: React.FC = () => {
       if (Object.keys(errs).length > 0) return;
     }
     setProxyErrors({});
+    setFieldErrors({});
+    setSecurityToken(securityToken);
+    if (settings && autoStart !== settings.autoStart) {
+      setSavingAutoStart(true);
+      try {
+        const result = await applyAutoStart(autoStart);
+        if (!result.success) {
+          throw new Error(t("settings.autoStartError"));
+        }
+      } catch (err) {
+        setSaveError((err as Error).message);
+        setSavingAutoStart(false);
+        return;
+      }
+      setSavingAutoStart(false);
+    }
     mutation.mutate(buildSettingsPayload());
   };
 
@@ -279,38 +342,34 @@ const Settings: React.FC = () => {
           <div className="space-y-6 max-w-2xl">
             <Card>
               <CardHeader>
-                <h3 className="font-semibold">{t("settings.uiLanguage")}</h3>
+                <h3 className="font-semibold">{t("settings.languageSettings")}</h3>
               </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-4">
+              <CardContent className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium">{t("settings.uiLanguage")}</label>
                   <select
                     value={uiLanguage}
                     onChange={(e) => handleLanguageChange(e.target.value as UILanguage)}
-                    className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                   >
                     <option value="zh-CN">中文</option>
                     <option value="en-US">English</option>
                     <option value="ja-JP">日本語</option>
                   </select>
+                  <p className="text-xs text-gray-500">{t("settings.uiLanguageHint")}</p>
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent>
-                <div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">{t("settings.summaryLanguage")}</label>
-                    <select
-                      value={summaryLanguage}
-                      onChange={(e) => setSummaryLanguage(e.target.value as UILanguage)}
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    >
-                      <option value="zh-CN">中文</option>
-                      <option value="en-US">English</option>
-                      <option value="ja-JP">日本語</option>
-                    </select>
-                  </div>
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium">{t("settings.summaryLanguage")}</label>
+                  <select
+                    value={summaryLanguage}
+                    onChange={(e) => setSummaryLanguage(e.target.value as UILanguage)}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    <option value="zh-CN">中文</option>
+                    <option value="en-US">English</option>
+                    <option value="ja-JP">日本語</option>
+                  </select>
+                  <p className="text-xs text-gray-500">{t("settings.summaryLanguageHint")}</p>
                 </div>
               </CardContent>
             </Card>
@@ -335,6 +394,9 @@ const Settings: React.FC = () => {
                   placeholder={t("settings.summaryReportPromptPlaceholder")}
                 />
                 <p className="text-xs text-gray-500">{t("settings.summaryReportHint")}</p>
+                {fieldErrors.summary_report_interval_minutes && (
+                  <p className="text-xs text-red-600">{fieldErrors.summary_report_interval_minutes}</p>
+                )}
               </CardContent>
             </Card>
 
@@ -368,6 +430,15 @@ const Settings: React.FC = () => {
                   onChange={(e) => setWatchdogMaxCatchupPerRun(Math.max(1, Number(e.target.value) || 3))}
                 />
                 <p className="text-xs text-gray-500">{t("settings.watchdogHint")}</p>
+                {fieldErrors.watchdog_check_interval_minutes && (
+                  <p className="text-xs text-red-600">{fieldErrors.watchdog_check_interval_minutes}</p>
+                )}
+                {fieldErrors.watchdog_grace_minutes && (
+                  <p className="text-xs text-red-600">{fieldErrors.watchdog_grace_minutes}</p>
+                )}
+                {fieldErrors.watchdog_max_catchup_per_run && (
+                  <p className="text-xs text-red-600">{fieldErrors.watchdog_max_catchup_per_run}</p>
+                )}
               </CardContent>
             </Card>
 
@@ -402,6 +473,9 @@ const Settings: React.FC = () => {
               <CardContent className="space-y-4">
                 <p className="text-xs text-gray-500">{t("settings.llmProviderPriorityHint")}</p>
                 <div className="space-y-3">
+                  {fieldErrors.llm_providers_json && (
+                    <p className="text-xs text-red-600">{fieldErrors.llm_providers_json}</p>
+                  )}
                   {[...llmProviders].sort((a, b) => a.priority - b.priority).map((provider, index) => {
                     const option = PROVIDER_OPTIONS.find((item) => item.provider === provider.provider);
                     const result = llmTestResults.find((item) => item.provider === provider.provider);
@@ -495,6 +569,9 @@ const Settings: React.FC = () => {
                     try { const r = await testDiscord(); alert(r.message); } catch { alert("Test failed"); }
                   }}
                 />
+                {fieldErrors.discord_webhook_url && (
+                  <p className="mt-2 text-xs text-red-600">{fieldErrors.discord_webhook_url}</p>
+                )}
               </CardContent>
             </Card>
 
@@ -539,6 +616,7 @@ const Settings: React.FC = () => {
                   placeholder="sqlite:///./mod_watcher.db"
                 />
                 <p className="text-xs text-amber-600">{t("settings.databasePathHint")}</p>
+                <p className="text-xs text-slate-500">{t("settings.databasePathResolveHint")}</p>
               </CardContent>
             </Card>
 
@@ -588,6 +666,44 @@ const Settings: React.FC = () => {
 
             <Card>
               <CardHeader>
+                <h3 className="font-semibold">{t("settings.securityProfile")}</h3>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium">{t("settings.accessProfile")}</label>
+                  <select
+                    value={accessProfile}
+                    onChange={(e) => setAccessProfile(e.target.value as "local_relaxed" | "local_strict" | "shared_lan")}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    <option value="local_relaxed">{t("settings.accessProfileOptions.localRelaxed")}</option>
+                    <option value="local_strict">{t("settings.accessProfileOptions.localStrict")}</option>
+                    <option value="shared_lan">{t("settings.accessProfileOptions.sharedLan")}</option>
+                  </select>
+                  <p className="text-xs text-gray-500">{t("settings.currentBindHost", { host: bindHost })}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={allowLan}
+                    onChange={(e) => setAllowLan(e.target.checked)}
+                    className="rounded"
+                    disabled={accessProfile !== "shared_lan"}
+                  />
+                  <span className="text-sm text-gray-700">{t("settings.allowLanClients")}</span>
+                </div>
+                <Input
+                  label={t("settings.securityTokenLabel")}
+                  type="password"
+                  value={securityToken}
+                  onChange={(e) => setSecurityTokenInput(e.target.value)}
+                  placeholder={t("settings.securityTokenPlaceholder")}
+                />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
                 <h3 className="font-semibold">{t("settings.data")}</h3>
               </CardHeader>
               <CardContent>
@@ -606,8 +722,8 @@ const Settings: React.FC = () => {
             </Card>
 
             <div className="flex items-center gap-3">
-              <Button onClick={handleSaveSettings} disabled={mutation.isPending}>
-                {mutation.isPending ? t("common.loading") : t("settings.save")}
+              <Button onClick={handleSaveSettings} disabled={mutation.isPending || savingAutoStart}>
+                {mutation.isPending || savingAutoStart ? t("common.loading") : t("settings.save")}
               </Button>
               {saved && (
                 <div className="px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
