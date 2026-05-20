@@ -32,6 +32,7 @@
   "agent.section.nextStepsHint": "你可以继续指定排序偏好、下载量阈值，或让我对某个 Mod 做详细解析。",
   "mod.favorite": "收藏",
   "mod.unfavorite": "取消收藏",
+  "mod.ignore": "隐藏",
   "mod.openOriginal": "打开原站",
   "mod.detail": "详情",
   "mod.downloads": "下载量",

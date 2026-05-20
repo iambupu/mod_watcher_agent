@@ -32,6 +32,7 @@
   "agent.section.nextStepsHint": "You can specify sort preferences, download thresholds, or ask for a deep dive on one mod.",
   "mod.favorite": "Favorite",
   "mod.unfavorite": "Unfavorite",
+  "mod.ignore": "Hide",
   "mod.openOriginal": "Open Original",
   "mod.detail": "Detail",
   "mod.downloads": "Downloads",

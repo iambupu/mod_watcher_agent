@@ -31,6 +31,19 @@ export async function fetchMods(params: ModsQueryParams): Promise<ModList> {
   return get<ModList>("/mods", query);
 }
 
+export async function fetchIgnoredMods(params: ModsQueryParams = {}): Promise<ModList> {
+  const query: Record<string, string> = {};
+  if (params.game) query.game = params.game;
+  if (params.source) query.source = params.source;
+  if (params.search) query.search = params.search;
+  if (params.adultContent) query.adult_content = params.adultContent;
+  if (params.sortBy) query.sort_by = params.sortBy;
+  if (params.sortOrder) query.sort_order = params.sortOrder;
+  if (params.offset !== undefined) query.offset = String(params.offset);
+  if (params.limit !== undefined) query.limit = String(params.limit);
+  return get<ModList>("/mods/ignored", query);
+}
+
 export async function fetchModGames(): Promise<ModGameOption[]> {
   return get<ModGameOption[]>("/mods/games");
 }
@@ -41,6 +54,10 @@ export async function fetchMod(id: number): Promise<ModItem> {
 
 export async function ignoreMod(id: number): Promise<{ ignored: boolean }> {
   return post<{ ignored: boolean }>(`/mods/${id}/ignore`);
+}
+
+export async function unignoreMod(id: number): Promise<{ ignored: boolean }> {
+  return post<{ ignored: boolean }>(`/mods/${id}/unignore`);
 }
 
 export async function regenerateModSummary(id: number): Promise<{ status: string; mod_id: number; language: string }> {
