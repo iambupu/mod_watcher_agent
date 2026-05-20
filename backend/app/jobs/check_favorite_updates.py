@@ -21,7 +21,7 @@ async def check_favorite_updates() -> dict:
     results: dict[int, dict] = {}
     with Session(engine) as session:
         favorites = session.exec(
-            select(Favorite).where(Favorite.tracking_enabled == True)
+            select(Favorite).where(Favorite.tracking_enabled.is_(True))
         ).all()
 
         if not favorites:
@@ -36,7 +36,7 @@ async def check_favorite_updates() -> dict:
                     "detail": detail,
                 }
                 session.commit()
-                if detail is not None:
+                if detail is not None and fav.notify_on_update:
                     mod = session.get(Mod, detail.mod_id)
                     if mod:
                         SystemNotificationService(session).create_event(

@@ -25,15 +25,9 @@ export function useSystemNotifications(): void {
           await markNotificationsSeen(dispatchedIds);
         }
 
-        const dispatchedIdSet = new Set(dispatchedIds);
-        const hasUndeliveredUnseen = events.some(
-          (event) => !event.seen && !dispatchedIdSet.has(event.id),
-        );
-        if (!hasUndeliveredUnseen) {
-          const maxId = Math.max(...events.map((e) => e.id));
-          if (maxId > sinceIdRef.current) {
-            sinceIdRef.current = maxId;
-          }
+        const maxId = Math.max(...events.map((e) => e.id));
+        if (maxId > sinceIdRef.current) {
+          sinceIdRef.current = maxId;
         }
       } catch {
         // Silently ignore polling errors
