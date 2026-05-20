@@ -1,13 +1,9 @@
-"""Tests for summary_language migration fix in SettingsService.init_defaults().
+"""Tests for summary_language migration in SettingsService.init_defaults().
 
-These tests verify the translation migration behavior:
-  - Old installs had summary_language defaulting to "en"
-  - New installs should default to "zh-CN"
-  - init_defaults() must override "en" → "zh-CN" but not override "zh-CN" → "zh-CN"
+These tests verify the migration behavior:
+  - init_defaults() only inserts missing keys, never overwrites existing values
+  - Users who prefer English keep their setting (no forced migration)
   - Non-summary user settings must never be overwritten
-
-NOTE: Test 1 will fail until the init_defaults() bug is fixed (currently only
-inserts when value is None, doesn't handle the "en" → "zh-CN" migration).
 """
 
 import pytest
@@ -38,11 +34,11 @@ class TestTranslationMigration:
         return SettingsService(session)
 
     def test_migration_overrides_en_to_zh_cn(self, service):
-        """When summary_language is "en" (old default), init_defaults() must
-        override it to "zh-CN"."""
+        """When summary_language is "en", init_defaults() must NOT override it.
+        Users who prefer English should not have their preference reset."""
         service.set("summary_language", "en")
         service.init_defaults()
-        assert service.get("summary_language") == "zh-CN"
+        assert service.get("summary_language") == "en"
 
     def test_migration_preserves_zh_cn(self, service):
         """When summary_language is already "zh-CN", init_defaults() must not

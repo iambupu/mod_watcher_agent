@@ -1,8 +1,8 @@
+import concurrent.futures
 import json
 import logging
-import concurrent.futures
 import socket
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from ipaddress import ip_address
 from urllib.parse import urlparse
 
@@ -74,8 +74,9 @@ def _import_rules_payload_from_url(url: str) -> list[dict]:
     if parsed.scheme not in {"http", "https"}:
         raise HTTPException(status_code=422, detail="Only http/https URLs are allowed")
 
-    # SSRF guard: resolve host and reject private / loopback / link-local IPs.
-    _require_public_host(parsed.hostname)
+    # SSRF guard: resolve host and record public IPs before the request
+    # so we can detect DNS rebinding after the request completes.
+    before_ips = _require_public_host(parsed.hostname)
 
     try:
         with httpx.Client(timeout=15.0, follow_redirects=True) as client:
@@ -83,6 +84,13 @@ def _import_rules_payload_from_url(url: str) -> list[dict]:
             resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch rules from URL: {exc}") from exc
+
+    # After request: resolve the same hostname again and compare IP sets.
+    # A change indicates a DNS rebinding attack — the hostname resolved to
+    # public IPs before the request but may have been rebound mid-flight.
+    after_ips = _require_public_host(parsed.hostname)
+    if before_ips != after_ips:
+        raise HTTPException(status_code=422, detail="Host IP changed during request — DNS rebinding blocked")
 
     # Re-check the final URL after redirects.
     if str(resp.url) != url:
@@ -100,15 +108,21 @@ def _import_rules_payload_from_url(url: str) -> list[dict]:
     raise HTTPException(status_code=422, detail="Imported JSON must be an array or {\"rules\": [...]}")
 
 
-def _require_public_host(hostname: str | None) -> None:
+def _require_public_host(hostname: str | None) -> set[str]:
+    """Resolve hostname and return set of public IP strings.
+
+    Raises HTTPException if any resolved address is private / loopback /
+    link-local.
+    """
     if not hostname:
         raise HTTPException(status_code=422, detail="URL must include a hostname")
     try:
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(socket.getaddrinfo, hostname, None)
             addrs = future.result(timeout=30.0)
-    except (socket.gaierror, concurrent.futures.TimeoutError, ValueError):
-        raise HTTPException(status_code=422, detail="Unable to resolve host")
+    except (socket.gaierror, concurrent.futures.TimeoutError, ValueError) as e:
+        raise HTTPException(status_code=422, detail="Unable to resolve host") from e
+    ips: set[str] = set()
     for _family, _type, _proto, _name, sockaddr in addrs:
         try:
             ip = ip_address(sockaddr[0])
@@ -116,6 +130,10 @@ def _require_public_host(hostname: str | None) -> None:
             continue
         if ip.is_loopback or ip.is_private or ip.is_link_local:
             raise HTTPException(status_code=422, detail="Private or loopback hosts are not allowed")
+        ips.add(str(ip))
+    if not ips:
+        raise HTTPException(status_code=422, detail="No addresses resolved")
+    return ips
 
 
 @router.get("", response_model=list[WatchRuleRead])
@@ -144,7 +162,7 @@ def export_rules(session: Session = Depends(get_session)):
     rules = session.exec(select(WatchRule)).all()
     payload = {
         "version": 1,
-        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "exportedAt": datetime.now(UTC).isoformat(),
         "rules": [_rule_to_create_payload(rule) for rule in rules],
     }
     return payload
@@ -179,7 +197,7 @@ def import_rules(
                 WatchRule.source == validated.source,
             )
         ).first()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         if existing:
             existing.enabled = validated.enabled
             existing.interval_minutes = _safe_interval_minutes(validated.intervalMinutes)
@@ -221,7 +239,7 @@ def create_rule(
     data: WatchRuleCreate,
     session: Session = Depends(get_session),
 ):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     rule = WatchRule(
         name=data.name,
         enabled=data.enabled,
@@ -266,7 +284,7 @@ def update_rule(
     if data.notification is not None:
         rule.notification_json = data.notification.model_dump_json()
 
-    rule.updated_at = datetime.now(timezone.utc).isoformat()
+    rule.updated_at = datetime.now(UTC).isoformat()
     session.add(rule)
     session.commit()
     session.refresh(rule)
@@ -291,8 +309,8 @@ async def test_rule(
     session: Session = Depends(get_session),
 ):
     rule_data = body.rule
-    AdapterClass = BaseAdapter.adapters.get(rule_data.source)
-    if AdapterClass is None:
+    adapter_class = BaseAdapter.adapters.get(rule_data.source)
+    if adapter_class is None:
         raise HTTPException(
             status_code=422,
             detail=f"Unknown source '{rule_data.source}'",
@@ -304,14 +322,14 @@ async def test_rule(
         else ""
     )
     adapter = (
-        AdapterClass(api_key=nexus_api_key or "")
+        adapter_class(api_key=nexus_api_key or "")
         if rule_data.source == "nexusmods"
-        else AdapterClass()
+        else adapter_class()
     )
     source_config_json = rule_data.sourceConfig.model_dump_json()
     filters_json = rule_data.filters.model_dump_json()
     notification_json = rule_data.notification.model_dump_json()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     preview_rule = WatchRule(
         name=rule_data.name,
         enabled=rule_data.enabled,

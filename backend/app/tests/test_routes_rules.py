@@ -9,7 +9,6 @@ from app.adapters.base import BaseAdapter
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models.mod_item import ModItem
-from app.models.watch_rule import WatchRule
 
 
 @pytest.fixture(name="engine")
@@ -134,6 +133,45 @@ class _RouteMockNexusAdapter(BaseAdapter):
         return ModItem(source_id="", source="", name="", game="", url="")
 
 
+class _RouteMockLoversLabTimeoutAdapter(BaseAdapter):
+    source = "route_mock_loverslab_timeout"
+
+    async def fetch(self, source_config_json: str) -> list[ModItem]:
+        raise TimeoutError("RSS request timeout")
+
+    async def fetch_mod_detail(self, external_id: str, game_domain=None):
+        return None
+
+    def normalize(self, raw_item: dict) -> ModItem:
+        return ModItem(source_id="", source="", name="", game="", url="")
+
+
+class _RouteMockLoversLabTooLargeAdapter(BaseAdapter):
+    source = "route_mock_loverslab_too_large"
+
+    async def fetch(self, source_config_json: str) -> list[ModItem]:
+        raise ValueError("RSS payload too large")
+
+    async def fetch_mod_detail(self, external_id: str, game_domain=None):
+        return None
+
+    def normalize(self, raw_item: dict) -> ModItem:
+        return ModItem(source_id="", source="", name="", game="", url="")
+
+
+class _RouteMockLoversLabInvalidFeedAdapter(BaseAdapter):
+    source = "route_mock_loverslab_invalid_feed"
+
+    async def fetch(self, source_config_json: str) -> list[ModItem]:
+        raise ValueError("Invalid RSS/Atom feed: malformed XML")
+
+    async def fetch_mod_detail(self, external_id: str, game_domain=None):
+        return None
+
+    def normalize(self, raw_item: dict) -> ModItem:
+        return ModItem(source_id="", source="", name="", game="", url="")
+
+
 @pytest.fixture
 def mock_nexus_adapter():
     saved = BaseAdapter.adapters.get("nexusmods")
@@ -178,6 +216,12 @@ class TestCreateRule:
     def test_create_rule_invalid_source_config(self, client):
         payload = make_nexusmods_payload()
         del payload["sourceConfig"]["gameDomainName"]
+        response = client.post("/api/rules", json=payload)
+        assert response.status_code == 422
+
+    def test_create_loverslab_rss_requires_feed_urls(self, client):
+        payload = make_loverslab_payload()
+        payload["sourceConfig"]["feedUrls"] = []
         response = client.post("/api/rules", json=payload)
         assert response.status_code == 422
 
@@ -277,6 +321,30 @@ class TestDryRun:
         assert isinstance(data["items"], list)
         assert data["scanned"] == 1
         assert data["items"][0]["external_id"] == "1001"
+
+    @pytest.mark.parametrize(
+        ("adapter_cls", "expected_detail"),
+        [
+            (_RouteMockLoversLabTimeoutAdapter, "RSS request timeout"),
+            (_RouteMockLoversLabTooLargeAdapter, "RSS payload too large"),
+            (_RouteMockLoversLabInvalidFeedAdapter, "Invalid RSS/Atom feed"),
+        ],
+    )
+    def test_test_rule_loverslab_dry_run_failure_paths(self, client, adapter_cls, expected_detail):
+        saved = BaseAdapter.adapters.get("loverslab")
+        BaseAdapter.adapters["loverslab"] = adapter_cls
+        try:
+            payload = make_loverslab_payload(name="LoversLab DryRun Error")
+            request_body = {"rule": payload, "dryRun": True}
+            response = client.post("/api/rules/test", json=request_body)
+        finally:
+            if saved is None:
+                BaseAdapter.adapters.pop("loverslab", None)
+            else:
+                BaseAdapter.adapters["loverslab"] = saved
+
+        assert response.status_code == 502
+        assert expected_detail in response.json()["detail"]
 
 class TestRunRule:
     def test_run_rule_discovery(self, client, mock_nexus_adapter):

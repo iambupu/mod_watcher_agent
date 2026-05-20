@@ -1,7 +1,10 @@
 import logging
+from datetime import UTC
 
 import httpx
 from sqlmodel import Session
+
+from app.logger import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -12,23 +15,33 @@ class NotificationService:
     def __init__(self, session: Session):
         self.session = session
     
-    async def _send_and_record(self, subject: str, text: str) -> tuple[bool, bool]:
-        telegram_ok = await self.send_telegram_message(text)
-        discord_ok = await self.send_discord_webhook(text)
-        await self._record(
-            "telegram",
-            "chat",
-            subject,
-            text,
-            "sent" if telegram_ok else "failed",
-        )
-        await self._record(
-            "discord",
-            "webhook",
-            subject,
-            text,
-            "sent" if discord_ok else "failed",
-        )
+    async def _send_and_record(
+        self,
+        subject: str,
+        text: str,
+        channels: list[str] | None = None,
+    ) -> tuple[bool, bool]:
+        selected = set(["telegram", "discord"] if channels is None else channels)
+        telegram_ok = False
+        discord_ok = False
+        if "telegram" in selected:
+            telegram_ok = await self.send_telegram_message(text)
+            await self._record(
+                "telegram",
+                "chat",
+                subject,
+                text,
+                "sent" if telegram_ok else "failed",
+            )
+        if "discord" in selected:
+            discord_ok = await self.send_discord_webhook(text)
+            await self._record(
+                "discord",
+                "webhook",
+                subject,
+                text,
+                "sent" if discord_ok else "failed",
+            )
         return telegram_ok, discord_ok
 
     async def send_telegram_message(self, text: str) -> bool:
@@ -70,11 +83,12 @@ class NotificationService:
                 return False
 
     async def _record(self, channel, recipient, subject, body, status, error_message=None):
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from app.models.notification import Notification
-        now = datetime.now(timezone.utc).isoformat()
-        n = Notification(channel=channel, recipient=recipient, subject=subject, body=body,
-                         status=status, error_message=error_message,
+        now = datetime.now(UTC).isoformat()
+        n = Notification(channel=channel, recipient=recipient, subject=subject, body=redact_sensitive_text(str(body)),
+                         status=status, error_message=redact_sensitive_text(str(error_message)) if error_message else None,
                          sent_at=now if status == "sent" else None, created_at=now)
         self.session.add(n)
         self.session.commit()
@@ -107,6 +121,7 @@ class NotificationService:
     @staticmethod
     def parse_notification_config(rule):
         import json
+
         from app.schemas.watch_rule import NotificationConfig
         try:
             data = json.loads(rule.notification_json) if hasattr(rule, "notification_json") else {}
@@ -117,14 +132,18 @@ class NotificationService:
     async def notify_new_mods(self, mods, rule_name, notification_config=None):
         if not mods:
             return {"telegram_ok": True, "discord_ok": True, "notified_count": 0}
+        channels = None
+        if notification_config is not None:
+            channels = [channel for channel in notification_config.channels if channel in {"telegram", "discord"}]
         lines = [f"\U0001f195 <b>\u65b0 Mod \u53d1\u73b0</b> \u2014 \u89c4\u5219: {rule_name}", f"\u5171 {len(mods)} \u4e2a:", ""]
         for m in mods[:5]:
             lines.append(f"\u2022 <a href='{m.get('url', '')}'>{m.get('title', 'Unknown')}</a>")
         text = "\n".join(lines)
-        tg, dc = await self._send_and_record(f"New Mods: rule={rule_name}", text)
+        tg, dc = await self._send_and_record(f"New Mods: rule={rule_name}", text, channels=channels)
+        selected = set(["telegram", "discord"] if channels is None else channels)
         return {
-            "telegram_ok": tg,
-            "discord_ok": dc,
+            "telegram_ok": tg if "telegram" in selected else True,
+            "discord_ok": dc if "discord" in selected else True,
             "notified_count": len(mods) if (tg or dc) else 0,
         }
 

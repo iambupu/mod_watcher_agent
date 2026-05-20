@@ -1,20 +1,21 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlmodel import Session, select, func
+from sqlmodel import Session, func, select
 
 from app.db import get_session
-from app.models.job_run import JobRun
-from app.models.notification import Notification
-from app.models.mod import Mod
-from app.models.favorite import Favorite
-from app.models.watch_rule import WatchRule
-from app.models.update_event import ModUpdateEvent
-from app.jobs.scheduler import scheduler
-from app.jobs.discover_new_mods import discover_new_mods
 from app.jobs.check_favorite_updates import check_favorite_updates
+from app.jobs.discover_new_mods import discover_new_mods
 from app.jobs.generate_summaries import generate_summaries
+from app.jobs.generate_summary_report import generate_summary_report
 from app.jobs.manual_jobs import create_job_run, enqueue_job_run
+from app.jobs.scheduler import scheduler
+from app.models.favorite import Favorite
+from app.models.job_run import JobRun
+from app.models.mod import Mod
+from app.models.notification import Notification
+from app.models.update_event import ModUpdateEvent
+from app.models.watch_rule import WatchRule
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -43,17 +44,29 @@ def _count_numeric_values(result: dict) -> tuple[int, int]:
     return scanned, matched
 
 
+def _current_week_start_utc_iso() -> str:
+    """Return current week start (Monday 00:00 local time) as UTC ISO string."""
+    local_now = datetime.now().astimezone()
+    week_start_local = local_now.replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    ) - timedelta(days=local_now.weekday())
+    return week_start_local.astimezone(UTC).isoformat()
+
+
 @router.get("/stats")
 def get_stats(session: Session = Depends(get_session)):
-    week_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
+    week_start_utc = _current_week_start_utc_iso()
     total_mods = session.exec(select(func.count(Mod.id))).one()
     new_mods_this_week = session.exec(
-        select(func.count(Mod.id)).where(Mod.first_seen_at >= week_ago)
+        select(func.count(Mod.id)).where(Mod.first_seen_at >= week_start_utc)
     ).one()
     total_favorites = session.exec(select(func.count(Favorite.id))).one()
     total_rules = session.exec(select(func.count(WatchRule.id))).one()
     unseen_updates = session.exec(
-        select(func.count(ModUpdateEvent.id)).where(ModUpdateEvent.seen == False)
+        select(func.count(ModUpdateEvent.id)).where(ModUpdateEvent.seen.is_(False))
     ).one()
     return {
         "total_mods": total_mods,
@@ -180,6 +193,12 @@ async def run_generate_missing_summaries(session: Session = Depends(get_session)
 
     enqueue_job_run(job.id, handler)
     return _queued_response(job)
+
+
+@router.post("/summary-report/run")
+async def run_summary_report_now():
+    """Run summary report immediately using summary_report_prompt in settings."""
+    return await generate_summary_report(force=True)
 
 
 @router.post("/pause")

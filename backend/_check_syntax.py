@@ -2,7 +2,7 @@ import ast
 from pathlib import Path
 
 root = Path(__file__).resolve().parent
-pyfiles = [path for path in root.rglob("*.py")]
+pyfiles = list(root.rglob("*.py"))
 errors = []
 
 for path in pyfiles:

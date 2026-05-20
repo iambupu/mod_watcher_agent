@@ -65,5 +65,5 @@ def mark_event_seen(event_id: int, session: Session = Depends(get_session)):
     try:
         event = service.mark_seen(event_id)
         return event
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Update event not found")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail="Update event not found") from e

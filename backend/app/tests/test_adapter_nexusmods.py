@@ -1,12 +1,10 @@
 """Tests for NexusModsAdapter single-source mode."""
 
 import json
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import pytest
-
-from app.adapters.nexusmods import RateLimitError
 
 FAKE_GAME_DOMAIN = "skyrimspecialedition"
 FAKE_MOD_ID = 12345
@@ -100,7 +98,7 @@ class TestNexusModsAdapter:
         assert mod.endorsements == 50
         assert mod.thumbnail_url == "https://example.com/thumb.jpg"
         assert mod.is_adult is False
-        assert mod.updated_at == datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
+        assert mod.updated_at == datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
 
     def test_normalize_maps_fields(self, adapter):
         node = _make_mod_node()
@@ -120,7 +118,7 @@ class TestNexusModsAdapter:
         assert mod.categories == ["Weapons"]
         assert mod.tags == ["Weapons"]
         assert mod.thumbnail_url == "https://example.com/thumb.jpg"
-        assert mod.updated_at == datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
+        assert mod.updated_at == datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
         assert mod.is_adult is False
         assert mod.raw is node
 

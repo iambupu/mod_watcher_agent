@@ -30,17 +30,19 @@ class ModService:
         source: str | None,
         search: str | None,
         adult_content: Literal["include", "exclude", "only"] | None,
+        *,
+        ignored: bool = False,
     ):
-        conditions = [Mod.ignored == False]
+        conditions = [Mod.ignored == ignored]
         if game is not None:
             conditions.append(or_(Mod.game == game, Mod.game_domain == game))
         if source is not None:
             conditions.append(Mod.source == source)
         if adult_content is not None:
             if adult_content == "exclude":
-                conditions.append(Mod.adult_content == False)
+                conditions.append(Mod.adult_content == False)  # noqa: E712
             elif adult_content == "only":
-                conditions.append(Mod.adult_content == True)
+                conditions.append(Mod.adult_content == True)  # noqa: E712
         if search is not None:
             conditions.append(Mod.title.ilike(f"%{search}%"))
         return conditions
@@ -55,8 +57,10 @@ class ModService:
         sort_order: str,
         offset: int,
         limit: int,
+        *,
+        ignored: bool = False,
     ) -> tuple[list[Mod], int, str, dict[int, str], dict[int, str], list[int]]:
-        conditions = self._build_mod_conditions(game, source, search, adult_content)
+        conditions = self._build_mod_conditions(game, source, search, adult_content, ignored=ignored)
 
         sort_map = {
             "first_seen_at": Mod.first_seen_at,
@@ -117,6 +121,8 @@ class ModService:
         sort_order: str,
         offset: int,
         limit: int,
+        *,
+        ignored: bool = False,
     ) -> tuple[list[dict], int, str, list[int]]:
         (
             items,
@@ -134,6 +140,7 @@ class ModService:
             sort_order=sort_order,
             offset=offset,
             limit=limit,
+            ignored=ignored,
         )
         displays = [
             self._to_display_dict(
@@ -152,7 +159,7 @@ class ModService:
                 Mod.game,
                 func.count(Mod.id),
             )
-            .where(Mod.ignored == False)
+            .where(Mod.ignored == False)  # noqa: E712
             .group_by(Mod.game_domain, Mod.game)
             .order_by(func.count(Mod.id).desc(), Mod.game.asc())
         )
@@ -231,6 +238,15 @@ class ModService:
         if mod is None:
             return False
         mod.ignored = True
+        self.session.add(mod)
+        self.session.commit()
+        return True
+
+    def mark_mod_visible(self, mod_id: int) -> bool:
+        mod = self.get_mod_or_none(mod_id)
+        if mod is None:
+            return False
+        mod.ignored = False
         self.session.add(mod)
         self.session.commit()
         return True

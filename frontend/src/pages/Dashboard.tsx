@@ -1,10 +1,9 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Heart,
-  Bell,
   SlidersHorizontal,
   Sparkles,
   RefreshCw,
@@ -19,6 +18,7 @@ import { fetchStats } from "@/api/stats";
 import type { Stats } from "@/api/stats";
 import { fetchMods } from "@/api/mods";
 import type { ModItem } from "@/types";
+import { runSummaryReport } from "@/api/jobs";
 
 interface StatCardConfig {
   icon: React.ReactNode;
@@ -58,7 +58,7 @@ const STAT_CARDS: StatCardConfig[] = [
     bgColor: "bg-purple-50",
   },
   {
-    icon: <Bell size={20} />,
+    icon: <RefreshCw size={20} />,
     labelKey: "dashboard.unseenUpdates",
     valueKey: "unseen_updates",
     color: "text-orange-600",
@@ -167,6 +167,8 @@ const RecommendedModCard: React.FC<{ mod: ModItem }> = ({ mod }) => {
 
 const Dashboard: React.FC = () => {
   const { t } = useTranslation();
+  const [manualSummaryReport, setManualSummaryReport] = React.useState("");
+  const [manualSummaryStatus, setManualSummaryStatus] = React.useState("");
   const { data: stats, isLoading, isError, refetch } = useQuery({
     queryKey: ["stats"],
     queryFn: fetchStats,
@@ -185,6 +187,46 @@ const Dashboard: React.FC = () => {
     count: recommendedMods.length,
     total: stats?.total_mods ?? 0,
     weekly: stats?.new_mods_this_week ?? 0,
+  });
+
+  const summaryReportMutation = useMutation({
+    mutationFn: runSummaryReport,
+    onMutate: () => {
+      setManualSummaryStatus(t("dashboard.summaryGenerating"));
+    },
+    onSuccess: (result) => {
+      if (result.generated && result.report) {
+        setManualSummaryReport(result.report);
+        setManualSummaryStatus(
+          t("dashboard.summaryGeneratedMeta", {
+            provider: result.provider || "unknown",
+            model: result.model || "unknown",
+            count: result.items_scanned ?? 0,
+          }),
+        );
+        return;
+      }
+      if (result.reason === "missing_prompt") {
+        setManualSummaryStatus(t("dashboard.summaryPromptMissing"));
+        setManualSummaryReport("");
+        return;
+      }
+      if (result.reason === "no_recent_mods") {
+        setManualSummaryStatus(t("dashboard.summaryNoRecentMods"));
+        setManualSummaryReport("");
+        return;
+      }
+      setManualSummaryStatus(t("dashboard.summaryNoResult"));
+      setManualSummaryReport("");
+    },
+    onError: (error) => {
+      setManualSummaryStatus(
+        t("dashboard.summaryGenerateFailed", {
+          error: error instanceof Error ? error.message : "unknown",
+        }),
+      );
+      setManualSummaryReport("");
+    },
   });
 
   return (
@@ -223,9 +265,24 @@ const Dashboard: React.FC = () => {
 
           <section className="mt-6 space-y-4">
             <div>
-              <div className="flex items-center gap-2">
-                <Sparkles size={18} className="text-blue-600" />
-                <h3 className="text-lg font-semibold text-gray-900">{t("dashboard.llmSummaryTitle")}</h3>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={18} className="text-blue-600" />
+                  <h3 className="text-lg font-semibold text-gray-900">{t("dashboard.llmSummaryTitle")}</h3>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => summaryReportMutation.mutate()}
+                  disabled={summaryReportMutation.isPending}
+                >
+                  {summaryReportMutation.isPending ? (
+                    <RefreshCw size={14} className="mr-1.5 animate-spin" />
+                  ) : (
+                    <Sparkles size={14} className="mr-1.5" />
+                  )}
+                  {t("dashboard.summaryGenerateNow")}
+                </Button>
               </div>
               <p className="mt-1 text-sm text-gray-500">{t("dashboard.llmSummarySubtitle")}</p>
             </div>
@@ -236,6 +293,19 @@ const Dashboard: React.FC = () => {
                   <p className="text-sm font-medium text-blue-900">{t("dashboard.llmSummaryExplanation")}</p>
                   <p className="mt-1 text-sm leading-6 text-blue-800">{summaryText}</p>
                 </div>
+
+                {(manualSummaryStatus || manualSummaryReport) && (
+                  <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-3">
+                    {manualSummaryStatus && (
+                      <p className="text-xs font-medium text-indigo-800">{manualSummaryStatus}</p>
+                    )}
+                    {manualSummaryReport && (
+                      <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-indigo-900">
+                        {manualSummaryReport}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <div className="mb-3 flex items-center justify-between gap-3">

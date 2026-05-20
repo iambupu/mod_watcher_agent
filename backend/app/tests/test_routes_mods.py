@@ -281,6 +281,30 @@ class TestListMods:
         assert data["total"] == 1
         assert data["items"][0]["title"] == "Cool Sword"
 
+    def test_ignored_list_and_unignore_restore_mod(self, client, session):
+        visible = make_mod(external_id="visible", title="Visible Mod")
+        ignored = make_mod(external_id="ignored", title="Hidden Mod", ignored=True)
+        session.add_all([visible, ignored])
+        session.commit()
+        session.refresh(ignored)
+
+        visible_response = client.get("/api/mods")
+        assert visible_response.status_code == 200
+        assert [item["title"] for item in visible_response.json()["items"]] == ["Visible Mod"]
+
+        ignored_response = client.get("/api/mods/ignored")
+        assert ignored_response.status_code == 200
+        assert ignored_response.json()["total"] == 1
+        assert ignored_response.json()["items"][0]["title"] == "Hidden Mod"
+
+        restore_response = client.post(f"/api/mods/{ignored.id}/unignore")
+        assert restore_response.status_code == 200
+        assert restore_response.json() == {"ignored": False}
+
+        restored_response = client.get("/api/mods")
+        assert restored_response.status_code == 200
+        assert restored_response.json()["total"] == 2
+
 
 class TestGetMod:
     def test_get_single_mod(self, client, session):

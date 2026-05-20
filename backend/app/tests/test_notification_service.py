@@ -1,10 +1,10 @@
-import pytest
 from unittest.mock import AsyncMock, patch
-from sqlmodel import Session, SQLModel, create_engine
-from app.services.notification_service import NotificationService
+
+import pytest
+from sqlmodel import Session, SQLModel, create_engine, select
+
 from app.models.notification import Notification
-from app.models.favorite import Favorite
-from app.models.mod import Mod
+from app.services.notification_service import NotificationService
 
 
 @pytest.fixture
@@ -110,3 +110,66 @@ def test_notification_no_json_config_default():
     assert nc.enabled is False
     assert nc.mode == "daily_digest"
     assert nc.channels == []
+
+
+@pytest.mark.asyncio
+async def test_notify_new_mods_respects_telegram_channel(service, session, monkeypatch):
+    telegram = AsyncMock(return_value=True)
+    discord = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "send_telegram_message", telegram)
+    monkeypatch.setattr(service, "send_discord_webhook", discord)
+    nc = NotificationService.parse_notification_config(
+        FakeRule('{"enabled": true, "mode": "instant", "channels": ["telegram"]}')
+    )
+
+    result = await service.notify_new_mods([{"title": "New A", "url": "https://example.com/a"}], "Rule A", nc)
+    records = session.exec(select(Notification)).all()
+
+    assert result["telegram_ok"] is True
+    assert result["discord_ok"] is True
+    assert result["notified_count"] == 1
+    telegram.assert_awaited_once()
+    discord.assert_not_awaited()
+    assert [record.channel for record in records] == ["telegram"]
+
+
+@pytest.mark.asyncio
+async def test_notify_new_mods_respects_discord_channel(service, session, monkeypatch):
+    telegram = AsyncMock(return_value=True)
+    discord = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "send_telegram_message", telegram)
+    monkeypatch.setattr(service, "send_discord_webhook", discord)
+    nc = NotificationService.parse_notification_config(
+        FakeRule('{"enabled": true, "mode": "instant", "channels": ["discord"]}')
+    )
+
+    result = await service.notify_new_mods([{"title": "New A", "url": "https://example.com/a"}], "Rule A", nc)
+    records = session.exec(select(Notification)).all()
+
+    assert result["telegram_ok"] is True
+    assert result["discord_ok"] is True
+    assert result["notified_count"] == 1
+    telegram.assert_not_awaited()
+    discord.assert_awaited_once()
+    assert [record.channel for record in records] == ["discord"]
+
+
+@pytest.mark.asyncio
+async def test_notify_new_mods_desktop_only_skips_external_channels(service, session, monkeypatch):
+    telegram = AsyncMock(return_value=True)
+    discord = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "send_telegram_message", telegram)
+    monkeypatch.setattr(service, "send_discord_webhook", discord)
+    nc = NotificationService.parse_notification_config(
+        FakeRule('{"enabled": true, "mode": "instant", "channels": ["desktop"]}')
+    )
+
+    result = await service.notify_new_mods([{"title": "New A", "url": "https://example.com/a"}], "Rule A", nc)
+    records = session.exec(select(Notification)).all()
+
+    assert result["telegram_ok"] is True
+    assert result["discord_ok"] is True
+    assert result["notified_count"] == 0
+    telegram.assert_not_awaited()
+    discord.assert_not_awaited()
+    assert records == []

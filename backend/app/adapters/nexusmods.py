@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -52,7 +52,7 @@ def _parse_datetime(value: str | None) -> datetime | None:
 
 
 def _unix_timestamp_days_ago(days: int) -> str:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
     return str(int(cutoff.timestamp()))
 
 
@@ -70,7 +70,7 @@ class NexusModsAdapter(BaseAdapter):
         headers = {
             "Content-Type": "application/json",
             "Application-Name": "ModWatcherAgent",
-            "Application-Version": "0.1.2",
+            "Application-Version": "0.2.0",
         }
         if self.api_key:
             headers["apikey"] = self.api_key

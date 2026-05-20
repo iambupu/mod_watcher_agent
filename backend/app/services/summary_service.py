@@ -1,13 +1,13 @@
 import asyncio
-import logging
 import json
-from datetime import datetime, timezone
+import logging
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
+from app.jobs.tracked_jobs import run_tracked_job
 from app.models.mod import Mod
 from app.models.summary import ModSummary
-from app.jobs.tracked_jobs import run_tracked_job
 from app.services.llm_client import DEFAULT_MODELS, create_llm_client
 from app.services.settings_service import SettingsService
 
@@ -212,7 +212,7 @@ class SummaryService:
             if existing:
                 existing.content = content
                 existing.model = llm_model
-                existing.generated_at = datetime.now(timezone.utc).isoformat()
+                existing.generated_at = datetime.now(UTC).isoformat()
             else:
                 summary = ModSummary(
                     mod_id=mod_id,
@@ -220,7 +220,7 @@ class SummaryService:
                     summary_type=summary_type,
                     content=content,
                     model=llm_model,
-                    generated_at=datetime.now(timezone.utc).isoformat(),
+                    generated_at=datetime.now(UTC).isoformat(),
                 )
                 self.session.add(summary)
 

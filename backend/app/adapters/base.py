@@ -1,4 +1,3 @@
-import json
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -16,7 +15,6 @@ class BaseAdapter(ABC):
 
     @abstractmethod
     async def fetch(self, source_config_json: str) -> list[ModItem]:
-        config = json.loads(source_config_json)
         ...
 
     @abstractmethod

@@ -8,18 +8,38 @@ import {
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  LayoutGrid,
+  List,
+  ExternalLink,
+  Heart,
+  EyeOff,
+  Clock,
+  Download,
+  ThumbsUp,
+  Undo2,
+  X,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { ModCard } from "@/components/ModCard";
-import { fetchModGames, fetchMods, generateModIntroduction, ignoreMod, regenerateModSummary } from "@/api/mods";
+import { SourceBadge } from "@/components/SourceBadge";
+import {
+  fetchIgnoredMods,
+  fetchModGames,
+  fetchMods,
+  generateModIntroduction,
+  ignoreMod,
+  regenerateModSummary,
+  unignoreMod,
+} from "@/api/mods";
 import { fetchJobRun, runDiscoveryAll } from "@/api/jobs";
 import { addFavorite, fetchFavorites, removeFavorite } from "@/api/favorites";
 import { useUIStore } from "@/stores/uiStore";
-import type { Favorite, ModSource, AdultPolicy, SummaryMode } from "@/types";
+import type { Favorite, ModItem, ModSource, AdultPolicy, SummaryMode } from "@/types";
 
 const PAGE_SIZE = 24;
+type DiscoverViewMode = "card" | "list";
 
 function SkeletonCard() {
   return (
@@ -60,10 +80,12 @@ const Discover: React.FC = () => {
   const [game, setGame] = useState("");
   const [source, setSource] = useState<ModSource | "">("");
   const [sort, setSort] = useState("updated_at_remote");
-  const [adultPolicy, setAdultPolicy] = useState<AdultPolicy>("exclude");
+  const [adultPolicy, setAdultPolicy] = useState<AdultPolicy>("include");
+  const [viewMode, setViewMode] = useState<DiscoverViewMode>("card");
   const [page, setPage] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
   const [lastResult, setLastResult] = useState("");
+  const [ignoredListOpen, setIgnoredListOpen] = useState(false);
   const [regeneratingSummaryIds, setRegeneratingSummaryIds] = useState<Set<number>>(new Set());
 
   const offset = (page - 1) * PAGE_SIZE;
@@ -106,6 +128,17 @@ const Discover: React.FC = () => {
     queryFn: () => fetchMods(queryParams),
     refetchInterval: summaryMode === "original" ? false : 15000,
   });
+  const { data: ignoredMods, isLoading: ignoredLoading } = useQuery({
+    queryKey: ["mods", "ignored"],
+    queryFn: () =>
+      fetchIgnoredMods({
+        sortBy: "first_seen_at",
+        sortOrder: "desc",
+        offset: 0,
+        limit: 100,
+      }),
+    enabled: ignoredListOpen,
+  });
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
 
@@ -127,6 +160,17 @@ const Discover: React.FC = () => {
   const handleAdultChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setAdultPolicy(e.target.value as AdultPolicy);
     setPage(1);
+  };
+
+  const getSummaryForList = (original?: string, translated?: string) => {
+    if (summaryMode === "translated") {
+      return translated || original || "";
+    }
+    if (summaryMode === "bilingual") {
+      if (translated && original) return `${translated}\n——\n${original}`;
+      return translated || original || "";
+    }
+    return original || "";
   };
 
   const handleRunDiscovery = async () => {
@@ -161,12 +205,22 @@ const Discover: React.FC = () => {
     mutationFn: ignoreMod,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mods"] });
+      queryClient.invalidateQueries({ queryKey: ["mods", "ignored"] });
     },
   });
 
   const handleIgnore = (modId: number) => {
     ignoreMutation.mutate(modId);
   };
+
+  const unignoreMutation = useMutation({
+    mutationFn: unignoreMod,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mods"] });
+      queryClient.invalidateQueries({ queryKey: ["mods", "ignored"] });
+      queryClient.invalidateQueries({ queryKey: ["mod-games"] });
+    },
+  });
 
   const favoriteMutation = useMutation({
     mutationFn: async (modId: number) => {
@@ -387,6 +441,43 @@ const Discover: React.FC = () => {
                       <option value="bilingual">{t("summary.bilingual")}</option>
                     </select>
                   </div>
+
+                  <div className="w-full flex justify-end md:w-auto md:ml-auto">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <div className="inline-flex rounded-md border border-gray-300 bg-white p-0.5">
+                          <button
+                            type="button"
+                            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${viewMode === "card" ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                            onClick={() => setViewMode("card")}
+                          >
+                            <LayoutGrid size={14} />
+                            {t("discover.viewCard")}
+                          </button>
+                          <button
+                            type="button"
+                            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${viewMode === "list" ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                            onClick={() => setViewMode("list")}
+                          >
+                            <List size={14} />
+                            {t("discover.viewList")}
+                          </button>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setIgnoredListOpen(true)}
+                        >
+                          <EyeOff size={14} />
+                          <span className="ml-1">{t("discover.hiddenList")}</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                  {t("discover.loverslabMetricsNotice")}
                 </div>
               </CardContent>
             </Card>
@@ -396,7 +487,7 @@ const Discover: React.FC = () => {
             )}
 
             {isLoading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className={viewMode === "card" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "space-y-3"}>
                 {Array.from({ length: 6 }).map((_, i) => (
                   <SkeletonCard key={i} />
                 ))}
@@ -423,30 +514,227 @@ const Discover: React.FC = () => {
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {data?.items.map((mod) => (
-                    <ModCard
-                      key={mod.id}
-                      mod={mod}
-                      isFavorited={favoriteByModId.has(mod.id)}
-                      onToggleFavorite={() => handleToggleFavorite(mod.id)}
-                      onIgnore={() => handleIgnore(mod.id)}
-                      onRegenerateSummary={() => handleRegenerateSummary(mod.id)}
-                      regeneratingSummary={regeneratingSummaryIds.has(mod.id)}
-                      onGenerateIntroduction={() => handleGenerateIntroduction(mod.id)}
-                      generatingIntroduction={generateIntroductionMutation.isPending && generateIntroductionMutation.variables === mod.id}
-                    />
-                  ))}
-                </div>
+                {viewMode === "card" ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {data?.items.map((mod) => (
+                      <ModCard
+                        key={mod.id}
+                        mod={mod}
+                        isFavorited={favoriteByModId.has(mod.id)}
+                        onToggleFavorite={() => handleToggleFavorite(mod.id)}
+                        onIgnore={() => handleIgnore(mod.id)}
+                        onRegenerateSummary={() => handleRegenerateSummary(mod.id)}
+                        regeneratingSummary={regeneratingSummaryIds.has(mod.id)}
+                        onGenerateIntroduction={() => handleGenerateIntroduction(mod.id)}
+                        generatingIntroduction={generateIntroductionMutation.isPending && generateIntroductionMutation.variables === mod.id}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {data?.items.map((mod) => {
+                      const gameLabel = mod.game || mod.game_domain || "";
+                      const summary = getSummaryForList(mod.original_summary, mod.translated_summary);
+                      return (
+                        <Card key={mod.id}>
+                          <CardContent className="py-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1 space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <SourceBadge source={mod.source} />
+                                  {mod.adult_content === true && (
+                                    <span className="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
+                                      R18
+                                    </span>
+                                  )}
+                                  {gameLabel && (
+                                    <span className="inline-flex items-center rounded-md border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-600">
+                                      {gameLabel}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <a
+                                  href={mod.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="block truncate text-base font-semibold text-gray-900 hover:text-blue-600"
+                                  title={mod.title}
+                                >
+                                  {mod.title}
+                                </a>
+
+                                <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                                  {mod.downloads !== undefined && mod.downloads !== null && (
+                                    <span className="inline-flex items-center gap-1">
+                                      <Download size={12} />
+                                      {mod.downloads.toLocaleString()}
+                                    </span>
+                                  )}
+                                  {mod.endorsements !== undefined && mod.endorsements !== null && (
+                                    <span className="inline-flex items-center gap-1">
+                                      <ThumbsUp size={12} />
+                                      {mod.endorsements.toLocaleString()}
+                                    </span>
+                                  )}
+                                  {mod.updated_at_remote && (
+                                    <span className="inline-flex items-center gap-1">
+                                      <Clock size={12} />
+                                      {new Date(mod.updated_at_remote).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {summary && (
+                                  <p className="line-clamp-2 whitespace-pre-line text-sm text-gray-600">
+                                    {summary}
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="flex shrink-0 items-center gap-1">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleToggleFavorite(mod.id)}
+                                  title={favoriteByModId.has(mod.id) ? t("mod.unfavorite") : t("mod.favorite")}
+                                >
+                                  <Heart size={14} className={favoriteByModId.has(mod.id) ? "fill-red-500 text-red-500" : ""} />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleIgnore(mod.id)}
+                                  title={t("mod.ignore")}
+                                >
+                                  <EyeOff size={14} />
+                                </Button>
+                                <a href={mod.url} target="_blank" rel="noopener noreferrer">
+                                  <Button type="button" variant="outline" size="sm">
+                                    <ExternalLink size={14} />
+                                  </Button>
+                                </a>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
                 {renderPagination()}
               </>
             )}
           </div>
         </main>
       </div>
+      {ignoredListOpen && (
+        <IgnoredModsDialog
+          items={ignoredMods?.items || []}
+          total={ignoredMods?.total || 0}
+          loading={ignoredLoading}
+          restoringId={unignoreMutation.variables}
+          onClose={() => setIgnoredListOpen(false)}
+          onRestore={(modId) => unignoreMutation.mutate(modId)}
+        />
+      )}
     </div>
   );
 };
+
+function IgnoredModsDialog({
+  items,
+  total,
+  loading,
+  restoringId,
+  onClose,
+  onRestore,
+}: {
+  items: ModItem[];
+  total: number;
+  loading: boolean;
+  restoringId?: number;
+  onClose: () => void;
+  onRestore: (modId: number) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+          <div>
+            <h3 className="text-base font-semibold text-gray-900">{t("discover.hiddenList")}</h3>
+            <p className="mt-0.5 text-xs text-gray-500">
+              {t("discover.hiddenListHint", { total })}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-500">
+              <Loader2 size={16} className="animate-spin" />
+              {t("common.loading")}
+            </div>
+          ) : items.length === 0 ? (
+            <div className="py-12 text-center text-sm text-gray-500">
+              {t("discover.hiddenEmpty")}
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {items.map((item) => (
+                <div key={item.id} className="flex items-start gap-3 px-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SourceBadge source={item.source} />
+                      <span className="text-xs text-gray-500">{item.game || item.game_domain || "-"}</span>
+                    </div>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 block truncate text-sm font-semibold text-gray-900 hover:text-blue-600"
+                      title={item.title}
+                    >
+                      {item.title}
+                    </a>
+                    {item.original_summary && (
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">
+                        {item.original_summary}
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onRestore(item.id)}
+                    disabled={restoringId === item.id}
+                  >
+                    {restoringId === item.id ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Undo2 size={14} />
+                    )}
+                    <span className="ml-1">{t("discover.restoreHidden")}</span>
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function getFavoriteModId(favorite: Favorite): number | undefined {
   const raw = favorite as Favorite & { mod_id?: number };

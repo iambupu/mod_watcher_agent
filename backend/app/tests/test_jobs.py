@@ -53,15 +53,19 @@ class TestJobsSkipDisabled:
 
         from app.jobs.discover_new_mods import discover_new_mods
 
-        with patch("app.jobs.discover_new_mods.engine", db_engine):
-            with patch("app.services.discovery_service.DiscoveryService.discover_from_rule",
-                       new_callable=AsyncMock) as mock_discover:
-                mock_discover.return_value = []
+        with (
+            patch("app.jobs.discover_new_mods.engine", db_engine),
+            patch(
+                "app.services.discovery_service.DiscoveryService.discover_from_rule",
+                new_callable=AsyncMock,
+            ) as mock_discover,
+        ):
+            mock_discover.return_value = []
 
-                results = db_session.exec(select(WatchRule)).all()
-                assert len(results) == 2
+            results = db_session.exec(select(WatchRule)).all()
+            assert len(results) == 2
 
-                result = await discover_new_mods()
+            result = await discover_new_mods()
 
         assert "enabled-rule" in result
         assert "disabled-rule" not in result
@@ -77,12 +81,16 @@ class TestJobsUseWatchRule:
 
         from app.jobs.discover_new_mods import discover_new_mods
 
-        with patch("app.jobs.discover_new_mods.engine", db_engine):
-            with patch("app.services.discovery_service.DiscoveryService.discover_from_rule",
-                       new_callable=AsyncMock) as mock_discover:
-                mock_discover.return_value = []
+        with (
+            patch("app.jobs.discover_new_mods.engine", db_engine),
+            patch(
+                "app.services.discovery_service.DiscoveryService.discover_from_rule",
+                new_callable=AsyncMock,
+            ) as mock_discover,
+        ):
+            mock_discover.return_value = []
 
-                result = await discover_new_mods()
+            result = await discover_new_mods()
 
         assert "my-rule" in result
         assert result["my-rule"] == 0
@@ -96,12 +104,16 @@ class TestJobsUseWatchRule:
 
         from app.jobs.discover_new_mods import discover_new_mods
 
-        with patch("app.jobs.discover_new_mods.engine", db_engine):
-            with patch("app.services.discovery_service.DiscoveryService.discover_from_rule",
-                       new_callable=AsyncMock) as mock_discover:
-                mock_discover.return_value = []
+        with (
+            patch("app.jobs.discover_new_mods.engine", db_engine),
+            patch(
+                "app.services.discovery_service.DiscoveryService.discover_from_rule",
+                new_callable=AsyncMock,
+            ) as mock_discover,
+        ):
+            mock_discover.return_value = []
 
-                result = await discover_new_mods()
+            result = await discover_new_mods()
 
         assert result == {"rule-a": 0, "rule-b": 0}
         assert mock_discover.call_count == 2

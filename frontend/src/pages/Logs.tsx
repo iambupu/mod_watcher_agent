@@ -15,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import AppSidebar from "@/components/layout/AppSidebar";
+import { MarkdownText } from "@/components/MarkdownText";
 import { fetchLogs, openLogDirectory } from "@/api/logging";
 import { fetchJobRuns, fetchSchedulerStatus, type JobRun, type SchedulerJob } from "@/api/jobs";
 
@@ -273,9 +274,10 @@ const Logs: React.FC = () => {
                           </div>
                           {isExpanded && (
                             <div className="px-12 py-3 bg-gray-50">
-                              <p className="text-sm text-gray-600 whitespace-pre-wrap break-all">
-                                {entry.message}
-                              </p>
+                              <MarkdownText
+                                text={entry.message}
+                                className="text-sm text-gray-600"
+                              />
                             </div>
                           )}
                         </div>
@@ -392,7 +394,12 @@ function TaskRow({
           <span>非定时任务</span>
         ) : null}
       </div>
-      {task.error_message && <p className="mt-2 text-xs text-red-600">{task.error_message}</p>}
+      {task.error_message && (
+        <MarkdownText
+          text={task.error_message}
+          className="mt-2 text-xs text-red-600"
+        />
+      )}
     </div>
   );
 }
