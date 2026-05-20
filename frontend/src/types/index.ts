@@ -3,7 +3,20 @@ export type AdultPolicy = "include" | "exclude" | "only";
 export type SummaryMode = "original" | "translated" | "bilingual";
 export type SortMode = "updated_desc" | "downloads_desc" | "endorsements_desc" | "first_seen_desc";
 export type UILanguage = "zh-CN" | "en-US" | "ja-JP";
-export type LlmProvider = "openai" | "anthropic" | "gemini" | "groq" | "deepseek" | "openrouter" | "ollama";
+export type LlmProvider =
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "groq"
+  | "deepseek"
+  | "openrouter"
+  | "ollama"
+  | "siliconflow"
+  | "xai"
+  | "kimi"
+  | "qwen"
+  | "minimax";
+export type AccessProfile = "local_relaxed" | "local_strict" | "shared_lan";
 
 export interface LlmProviderConfig {
   provider: LlmProvider;
@@ -109,6 +122,9 @@ export interface UserSettings {
   proxyPort: string;
   proxyUsername: string;
   proxyPassword: string;
+  accessProfile: AccessProfile;
+  allowLan: boolean;
+  bindHost: string;
 }
 
 // ── Rule Types ───────────────────────────────────────────────
@@ -133,6 +149,7 @@ export interface LoversLabRuleConfig {
   accessMode?: AccessMode;
   feedUrls?: string[];
   pageUrls?: string[];
+  updatedSinceDays?: number;
   maxItemsPerRun?: number;
   updateDetection?: "published_time" | "updated_time" | "page_hash";
 }
@@ -176,7 +193,7 @@ export interface WatchRule {
 }
 
 export interface RuleTestRequest {
-  rule: WatchRule;
+  rule: WatchRuleCreate;
   dryRun: boolean;
 }
 
@@ -219,4 +236,24 @@ export interface WatchRuleCreate {
   sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig;
   filters: CommonRuleFilters;
   notification: NotificationConfig;
+}
+
+// ── Notification Center ───────────────────────────────────────
+
+export interface NotificationItem {
+  id: number;
+  channel: string;
+  recipient: string;
+  subject: string;
+  body: string;
+  status: string;
+  error_message?: string;
+  sent_at?: string;
+  created_at: string;
+  read: boolean;
+}
+
+export interface NotificationList {
+  items: NotificationItem[];
+  total: number;
 }

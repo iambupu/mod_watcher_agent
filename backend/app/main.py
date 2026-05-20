@@ -8,29 +8,32 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session
 
-from app.db import init_db, engine
-from app.config import settings
 from app.api import (
     routes_agent,
-    routes_mods,
-    routes_rules,
+    routes_auth,
     routes_favorites,
-    routes_updates,
-    routes_settings,
     routes_jobs,
     routes_logs,
+    routes_mods,
+    routes_notifications,
+    routes_rules,
+    routes_settings,
     routes_system_notifications,
+    routes_updates,
 )
+from app.config import settings
+from app.db import engine, init_db
 from app.jobs.scheduler import setup_scheduler
-from app.services.settings_service import SettingsService
 from app.logger import setup_logging
-from app.security import is_local_request
+from app.security import AccessPolicy, require_safe_bind_host
+from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    require_safe_bind_host()
     setup_logging()
     init_db()
     with Session(engine) as session:
@@ -48,13 +51,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Mod Watcher Agent",
-    version="0.1.2",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.MW_ALLOWED_ORIGINS or settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -63,17 +66,29 @@ app.add_middleware(
 
 @app.middleware("http")
 async def local_only_api_guard(request: Request, call_next):
-    if settings.LOCAL_ONLY_API and request.url.path.startswith("/api/"):
-        if not is_local_request(request):
-            from fastapi.responses import JSONResponse
+    policy = AccessPolicy()
+    decision = policy.evaluate(request)
+    if not decision.allow:
+        from fastapi.responses import JSONResponse
 
-            return JSONResponse(
-                status_code=403,
-                content={"detail": "Remote API access is disabled on this instance"},
-            )
-    return await call_next(request)
+        return JSONResponse(
+            status_code=decision.status_code,
+            content={"detail": decision.detail},
+        )
+    response = await call_next(request)
+    if decision.set_cookie:
+        response.set_cookie(
+            key="mw_session",
+            value=decision.set_cookie,
+            httponly=True,
+            samesite="strict",
+            max_age=86400 * 30,
+            path="/",
+        )
+    return response
 
 
+app.include_router(routes_auth.router)
 app.include_router(routes_mods.router)
 app.include_router(routes_agent.router)
 app.include_router(routes_rules.router)
@@ -82,6 +97,7 @@ app.include_router(routes_updates.router)
 app.include_router(routes_settings.router)
 app.include_router(routes_jobs.router)
 app.include_router(routes_logs.router)
+app.include_router(routes_notifications.router)
 app.include_router(routes_system_notifications.router)
 
 
@@ -107,4 +123,4 @@ if FRONTEND_DIST_DIR.exists():
 else:
     @app.get("/")
     async def root():
-        return {"service": "Mod Watcher Agent", "version": "0.1.2"}
+        return {"service": "Mod Watcher Agent", "version": "0.2.0"}
