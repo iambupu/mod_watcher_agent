@@ -19,7 +19,7 @@ class TestNexusModsRuleConfig:
         )
         assert cfg.gameDomainName == "skyrimspecialedition"
         assert cfg.updatedSinceDays == 7
-        assert cfg.queryMode == "updated"
+        assert cfg.queryMode is None
         assert cfg.sortBy == "updatedAt_desc"
         assert cfg.categoryNames == []
         assert cfg.tags == []
@@ -72,11 +72,13 @@ class TestLoversLabRuleConfig:
         cfg = LoversLabRuleConfig(
             accessMode="rss",
             gameLabel="Skyrim SE",
+            feedUrls=["https://www.loverslab.com/files/rss/"],
         )
         assert cfg.gameLabel == "Skyrim SE"
         assert cfg.accessMode == "rss"
-        assert cfg.feedUrls == []
+        assert cfg.feedUrls == ["https://www.loverslab.com/files/rss/"]
         assert cfg.pageUrls == []
+        assert cfg.updatedSinceDays is None
         assert cfg.maxItemsPerRun == 50
         assert cfg.updateDetection == "published_time"
 
@@ -104,12 +106,38 @@ class TestLoversLabRuleConfig:
         with pytest.raises(ValidationError):
             LoversLabRuleConfig(accessMode="rss")
 
-    def test_missing_access_mode_raises(self):
-        """accessMode is required for LoversLab."""
+    def test_missing_access_mode_uses_default(self):
+        """accessMode defaults to rss when omitted."""
+        from app.schemas.watch_rule import LoversLabRuleConfig
+
+        cfg = LoversLabRuleConfig(
+            gameLabel="Skyrim SE",
+            feedUrls=["https://www.loverslab.com/files/rss/"],
+        )
+        assert cfg.accessMode == "rss"
+
+    def test_rss_mode_requires_feed_urls(self):
         from app.schemas.watch_rule import LoversLabRuleConfig
 
         with pytest.raises(ValidationError):
-            LoversLabRuleConfig(gameLabel="Skyrim SE")
+            LoversLabRuleConfig(gameLabel="Skyrim SE", accessMode="rss", feedUrls=[])
+
+    def test_page_mode_requires_page_urls(self):
+        from app.schemas.watch_rule import LoversLabRuleConfig
+
+        with pytest.raises(ValidationError):
+            LoversLabRuleConfig(gameLabel="Skyrim SE", accessMode="page", pageUrls=[])
+
+    def test_both_mode_requires_feed_and_page_urls(self):
+        from app.schemas.watch_rule import LoversLabRuleConfig
+
+        with pytest.raises(ValidationError):
+            LoversLabRuleConfig(
+                gameLabel="Skyrim SE",
+                accessMode="both",
+                feedUrls=["https://www.loverslab.com/files/rss/"],
+                pageUrls=[],
+            )
 
 
 class TestLlmFilterConfig:
@@ -226,10 +254,10 @@ class TestWatchRuleCreate:
     def test_valid_nexusmods_rule_create(self):
         """Create a complete NexusMods watch rule."""
         from app.schemas.watch_rule import (
-            WatchRuleCreate,
-            NexusModsRuleConfig,
             CommonRuleFilters,
+            NexusModsRuleConfig,
             NotificationConfig,
+            WatchRuleCreate,
         )
 
         rule = WatchRuleCreate(
@@ -260,8 +288,8 @@ class TestWatchRuleCreate:
     def test_valid_loverslab_rule_create(self):
         """Create a complete LoversLab watch rule."""
         from app.schemas.watch_rule import (
-            WatchRuleCreate,
             LoversLabRuleConfig,
+            WatchRuleCreate,
         )
 
         rule = WatchRuleCreate(
@@ -280,8 +308,8 @@ class TestWatchRuleCreate:
     def test_invalid_source_raises(self):
         """source must be 'nexusmods' or 'loverslab'."""
         from app.schemas.watch_rule import (
-            WatchRuleCreate,
             NexusModsRuleConfig,
+            WatchRuleCreate,
         )
 
         with pytest.raises(ValidationError):
@@ -297,8 +325,8 @@ class TestWatchRuleCreate:
     def test_missing_name_raises(self):
         """name is required for WatchRuleCreate."""
         from app.schemas.watch_rule import (
-            WatchRuleCreate,
             NexusModsRuleConfig,
+            WatchRuleCreate,
         )
 
         with pytest.raises(ValidationError):
@@ -323,8 +351,8 @@ class TestWatchRuleCreate:
     def test_defaults_on_create(self):
         """Default values for enabled, filters, notification on create."""
         from app.schemas.watch_rule import (
-            WatchRuleCreate,
             NexusModsRuleConfig,
+            WatchRuleCreate,
         )
 
         rule = WatchRuleCreate(
@@ -375,10 +403,10 @@ class TestWatchRuleRead:
     def test_read_fields(self):
         """WatchRuleRead has id, created_at, updated_at plus config fields."""
         from app.schemas.watch_rule import (
-            WatchRuleRead,
-            NexusModsRuleConfig,
             CommonRuleFilters,
+            NexusModsRuleConfig,
             NotificationConfig,
+            WatchRuleRead,
         )
 
         data = {
@@ -410,9 +438,9 @@ class TestRuleTestRequest:
     def test_rule_test_request(self):
         """RuleTestRequest wraps a rule with dryRun flag."""
         from app.schemas.watch_rule import (
+            NexusModsRuleConfig,
             RuleTestRequest,
             WatchRuleCreate,
-            NexusModsRuleConfig,
         )
 
         req = RuleTestRequest(
@@ -433,9 +461,9 @@ class TestRuleTestRequest:
     def test_rule_test_request_dry_run_default(self):
         """dryRun defaults to True."""
         from app.schemas.watch_rule import (
+            NexusModsRuleConfig,
             RuleTestRequest,
             WatchRuleCreate,
-            NexusModsRuleConfig,
         )
 
         req = RuleTestRequest(
@@ -493,8 +521,8 @@ class TestBackwardCompatibility:
         """WatchRuleCreate, WatchRuleUpdate, WatchRuleRead should still be importable."""
         from app.schemas.watch_rule import (
             WatchRuleCreate,
-            WatchRuleUpdate,
             WatchRuleRead,
+            WatchRuleUpdate,
         )
 
         assert WatchRuleCreate is not None

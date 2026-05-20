@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlmodel import Session, and_, or_, select
 
@@ -24,11 +25,19 @@ class FilterService:
         filters = self._parse_filters(rule)
         self.rejected_reasons: dict[str, int] = {}
         self.rejected_items: list[dict] = []
+        self._pending_soft_rejection: str | None = None
 
         deterministic_passed: list[dict] = []
         for mod in mods:
+            self._pending_soft_rejection = None
             reject_reason = self._get_deterministic_reject_reason(mod, filters)
             if reject_reason is None:
+                if self._pending_soft_rejection:
+                    self._record_rejection(
+                        mod,
+                        self._pending_soft_rejection,
+                        stage="deterministic_hint",
+                    )
                 deterministic_passed.append(mod)
                 continue
             self._record_rejection(mod, reject_reason, stage="deterministic")
@@ -91,11 +100,14 @@ class FilterService:
             if updated_str:
                 try:
                     updated = datetime.fromisoformat(updated_str)
-                    age_hours = (datetime.now(timezone.utc) - updated).total_seconds() / 3600
+                    age_hours = (datetime.now(UTC) - updated).total_seconds() / 3600
                     if age_hours > filters.updatedWithinDays * 24:
                         return "updated_within_days_not_met"
                 except (ValueError, TypeError):
-                    pass
+                    mode = str(getattr(filters.llmFilter, "mode", "assist_only") or "assist_only")
+                    if mode == "must_pass":
+                        return "updated_within_days_parse_failed"
+                    self._pending_soft_rejection = "updated_within_days_parse_failed"
 
         is_adult = bool(mod.get("adult_content"))
         if filters.adultPolicy == "exclude" and is_adult:

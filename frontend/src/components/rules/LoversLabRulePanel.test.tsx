@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LoversLabRulePanel } from "./LoversLabRulePanel";
 import { useRuleEditorStore } from "@/stores/ruleEditorStore";
@@ -18,6 +18,12 @@ describe("LoversLabRulePanel", () => {
         },
         loverslabDraft: {
           gameLabel: "",
+          accessMode: "rss",
+          feedUrls: [],
+          pageUrls: [],
+          updatedSinceDays: 30,
+          maxItemsPerRun: 50,
+          updateDetection: "published_time",
         },
         notification: {
           enabled: true,
@@ -41,52 +47,30 @@ describe("LoversLabRulePanel", () => {
     expect(label).toBeInTheDocument();
   });
 
-  it("access_mode_switching_shows_feed", async () => {
-    const user = userEvent.setup();
-    const { container } = render(<LoversLabRulePanel />);
-
-    expect(screen.queryByPlaceholderText("rules.loverslab.feedUrlsPlaceholder")).not.toBeInTheDocument();
-
-    const select = container.querySelectorAll("select")[0] as HTMLSelectElement;
-    await user.selectOptions(select, "rss");
-
+  it("default_mode_shows_feed", () => {
+    render(<LoversLabRulePanel />);
     expect(screen.getByPlaceholderText("rules.loverslab.feedUrlsPlaceholder")).toBeInTheDocument();
+    expect(screen.getByText("rules.loverslab.ruleGuideTitle")).toBeInTheDocument();
+    expect(screen.getByText("rules.loverslab.ruleGuideLine1")).toBeInTheDocument();
+    expect(screen.getByText("rules.loverslab.ruleGuideLine4")).toBeInTheDocument();
+    expect(screen.getByText("rules.loverslab.ruleGuideLine5")).toBeInTheDocument();
   });
 
-  it("access_mode_switching_hides_page", async () => {
-    const user = userEvent.setup();
-    const { container } = render(<LoversLabRulePanel />);
-
-    const select = container.querySelectorAll("select")[0] as HTMLSelectElement;
-    await user.selectOptions(select, "rss");
-
+  it("does_not_render_page_urls_entry", () => {
+    render(<LoversLabRulePanel />);
     expect(screen.getByPlaceholderText("rules.loverslab.feedUrlsPlaceholder")).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("rules.loverslab.pageUrlsPlaceholder")).not.toBeInTheDocument();
   });
 
-  it("renders_feed_urls", async () => {
+  it("updates_feed_urls", async () => {
     const user = userEvent.setup();
-    const { container } = render(<LoversLabRulePanel />);
-
-    const select = container.querySelectorAll("select")[0] as HTMLSelectElement;
-    await user.selectOptions(select, "both");
-
-    expect(screen.getByPlaceholderText("rules.loverslab.feedUrlsPlaceholder")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("rules.loverslab.pageUrlsPlaceholder")).toBeInTheDocument();
+    render(<LoversLabRulePanel />);
+    const textarea = screen.getByPlaceholderText("rules.loverslab.feedUrlsPlaceholder");
+    await user.type(textarea, "https://example.com/feed1");
+    expect(textarea).toHaveValue("https://example.com/feed1");
   });
 
-  it("renders_page_urls", async () => {
-    const user = userEvent.setup();
-    const { container } = render(<LoversLabRulePanel />);
-
-    const select = container.querySelectorAll("select")[0] as HTMLSelectElement;
-    await user.selectOptions(select, "page");
-
-    expect(screen.queryByPlaceholderText("rules.loverslab.feedUrlsPlaceholder")).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText("rules.loverslab.pageUrlsPlaceholder")).toBeInTheDocument();
-  });
-
-  it("reads_from_store", () => {
+  it("normalizes_legacy_page_mode_to_rss", async () => {
     useRuleEditorStore.setState({
       draft: {
         ...useRuleEditorStore.getState().draft,
@@ -95,6 +79,7 @@ describe("LoversLabRulePanel", () => {
           accessMode: "both",
           feedUrls: ["https://example.com/feed1", "https://example.com/feed2"],
           pageUrls: ["https://example.com/page1"],
+          updatedSinceDays: 15,
           maxItemsPerRun: 50,
           updateDetection: "page_hash",
         },
@@ -109,7 +94,14 @@ describe("LoversLabRulePanel", () => {
     const feedTextarea = screen.getByPlaceholderText("rules.loverslab.feedUrlsPlaceholder");
     expect(feedTextarea).toHaveValue("https://example.com/feed1\nhttps://example.com/feed2");
 
-    const pageTextarea = screen.getByPlaceholderText("rules.loverslab.pageUrlsPlaceholder");
-    expect(pageTextarea).toHaveValue("https://example.com/page1");
+    expect(screen.queryByPlaceholderText("rules.loverslab.pageUrlsPlaceholder")).not.toBeInTheDocument();
+    const updatedInput = screen.getByPlaceholderText("rules.loverslab.updatedSinceDaysPlaceholder");
+    expect(updatedInput).toHaveValue(15);
+
+    await waitFor(() => {
+      const state = useRuleEditorStore.getState().draft.loverslabDraft;
+      expect(state.accessMode).toBe("rss");
+      expect(state.pageUrls).toEqual([]);
+    });
   });
 });
