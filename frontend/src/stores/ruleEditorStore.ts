@@ -24,10 +24,17 @@ function createEmptyDraft(): RuleEditorDraft {
     },
     loverslabDraft: {
       gameLabel: "",
+      accessMode: "rss",
+      feedUrls: [],
+      pageUrls: [],
+      updatedSinceDays: 30,
+      maxItemsPerRun: 50,
+      updateDetection: "published_time",
     },
     notification: {
       enabled: true,
       mode: "instant",
+      channels: ["desktop"],
     },
   };
 }
@@ -137,10 +144,15 @@ export const useRuleEditorStore = create<RuleEditorState>((set, get) => ({
 
   getSubmitData: () => {
     const { draft, activeSource } = get();
-    const sourceConfig =
+    const sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig =
       activeSource === "nexusmods"
         ? draft.nexusmodsDraft
-        : draft.loverslabDraft;
+        : {
+            ...draft.loverslabDraft,
+            // 页面抓取因反爬技术问题暂时禁用，仅保留 RSS 模式
+            accessMode: "rss" as const,
+            pageUrls: [],
+          };
     return {
       name: draft.name,
       enabled: draft.enabled,
