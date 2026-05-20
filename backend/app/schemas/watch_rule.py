@@ -1,10 +1,8 @@
-from typing import Literal, Optional
-
 from ipaddress import ip_address
+from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
-
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # Platform-specific source configs
@@ -12,10 +10,10 @@ from pydantic import BaseModel, Field, field_validator
 
 class NexusModsRuleConfig(BaseModel):
     gameDomainName: str = Field(description="NexusMods game domain name, e.g. skyrimspecialedition")
-    gameName: Optional[str] = Field(default=None, description="Human-readable game name")
-    gameId: Optional[str] = Field(default=None, description="NexusMods internal game ID")
+    gameName: str | None = Field(default=None, description="Human-readable game name")
+    gameId: str | None = Field(default=None, description="NexusMods internal game ID")
     updatedSinceDays: int = Field(ge=1, le=365, description="Monitor mods updated within this many days")
-    queryMode: Optional[Literal["updated", "created"]] = Field(default=None, description="Query by updated or created time; omit for all")
+    queryMode: Literal["updated", "created"] | None = Field(default=None, description="Query by updated or created time; omit for all")
     categoryNames: list[str] = Field(default_factory=list, description="NexusMods category names to include")
     tags: list[str] = Field(default_factory=list, description="Tags to filter by")
     sortBy: Literal[
@@ -31,7 +29,7 @@ class LoversLabRuleConfig(BaseModel):
     accessMode: Literal["rss", "page", "both"] = Field(default="rss", description="Access mode: RSS feed, page scraping, or both")
     feedUrls: list[str] = Field(default_factory=list, description="RSS feed URLs (required for RSS mode)")
     pageUrls: list[str] = Field(default_factory=list, description="Page URLs (required for page mode)")
-    updatedSinceDays: Optional[int] = Field(default=None, ge=1, le=365, description="Monitor within this many days")
+    updatedSinceDays: int | None = Field(default=None, ge=1, le=365, description="Monitor within this many days")
     maxItemsPerRun: int = Field(default=50, ge=1, le=100, description="Max items per scraping run")
     updateDetection: Literal[
         "published_time",
@@ -62,6 +60,16 @@ class LoversLabRuleConfig(BaseModel):
             validated.append(url)
         return validated
 
+    @model_validator(mode="after")
+    def validate_access_mode_requirements(self):
+        if self.accessMode == "rss" and not self.feedUrls:
+            raise ValueError("feedUrls is required when accessMode is rss")
+        if self.accessMode == "page" and not self.pageUrls:
+            raise ValueError("pageUrls is required when accessMode is page")
+        if self.accessMode == "both" and (not self.feedUrls or not self.pageUrls):
+            raise ValueError("feedUrls and pageUrls are required when accessMode is both")
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Filter / notification sub-models
@@ -77,10 +85,10 @@ class LlmFilterConfig(BaseModel):
 class CommonRuleFilters(BaseModel):
     includeKeywords: list[str] = Field(default_factory=list, description="Keywords that must appear")
     excludeKeywords: list[str] = Field(default_factory=list, description="Keywords that trigger exclusion")
-    minDownloads: Optional[int] = Field(default=None, ge=0, description="Minimum download count")
-    minEndorsements: Optional[int] = Field(default=None, ge=0, description="Minimum endorsement count (NexusMods)")
-    minLikes: Optional[int] = Field(default=None, ge=0, description="Minimum likes (LoversLab)")
-    updatedWithinDays: Optional[int] = Field(default=None, ge=1, description="Local time-window filter in days")
+    minDownloads: int | None = Field(default=None, ge=0, description="Minimum download count")
+    minEndorsements: int | None = Field(default=None, ge=0, description="Minimum endorsement count (NexusMods)")
+    minLikes: int | None = Field(default=None, ge=0, description="Minimum likes (LoversLab)")
+    updatedWithinDays: int | None = Field(default=None, ge=1, description="Local time-window filter in days")
     adultPolicy: Literal["include", "exclude", "only"] = Field(default="include", description="Adult content policy")
     missingMetricsPolicy: Literal["pass", "reject"] = Field(default="pass", description="Policy for items missing metrics")
     llmFilter: LlmFilterConfig = Field(default_factory=LlmFilterConfig, description="Optional LLM filter configuration")
@@ -107,13 +115,13 @@ class WatchRuleCreate(BaseModel):
 
 
 class WatchRuleUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=100, description="Rule name")
-    enabled: Optional[bool] = Field(default=None, description="Whether the rule is active")
-    intervalMinutes: Optional[int] = Field(default=None, ge=1, le=1440, description="Polling interval for this rule in minutes")
-    source: Optional[Literal["nexusmods", "loverslab"]] = Field(default=None, description="Data source platform")
-    sourceConfig: Optional[NexusModsRuleConfig | LoversLabRuleConfig] = Field(default=None, description="Platform-specific config")
-    filters: Optional[CommonRuleFilters] = Field(default=None, description="Common filtering rules")
-    notification: Optional[NotificationConfig] = Field(default=None, description="Notification settings")
+    name: str | None = Field(default=None, min_length=1, max_length=100, description="Rule name")
+    enabled: bool | None = Field(default=None, description="Whether the rule is active")
+    intervalMinutes: int | None = Field(default=None, ge=1, le=1440, description="Polling interval for this rule in minutes")
+    source: Literal["nexusmods", "loverslab"] | None = Field(default=None, description="Data source platform")
+    sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig | None = Field(default=None, description="Platform-specific config")
+    filters: CommonRuleFilters | None = Field(default=None, description="Common filtering rules")
+    notification: NotificationConfig | None = Field(default=None, description="Notification settings")
 
 
 class WatchRuleRead(BaseModel):

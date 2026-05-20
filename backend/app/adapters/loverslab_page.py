@@ -1,9 +1,10 @@
 import asyncio
-import json
 import logging
 import random
 import re
+from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -23,6 +24,7 @@ USER_AGENT = (
 REQUEST_TIMEOUT = 30.0
 MIN_DELAY = 1.0
 MAX_DELAY = 3.0
+ALLOWED_HOSTS = {"www.loverslab.com", "loverslab.com"}
 
 
 class LoversLabPageAdapter(BaseAdapter):
@@ -44,9 +46,30 @@ class LoversLabPageAdapter(BaseAdapter):
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(REQUEST_TIMEOUT),
                 headers={"User-Agent": USER_AGENT},
-                follow_redirects=True,
+                follow_redirects=False,
             )
         return self._client
+
+    async def _get_allowed_url(self, url: str) -> httpx.Response:
+        current_url = self._validate_loverslab_url(url)
+        client = await self._get_client()
+        for _ in range(5):
+            response = await client.get(current_url)
+            if response.status_code in {301, 302, 303, 307, 308}:
+                location = response.headers.get("Location")
+                await response.aclose()
+                if not location:
+                    raise ValueError("Redirect response missing Location header")
+                current_url = self._validate_loverslab_url(urljoin(current_url, location))
+                continue
+            final_url = str(getattr(response, "url", "") or current_url)
+            if not final_url.startswith(("http://", "https://")):
+                final_url = current_url
+            if not self._is_allowed_loverslab_url(final_url):
+                await response.aclose()
+                raise ValueError(f"Redirected to disallowed host: {final_url}")
+            return response
+        raise ValueError("Too many redirects while fetching LoversLab page")
 
     async def fetch(self, source_config_json: str) -> list[ModItem]:
         """Discover mods via page scraping from configured page URLs.
@@ -66,16 +89,15 @@ class LoversLabPageAdapter(BaseAdapter):
             return []
 
         all_items: list[ModItem] = []
-        client = await self._get_client()
-
+        seen_external_ids: set[str] = set()
         for page_url in config.pageUrls:
             if len(all_items) >= config.maxItemsPerRun:
                 break
 
             try:
-                response = await client.get(page_url)
+                response = await self._get_allowed_url(page_url)
                 response.raise_for_status()
-            except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.RequestError) as exc:
+            except (ValueError, httpx.HTTPStatusError, httpx.TimeoutException, httpx.RequestError) as exc:
                 logger.warning(
                     "Failed to fetch listing page %s: %s", page_url, exc
                 )
@@ -88,13 +110,21 @@ class LoversLabPageAdapter(BaseAdapter):
             if not html or len(html) < 50:
                 logger.warning("Empty listing page HTML for %s", page_url)
                 continue
+            if self._is_cloudflare_challenge_html(html):
+                raise ValueError(
+                    "Cloudflare challenge detected when fetching LoversLab page URL. "
+                    "Try accessMode='rss' first, or use a reachable page URL."
+                )
 
             file_links = self._parse_listing_links(html, page_url)
 
             for external_id in file_links:
                 if len(all_items) >= config.maxItemsPerRun:
                     break
-                detail = await self.fetch_mod_detail(external_id)
+                if external_id in seen_external_ids:
+                    continue
+                seen_external_ids.add(external_id)
+                detail = await self.fetch_mod_detail(external_id, config.gameLabel)
                 if detail:
                     all_items.append(self.normalize(detail))
 
@@ -114,9 +144,8 @@ class LoversLabPageAdapter(BaseAdapter):
         """
         url = BASE_URL.format(ext_id=external_id)
 
-        client = await self._get_client()
         try:
-            response = await client.get(url)
+            response = await self._get_allowed_url(url)
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
@@ -153,10 +182,15 @@ class LoversLabPageAdapter(BaseAdapter):
                 "Empty or too-short HTML for LoversLab mod %s", external_id
             )
             return None
+        if self._is_cloudflare_challenge_html(html):
+            raise ValueError(
+                f"Cloudflare challenge detected when fetching LoversLab mod detail page: {url}"
+            )
 
-        return self._parse_page(html, external_id, url)
+        return self._parse_page(html, external_id, url, game_domain or "")
 
     def normalize(self, raw_item: dict) -> ModItem:
+        updated_at = self._parse_updated_at(raw_item.get("updated_at_remote"))
         return ModItem(
             source_id=raw_item.get("external_id", ""),
             source=raw_item.get("source", "loverslab"),
@@ -171,7 +205,7 @@ class LoversLabPageAdapter(BaseAdapter):
             categories=raw_item.get("categories", []),
             tags=raw_item.get("tags", []),
             thumbnail_url=raw_item.get("thumbnail_url") or "",
-            updated_at=raw_item.get("updated_at_remote"),
+            updated_at=updated_at,
             is_adult=raw_item.get("adult_content", False),
             raw=raw_item,
         )
@@ -192,19 +226,30 @@ class LoversLabPageAdapter(BaseAdapter):
         """
         tree = HTMLParser(html)
         external_ids: list[str] = []
+        seen: set[str] = set()
+
+        for candidate_url in (base_url,):
+            ext_id = self._extract_external_id_from_url(candidate_url)
+            if ext_id and ext_id not in seen:
+                seen.add(ext_id)
+                external_ids.append(ext_id)
 
         for link in tree.css("a[href]"):
-            href = link.attributes.get("href", "")
-            m = re.search(r"/files/file/(\d+)", href)
-            if m:
-                ext_id = m.group(1)
-                if ext_id not in external_ids:
-                    external_ids.append(ext_id)
+            href = (link.attributes.get("href", "") or "").strip()
+            if not href or href.startswith(("#", "javascript:", "mailto:")):
+                continue
+            ext_id = self._extract_external_id_from_url(urljoin(base_url, href))
+            if not ext_id:
+                continue
+            if ext_id in seen:
+                continue
+            seen.add(ext_id)
+            external_ids.append(ext_id)
 
         return external_ids
 
     def _parse_page(
-        self, html: str, external_id: str, url: str
+        self, html: str, external_id: str, url: str, game_label: str
     ) -> dict | None:
         """Parse LoversLab file detail page HTML.
 
@@ -215,6 +260,7 @@ class LoversLabPageAdapter(BaseAdapter):
             html: Raw HTML of the file detail page.
             external_id: The LoversLab file ID.
             url: The page URL.
+            game_label: Rule-configured game label.
 
         Returns:
             A normalized mod dict with all extractable fields, or
@@ -235,7 +281,7 @@ class LoversLabPageAdapter(BaseAdapter):
         return {
             "source": "loverslab",
             "external_id": external_id,
-            "game": "",
+            "game": game_label,
             "game_domain": None,
             "title": title or "",
             "url": url,
@@ -422,7 +468,14 @@ class LoversLabPageAdapter(BaseAdapter):
             "[data-role='filePrimaryThumb'] img",
         ):
             for img in tree.css(selector):
-                src = img.attributes.get("src")
+                src = (
+                    img.attributes.get("src")
+                    or img.attributes.get("data-src")
+                    or ""
+                )
+                if not src and img.attributes.get("srcset"):
+                    srcset = img.attributes.get("srcset", "")
+                    src = srcset.split(",")[0].strip().split(" ")[0]
                 if src and src.startswith("http") and src not in images:
                     images.append(src)
 
@@ -522,3 +575,65 @@ class LoversLabPageAdapter(BaseAdapter):
         if m:
             return int(m.group(1))
         return None
+
+    @staticmethod
+    def _extract_external_id_from_url(url: str) -> str | None:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        if host and host not in ALLOWED_HOSTS:
+            return None
+        matched = re.search(r"^/files/file/(\d+)(?:[-/]|$)", parsed.path)
+        if not matched:
+            return None
+        return matched.group(1)
+
+    @classmethod
+    def _validate_loverslab_url(cls, url: str) -> str:
+        normalized = (url or "").strip()
+        parsed = urlsplit(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("LoversLab page URL must be an absolute http(s) URL")
+        if not cls._is_allowed_loverslab_url(normalized):
+            raise ValueError(f"LoversLab page URL host is not allowed: {normalized}")
+        return normalized
+
+    @staticmethod
+    def _is_allowed_loverslab_url(url: str) -> bool:
+        host = (urlsplit(url).hostname or "").lower()
+        return host in ALLOWED_HOSTS
+
+    @staticmethod
+    def _parse_updated_at(value: Any) -> datetime | None:
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
+        if not isinstance(value, str):
+            return None
+
+        text = value.strip()
+        if not text:
+            return None
+
+        try:
+            iso = text.replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(iso)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        except ValueError:
+            pass
+
+        for fmt in ("%b %d, %Y %H:%M", "%b %d, %Y", "%B %d, %Y %H:%M", "%B %d, %Y"):
+            try:
+                return datetime.strptime(text, fmt).replace(tzinfo=UTC)
+            except ValueError:
+                continue
+
+        return None
+
+    @staticmethod
+    def _is_cloudflare_challenge_html(html: str) -> bool:
+        lowered = html.lower()
+        return (
+            "just a moment..." in lowered
+            and "challenges.cloudflare.com" in lowered
+        ) or (
+            "__cf_chl_" in lowered and "enable javascript and cookies to continue" in lowered
+        )

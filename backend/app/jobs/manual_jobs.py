@@ -1,7 +1,7 @@
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from apscheduler.triggers.date import DateTrigger
@@ -9,6 +9,7 @@ from sqlmodel import Session
 
 from app.db import engine
 from app.jobs.scheduler import scheduler
+from app.logger import redact_sensitive_text
 from app.models.job_run import JobRun
 from app.services.system_notification_service import SystemNotificationService
 
@@ -18,7 +19,7 @@ JobHandler = Callable[[], Awaitable[dict[str, Any]]]
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def create_job_run(
@@ -41,7 +42,7 @@ def create_job_run(
 def enqueue_job_run(job_run_id: int, handler: JobHandler) -> None:
     scheduler.add_job(
         run_job,
-        DateTrigger(run_date=datetime.now(timezone.utc)),
+        DateTrigger(run_date=datetime.now(UTC)),
         id=f"manual_job_{job_run_id}",
         name=f"Manual Job {job_run_id}",
         args=[job_run_id, handler],
@@ -59,11 +60,6 @@ async def run_job(job_run_id: int, handler: JobHandler) -> None:
         job_run.status = "running"
         job_run.started_at = utc_now()
         session.add(job_run)
-        SystemNotificationService(session).create_event(
-            "job_running",
-            "任务开始执行",
-            f"{job_run.job_name} 正在执行",
-        )
         session.commit()
 
     try:
@@ -76,12 +72,13 @@ async def run_job(job_run_id: int, handler: JobHandler) -> None:
                 return
             job_run.status = "failed"
             job_run.finished_at = utc_now()
-            job_run.error_message = str(exc)
+            redacted_error = redact_sensitive_text(str(exc))
+            job_run.error_message = redacted_error
             session.add(job_run)
             SystemNotificationService(session).create_event(
                 "job_failed",
                 "任务执行失败",
-                f"{job_run.job_name}: {exc}",
+                f"{job_run.job_name}: {redacted_error}",
             )
             session.commit()
         return
@@ -96,9 +93,4 @@ async def run_job(job_run_id: int, handler: JobHandler) -> None:
         job_run.items_matched = int(result.pop("items_matched", 0) or 0)
         job_run.metadata_json = json.dumps(result, ensure_ascii=False)
         session.add(job_run)
-        SystemNotificationService(session).create_event(
-            "job_succeeded",
-            "任务执行完成",
-            f"{job_run.job_name} 已完成，匹配 {job_run.items_matched} 项",
-        )
         session.commit()

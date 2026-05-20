@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 async def discover_new_mods() -> dict:
     with Session(engine) as session:
-        rules = session.exec(select(WatchRule).where(WatchRule.enabled == True)).all()
+        rules = session.exec(select(WatchRule).where(WatchRule.enabled.is_(True))).all()
         notification_service = NotificationService(session)
         results = {}
         for rule in rules:
@@ -25,13 +25,14 @@ async def discover_new_mods() -> dict:
                 results[rule.name] = len(new_mods)
                 session.commit()
                 if new_mods:
-                    SystemNotificationService(session).create_event(
-                        event_type="new_mod_discovered",
-                        title=f"新 Mod 发现 - {rule.name}",
-                        message=f"{len(new_mods)} 个新 Mod 命中规则「{rule.name}」",
-                    )
                     nc = notification_service.parse_notification_config(rule)
                     if nc.enabled and nc.mode == "instant":
+                        if "desktop" in nc.channels:
+                            SystemNotificationService(session).create_event(
+                                event_type="new_mod_discovered",
+                                title=f"新 Mod 发现 - {rule.name}",
+                                message=f"{len(new_mods)} 个新 Mod 命中规则「{rule.name}」",
+                            )
                         await notification_service.notify_new_mods(new_mods, rule.name, notification_config=nc)
             except ValueError as e:
                 logger.warning("Rule '%s': %s", rule.name, e)

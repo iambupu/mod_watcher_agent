@@ -1,7 +1,7 @@
 """Tests for DiscoveryService single-source dispatch."""
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
@@ -56,9 +56,9 @@ def _make_mod_item(source_id="1001", source="nexusmods", name="Test Mod",
         categories=kwargs.get("categories", []),
         tags=kwargs.get("tags", []),
         thumbnail_url=kwargs.get("thumbnail_url", ""),
-        updated_at=kwargs.get("updated_at", None),
+        updated_at=kwargs.get("updated_at"),
         is_adult=kwargs.get("is_adult", False),
-        raw=kwargs.get("raw", None),
+        raw=kwargs.get("raw"),
     )
 
 

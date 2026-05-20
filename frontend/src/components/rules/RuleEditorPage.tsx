@@ -108,23 +108,8 @@ export const RuleEditorPage: React.FC = () => {
   };
 
   const handleTest = () => {
-    const draft = useRuleEditorStore.getState().draft;
-    const source = useRuleEditorStore.getState().activeSource;
-    const sourceConfig =
-      source === "nexusmods" ? draft.nexusmodsDraft : draft.loverslabDraft;
-    const ruleLike: WatchRule = {
-      id: 0,
-      name: draft.name,
-      enabled: draft.enabled,
-      intervalMinutes: draft.intervalMinutes,
-      source,
-      sourceConfig,
-      filters: draft.commonFilters,
-      notification: draft.notification,
-      createdAt: "",
-      updatedAt: "",
-    };
-    testMutation.mutate({ rule: ruleLike, dryRun: true });
+    const submitData = getSubmitData();
+    testMutation.mutate({ rule: submitData, dryRun: true });
   };
 
   const saving = createMutation.isPending || updateMutation.isPending;

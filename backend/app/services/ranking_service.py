@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from typing import Any
 
 
@@ -14,15 +13,20 @@ class RankingService:
         reverse = "_desc" in sort_mode
 
         if "downloads" in sort_mode:
-            key = lambda m: m.get("downloads") or 0
+            def key(mod: dict) -> int:
+                return mod.get("downloads") or 0
         elif "endorsements" in sort_mode:
-            key = lambda m: m.get("endorsements") or 0
+            def key(mod: dict) -> int:
+                return mod.get("endorsements") or 0
         elif "published" in sort_mode:
-            key = lambda m: m.get("published_at_remote") or m.get("created_at_remote") or ""
+            def key(mod: dict) -> str:
+                return mod.get("published_at_remote") or mod.get("created_at_remote") or ""
         elif "updated" in sort_mode:
-            key = lambda m: m.get("updated_at_remote") or m.get("first_seen_at") or ""
+            def key(mod: dict) -> str:
+                return mod.get("updated_at_remote") or mod.get("first_seen_at") or ""
         else:
-            key = lambda m: m.get("first_seen_at") or ""
+            def key(mod: dict) -> str:
+                return mod.get("first_seen_at") or ""
 
         return sorted(mods, key=key, reverse=reverse)
 

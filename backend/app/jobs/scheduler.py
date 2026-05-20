@@ -1,24 +1,24 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlmodel import Session, select
 
-from app.config import settings
+from app.db import engine
 from app.jobs.check_favorite_updates import check_favorite_updates
 from app.jobs.generate_summaries import generate_summaries
 from app.jobs.generate_summary_report import generate_summary_report
+from app.jobs.send_digest import run_digest_catchup, send_daily_digest, send_weekly_digest
 from app.jobs.tracked_jobs import run_tracked_job
-from app.jobs.send_digest import send_digest
 from app.models.job_run import JobRun
 from app.models.watch_rule import WatchRule
-from app.db import engine
-from app.services.settings_service import SettingsService
 from app.services.discovery_service import DiscoveryService
+from app.services.settings_service import SettingsService
 
 scheduler = AsyncIOScheduler()
 logger = logging.getLogger(__name__)
@@ -74,8 +74,8 @@ def _parse_iso_time(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def _extract_rule_id(metadata_json: str | None) -> int | None:
@@ -113,7 +113,7 @@ async def _run_rule_watchdog() -> dict:
                 max_value=20,
             )
             rules = session.exec(
-                select(WatchRule).where(WatchRule.enabled == True)
+                select(WatchRule).where(WatchRule.enabled.is_(True))
             ).all()
 
             recent_runs = session.exec(
@@ -135,7 +135,7 @@ async def _run_rule_watchdog() -> dict:
             if run.status == "running":
                 running_rule_ids.add(rule_id)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         overdue_rules: list[WatchRule] = []
         for rule in sorted(rules, key=lambda item: int(item.id or 0)):
             if rule.id is None:
@@ -175,7 +175,7 @@ def register_jobs(session: Session | None = None) -> None:
         return
 
     rule_jobs = set()
-    rules = session.exec(select(WatchRule).where(WatchRule.enabled == True)).all()
+    rules = session.exec(select(WatchRule).where(WatchRule.enabled.is_(True))).all()
     for rule in rules:
         if rule.id is None:
             continue
@@ -231,11 +231,35 @@ def register_jobs(session: Session | None = None) -> None:
             scheduler.remove_job("llm_summary_report")
 
     scheduler.add_job(
-        send_digest,
-        CronTrigger.from_crontab(settings.DIGEST_CRON),
-        id="send_digest",
+        send_daily_digest,
+        CronTrigger(hour=8, minute=0),
+        id="send_daily_digest",
         name="Daily Digest",
         replace_existing=True,
+    )
+    scheduler.add_job(
+        send_weekly_digest,
+        CronTrigger(day_of_week="mon", hour=0, minute=1),
+        id="send_weekly_digest",
+        name="Weekly Digest",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_digest_catchup,
+        DateTrigger(run_date=datetime.now() + timedelta(seconds=5)),
+        id="digest_catchup_startup",
+        name="Digest Catch-up Startup",
+        kwargs={"trigger": "startup"},
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_digest_catchup,
+        IntervalTrigger(hours=1),
+        id="digest_catchup",
+        name="Digest Catch-up",
+        kwargs={"trigger": "hourly"},
+        replace_existing=True,
+        max_instances=1,
     )
     watchdog_interval = 10
     try:

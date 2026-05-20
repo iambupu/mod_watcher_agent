@@ -5,8 +5,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.logger import get_log_entries
 from app.config import settings
+from app.logger import get_log_entries
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 

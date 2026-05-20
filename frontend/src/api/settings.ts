@@ -1,5 +1,5 @@
-import { get, put, post } from "./client";
-import type { UserSettings, UILanguage, SummaryMode, LlmProvider, LlmProviderConfig } from "@/types";
+import { get, put, post, buildApiUrl, buildAuthHeaders, ApiError } from "./client";
+import type { UserSettings, UILanguage, SummaryMode, LlmProvider, LlmProviderConfig, AccessProfile } from "@/types";
 
 const DEFAULT_PROVIDER_BASE_URLS: Record<LlmProvider, string> = {
   openai: "https://api.openai.com/v1",
@@ -9,6 +9,11 @@ const DEFAULT_PROVIDER_BASE_URLS: Record<LlmProvider, string> = {
   deepseek: "https://api.deepseek.com/v1",
   openrouter: "https://openrouter.ai/api/v1",
   ollama: "http://localhost:11434/v1",
+  siliconflow: "https://api.siliconflow.cn/v1",
+  xai: "https://api.x.ai/v1",
+  kimi: "https://api.moonshot.cn/v1",
+  qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  minimax: "https://api.minimax.io/v1",
 };
 
 interface BackendSettings {
@@ -41,6 +46,9 @@ interface BackendSettings {
   proxy_port: string;
   proxy_username: string;
   proxy_password: string;
+  access_profile: string;
+  allow_lan: string;
+  bind_host: string;
 }
 
 interface BackendLlmProviderConfig {
@@ -112,6 +120,9 @@ function mapBackendToSettings(data: SettingsResponse): UserSettings {
     proxyPort: s.proxy_port || "",
     proxyUsername: s.proxy_username || "",
     proxyPassword: s.proxy_password || "",
+    accessProfile: (s.access_profile as AccessProfile) || "local_relaxed",
+    allowLan: s.allow_lan === "true",
+    bindHost: s.bind_host || "127.0.0.1",
   };
 }
 
@@ -162,6 +173,9 @@ function mapSettingsToBackend(s: Partial<UserSettings>): { settings: Partial<Bac
   if (s.proxyPort !== undefined) settings.proxy_port = String(s.proxyPort);
   if (s.proxyUsername !== undefined) settings.proxy_username = s.proxyUsername;
   if (s.proxyPassword !== undefined) settings.proxy_password = s.proxyPassword;
+  if (s.accessProfile !== undefined) settings.access_profile = s.accessProfile;
+  if (s.allowLan !== undefined) settings.allow_lan = String(s.allowLan);
+  if (s.bindHost !== undefined) settings.bind_host = s.bindHost;
   return { settings };
 }
 
@@ -209,7 +223,13 @@ export async function testLlmProviders(providers: LlmProviderConfig[]): Promise<
 export { DEFAULT_PROVIDER_BASE_URLS };
 
 export async function exportSettings(): Promise<void> {
-  const res = await fetch("/api/settings/export", { method: "POST" });
+  const res = await fetch(buildApiUrl("/settings/export"), {
+    method: "POST",
+    headers: buildAuthHeaders(),
+  });
+  if (!res.ok) {
+    throw new ApiError(`API Error: ${res.status} ${res.statusText}`, res.status, "");
+  }
   const blob = await res.blob();
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -224,11 +244,14 @@ export async function exportSettings(): Promise<void> {
 export async function importSettings(file: File): Promise<{ imported: number }> {
   const text = await file.text();
   const data = JSON.parse(text);
-  const res = await fetch("/api/settings/import", {
+  const res = await fetch(buildApiUrl("/settings/import"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(data),
   });
+  if (!res.ok) {
+    throw new ApiError(`API Error: ${res.status} ${res.statusText}`, res.status, "");
+  }
   return res.json();
 }
 

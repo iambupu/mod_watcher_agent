@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import argparse
+import os
 import sys
 
 import uvicorn
@@ -26,6 +26,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.environ["MOD_WATCHER_PROCESS_NAME"] = "ModWatcherBackend"
+    os.environ.setdefault("MW_BIND_HOST", "127.0.0.1")
     set_windows_title(args.process_name)
     uvicorn.run(
         "app.main:app",

@@ -105,7 +105,11 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow flex flex-col overflow-hidden">
-      <div className="relative aspect-[300/169] bg-gradient-to-br from-gray-100 to-gray-200 flex-shrink-0">
+      <div
+        className={`relative bg-gradient-to-br from-gray-100 to-gray-200 flex-shrink-0 ${
+          mod.thumbnail_url ? "aspect-[300/169]" : "aspect-[300/85]"
+        }`}
+      >
         {mod.thumbnail_url ? (
           <img
             src={mod.thumbnail_url}
