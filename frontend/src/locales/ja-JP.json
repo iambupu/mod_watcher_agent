@@ -32,6 +32,7 @@
   "agent.section.nextStepsHint": "並び順やダウンロード数の条件を追加するか、特定 Mod の詳細解析を指示できます。",
   "mod.favorite": "お気に入り",
   "mod.unfavorite": "お気に入り解除",
+  "mod.ignore": "非表示",
   "mod.openOriginal": "元サイトを開く",
   "mod.detail": "詳細",
   "mod.downloads": "ダウンロード",
