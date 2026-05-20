@@ -1,13 +1,13 @@
-from abc import ABC, abstractmethod
 import json
 import logging
 import re
-from typing import Any
+from abc import ABC, abstractmethod
 
 import httpx
 from sqlmodel import Session as _Session
 
 from app.schemas.watch_rule import LlmFilterConfig
+from app.security import validate_outbound_url
 from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,11 @@ DEFAULT_MODELS = {
     "deepseek": "deepseek-v4-flash",
     "openrouter": "gpt-4o-mini",
     "ollama": "llama3.2",
+    "siliconflow": "Qwen/Qwen3-8B",
+    "xai": "grok-4.20-reasoning",
+    "kimi": "kimi-k2.6",
+    "qwen": "qwen-plus",
+    "minimax": "MiniMax-M2.7",
 }
 
 
@@ -33,7 +38,7 @@ class LLMClient(ABC):
 
 
 class OpenAIClient(LLMClient):
-    """OpenAI-compatible API: OpenAI, Groq, DeepSeek, OpenRouter, Ollama"""
+    """OpenAI-compatible API: OpenAI, Groq, DeepSeek, OpenRouter, Ollama, SiliconFlow, xAI, Kimi, Qwen, MiniMax"""
 
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
         self.api_key = api_key
@@ -199,17 +204,12 @@ def create_llm_client(
     base_url: str = "",
 ) -> LLMClient:
     provider = provider.lower().strip()
+    base_url = validate_outbound_url(provider, base_url)
 
     if provider == "ollama":
-        return OllamaClient(base_url or "http://localhost:11434")
+        return OllamaClient(base_url)
 
-    if provider in ("openai", "groq", "deepseek", "openrouter"):
-        if not base_url:
-            base_url = {
-                "groq": "https://api.groq.com/openai/v1",
-                "deepseek": "https://api.deepseek.com/v1",
-                "openrouter": "https://openrouter.ai/api/v1",
-            }.get(provider, "https://api.openai.com/v1")
+    if provider in ("openai", "groq", "deepseek", "openrouter", "siliconflow", "xai", "kimi", "qwen", "minimax"):
         return OpenAIClient(api_key, base_url)
 
     if provider == "anthropic":
@@ -218,7 +218,20 @@ def create_llm_client(
     if provider == "gemini":
         return GeminiClient(api_key)
 
-    supported = {"openai", "groq", "deepseek", "openrouter", "anthropic", "gemini", "ollama"}
+    supported = {
+        "openai",
+        "groq",
+        "deepseek",
+        "openrouter",
+        "siliconflow",
+        "xai",
+        "kimi",
+        "qwen",
+        "minimax",
+        "anthropic",
+        "gemini",
+        "ollama",
+    }
     raise ValueError(
         f"Unsupported LLM provider: {provider!r}. Supported: {', '.join(sorted(supported))}"
     )
@@ -253,6 +266,8 @@ def create_llm_filter_client(session: _Session):
 
     enabled.sort(key=lambda p: int(p.get("priority", 999)))
     primary = enabled[0]
+    primary_provider = str(primary.get("provider") or "openai").strip().lower()
+    primary_base_url = validate_outbound_url(primary_provider, str(primary.get("base_url") or ""))
 
     def _llm_filter(
         mods: list[dict],
@@ -288,7 +303,7 @@ def create_llm_filter_client(session: _Session):
 
             try:
                 resp = httpx.post(
-                    f"{primary['base_url'].rstrip('/')}/chat/completions",
+                    f"{primary_base_url.rstrip('/')}/chat/completions",
                     json={
                         "model": primary["model"],
                         "messages": [

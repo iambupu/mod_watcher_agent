@@ -2,18 +2,22 @@ import io
 import json
 import platform
 import time
+from pathlib import Path
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlmodel import Session
 
+from app.config import settings
 from app.db import get_session
-from app.schemas.settings import SettingsRead, SettingsUpdate
-from app.services.settings_service import SettingsService
-from app.services.notification_service import NotificationService
-from app.services.llm_client import DEFAULT_MODELS, create_llm_client
-from app.models.notification import Notification
 from app.jobs.scheduler import register_jobs
+from app.schemas.settings import SettingsRead, SettingsUpdate
+from app.security import validate_outbound_url
+from app.services.llm_client import DEFAULT_MODELS, create_llm_client
+from app.services.notification_service import NotificationService
+from app.services.settings_service import SettingsService
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -40,6 +44,15 @@ MIN_LENGTH_SENSITIVE_KEYS: dict[str, int] = {
     "llm_api_key": 8,
     "telegram_bot_token": 20,
 }
+ACCESS_PROFILES_REQUIRING_TOKEN = {"local_strict", "shared_lan"}
+ACCESS_PROFILES = {"local_relaxed", "local_strict", "shared_lan"}
+
+
+SessionDep = Annotated[Session, Depends(get_session)]
+
+
+class AutoStartRequest(BaseModel):
+    enabled: bool = False
 
 
 def _mask_if_present(value: str) -> str:
@@ -140,6 +153,17 @@ def _prepare_settings_update(
     items: dict[str, str],
 ) -> dict[str, str]:
     sanitized = dict(items)
+    access_profile = sanitized.get("access_profile")
+    if access_profile is not None:
+        profile = str(access_profile).strip().lower()
+        if profile not in ACCESS_PROFILES:
+            raise HTTPException(status_code=422, detail="access_profile is invalid")
+        if profile in ACCESS_PROFILES_REQUIRING_TOKEN and not settings.MW_ADMIN_TOKEN:
+            raise HTTPException(
+                status_code=422,
+                detail="MW_ADMIN_TOKEN must be configured before enabling token-required access profiles",
+            )
+        sanitized["access_profile"] = profile
     for key in SENSITIVE_KEYS:
         value = sanitized.get(key)
         if value == MASKED_VALUE:
@@ -156,14 +180,14 @@ def _prepare_settings_update(
     webhook = sanitized.get("discord_webhook_url")
     if webhook is not None:
         webhook_value = str(webhook).strip()
-        if webhook_value and not (webhook_value.startswith("https://") or webhook_value.startswith("http://")):
-            raise HTTPException(status_code=422, detail="discord_webhook_url must start with http:// or https://")
+        if webhook_value and not webhook_value.startswith("https://"):
+            raise HTTPException(status_code=422, detail="discord_webhook_url must start with https://")
 
     if "llm_providers_json" in sanitized:
         try:
             providers = json.loads(sanitized["llm_providers_json"])
         except json.JSONDecodeError:
-            providers = None
+            raise HTTPException(status_code=422, detail="llm_providers_json must be valid JSON") from None
         if isinstance(providers, list):
             for provider in providers:
                 if not isinstance(provider, dict):
@@ -173,6 +197,8 @@ def _prepare_settings_update(
                 api_key = str(provider.get("api_key") or "").strip()
                 if enabled and provider_name != "ollama" and api_key and len(api_key) < 8:
                     raise HTTPException(status_code=422, detail=f"llm provider '{provider_name}' api_key is too short")
+                if enabled:
+                    validate_outbound_url(provider_name, str(provider.get("base_url") or ""))
         sanitized["llm_providers_json"] = _merge_provider_keys(
             sanitized["llm_providers_json"],
             service.get("llm_providers_json"),
@@ -184,8 +210,9 @@ def _prepare_settings_update(
         try:
             value = int(str(raw).strip())
         except ValueError:
-            continue
-        value = max(min_v, min(max_v, value))
+            raise HTTPException(status_code=422, detail=f"{key} must be an integer") from None
+        if value < min_v or value > max_v:
+            raise HTTPException(status_code=422, detail=f"{key} must be between {min_v} and {max_v}")
         sanitized[key] = str(value)
     return sanitized
 
@@ -212,7 +239,7 @@ def _sanitize_export_settings(raw: dict[str, str]) -> dict[str, str]:
 async def _test_llm_provider(provider_config: dict) -> dict:
     provider = str(provider_config.get("provider") or "openai")
     api_key = str(provider_config.get("api_key") or "")
-    base_url = str(provider_config.get("base_url") or "")
+    base_url = validate_outbound_url(provider, str(provider_config.get("base_url") or ""))
     model = str(provider_config.get("model") or "") or DEFAULT_MODELS.get(provider, "gpt-4o-mini")
     if not api_key and provider != "ollama":
         return {
@@ -246,7 +273,7 @@ async def _test_llm_provider(provider_config: dict) -> dict:
 
 @router.get("", response_model=SettingsRead)
 def get_settings(
-    session: Session = Depends(get_session),
+    session: SessionDep,
 ):
     service = SettingsService(session)
     db_settings = service.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
@@ -260,7 +287,7 @@ def get_settings(
 @router.put("", response_model=SettingsRead)
 def update_settings(
     data: SettingsUpdate,
-    session: Session = Depends(get_session),
+    session: SessionDep,
 ):
     service = SettingsService(session)
     items = {k: v for k, v in data.settings.items() if v is not None}
@@ -277,7 +304,7 @@ def update_settings(
 
 @router.post("/telegram/test")
 async def test_telegram(
-    session: Session = Depends(get_session),
+    session: SessionDep,
 ):
     notifier = NotificationService(session)
     ok = await notifier.send_telegram_message("Mod Watcher Agent 测试消息")
@@ -286,7 +313,7 @@ async def test_telegram(
 
 @router.post("/discord/test")
 async def test_discord(
-    session: Session = Depends(get_session),
+    session: SessionDep,
 ):
     notifier = NotificationService(session)
     ok = await notifier.send_discord_webhook("Mod Watcher Agent 测试消息")
@@ -295,10 +322,11 @@ async def test_discord(
 
 @router.post("/llm/test")
 async def test_llm_providers(
-    body: dict = Body(default={}),
-    session: Session = Depends(get_session),
+    session: SessionDep,
+    body: Annotated[dict[str, Any] | None, Body()] = None,
 ):
     svc = SettingsService(session)
+    body = body or {}
     providers = body.get("providers")
     if not isinstance(providers, list):
         try:
@@ -316,7 +344,7 @@ async def test_llm_providers(
 
 @router.post("/export")
 def export_settings(
-    session: Session = Depends(get_session),
+    session: SessionDep,
 ):
     svc = SettingsService(session)
     raw = svc.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
@@ -331,11 +359,11 @@ def export_settings(
 
 @router.post("/import")
 def import_settings(
-    data: dict,
-    session: Session = Depends(get_session),
+    data: dict[str, Any],
+    session: SessionDep,
 ):
     svc = SettingsService(session)
-    count = 0
+    items: dict[str, str] = {}
     for key, value in data.items():
         if key in SENSITIVE_KEYS:
             continue
@@ -343,27 +371,30 @@ def import_settings(
             isinstance(value, str)
             and value.strip()
         ):
-            svc.set(key, value)
-            count += 1
-    return {"imported": count}
+            items[key] = value
+    if items:
+        svc.set_batch(_prepare_settings_update(svc, items))
+        register_jobs(session)
+    return {"imported": len(items)}
 
 
 @router.post("/auto-start")
-def set_auto_start(data: dict = Body(...), session: Session = Depends(get_session)):
+def set_auto_start(
+    data: Annotated[AutoStartRequest, Body()],
+    session: SessionDep,
+):
     if platform.system().lower() != "windows":
         raise HTTPException(status_code=501, detail="/api/settings/auto-start is only supported on Windows")
 
-    import winreg
-    enabled = data.get("enabled", False)
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
-    import sys
-    from pathlib import Path
+    import winreg
+
     root = Path(__file__).resolve().parent.parent.parent.parent
     launcher = root / "start.ps1"
 
     try:
-        if enabled:
+        if data.enabled:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
             winreg.SetValueEx(key, "ModWatcherAgent", 0, winreg.REG_SZ, f'powershell.exe -WindowStyle Hidden -File "{launcher}" -Tray')
             winreg.CloseKey(key)
@@ -374,6 +405,7 @@ def set_auto_start(data: dict = Body(...), session: Session = Depends(get_sessio
                 winreg.CloseKey(key)
             except FileNotFoundError:
                 pass
-        return {"success": True, "enabled": enabled}
+        SettingsService(session).set("auto_start", str(data.enabled).lower())
+        return {"success": True, "enabled": data.enabled}
     except Exception as e:
         return {"success": False, "error": str(e)}
