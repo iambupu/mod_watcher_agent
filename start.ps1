@@ -146,7 +146,7 @@ function Ensure-BackendDependencies {
     }
     try {
         $ErrorActionPreference = "Continue"
-        & $venvPython -c "import uvicorn, pystray, PIL" *> $null
+        & $venvPython -c "import uvicorn, pystray, PIL, playwright" *> $null
         $depsReady = ($LASTEXITCODE -eq 0)
     }
     catch {
@@ -172,6 +172,33 @@ function Ensure-BackendDependencies {
     }
     finally {
         Pop-Location
+    }
+}
+
+function Show-PlaywrightBrowserHint {
+    $oldErrPref = $ErrorActionPreference
+    $oldNativePref = $null
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $oldNativePref = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    try {
+        $ErrorActionPreference = "Continue"
+        & $venvPython -c "from pathlib import Path; from playwright.sync_api import sync_playwright; p=sync_playwright().start(); path=Path(p.chromium.executable_path); p.stop(); raise SystemExit(0 if path.exists() else 1)" *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[!] LoversLab browser capture needs Playwright Chromium." -ForegroundColor Yellow
+            Write-Host "    Run: .venv\\Scripts\\python.exe -m playwright install chromium" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "[!] LoversLab browser capture needs Playwright Chromium." -ForegroundColor Yellow
+        Write-Host "    Run: .venv\\Scripts\\python.exe -m playwright install chromium" -ForegroundColor Yellow
+    }
+    finally {
+        $ErrorActionPreference = $oldErrPref
+        if ($null -ne $oldNativePref) {
+            $PSNativeCommandUseErrorActionPreference = $oldNativePref
+        }
     }
 }
 
@@ -422,6 +449,7 @@ function Ensure-Prerequisites {
     Ensure-Venv
     Ensure-EnvFile
     Ensure-BackendDependencies
+    Show-PlaywrightBrowserHint
     if ($frontendMode -eq "dev") {
         Ensure-FrontendDevDependencies
     }
