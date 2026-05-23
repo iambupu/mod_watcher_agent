@@ -14,6 +14,7 @@
 
 ## 目录
 
+- [目录](#目录)
 - [概览](#概览)
 - [你是普通用户还是开发者？](#你是普通用户还是开发者)
 - [普通用户快速开始](#普通用户快速开始)
@@ -24,7 +25,6 @@
   - [`.env` 高级设置（普通用户可忽略）](#env-高级设置普通用户可忽略)
 - [功能一览](#功能一览)
 - [开发与贡献](#开发与贡献)
-  - [Agent 模块维护准则](#agent-模块维护准则)
   - [打包 Release](#打包-release)
 
 ## 概览
@@ -183,22 +183,6 @@ Docker 默认：
 
 - 代码风格、依赖请参阅 [DEPENDENCIES.md](./DEPENDENCIES.md) 和 [CODE_STYLE.md](./CODE_STYLE.md)。
 - 欢迎贡献：fork → 新分支 → 提交 PR，并在 PR 描述中说明变更。
-
-### Agent 模块维护准则
-
-Agent 后端代码集中在 `backend/app/services/agent/`。修改查询、工具、结果合并或 LLM 回答生成时，请先阅读：
-
-- [AGENETS.md](./AGENETS.md)：项目级 Agent 指令与架构边界
-- [REASONIX.md](./REASONIX.md)：快速上下文与常见注意事项
-- [CODE_STYLE.md](./CODE_STYLE.md)：编码规范与代码注释准则
-- [Agent 模块降耦计划](./docs/superpowers/plans/2026-05-23-agent-decoupling.md)：分阶段实施方案
-
-维护原则：
-
-- `chat_service.py` 保持薄入口，不继续承载具体搜索工具、结果合并、排序过滤或 prompt 细节。
-- Local DB、NexusMods、LoversLab 等来源检索走统一 tool 边界。
-- 确定性规则用代码和测试实现，不交给 LLM 判断。
-- 代码注释视为后续维护准则，只写意图、契约、不变量、安全边界和非显然兼容原因；修改逻辑时同步更新注释与测试。
 
 ### 打包 Release
 
