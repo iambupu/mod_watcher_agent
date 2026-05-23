@@ -22,10 +22,12 @@ class LoversLabAdapter(BaseAdapter):
     source = "loverslab"
 
     def __init__(self, **kwargs: Any) -> None:
+        """初始化实例并保存运行所需的依赖。"""
         self._feed = LoversLabFeedAdapter()
         self._page = LoversLabPageAdapter()
 
     async def fetch(self, source_config_json: str) -> list[ModItem]:
+        """请求外部数据并返回标准化结果。"""
         config = LoversLabRuleConfig.model_validate_json(source_config_json)
         results: list[ModItem] = []
 
@@ -51,7 +53,9 @@ class LoversLabAdapter(BaseAdapter):
     async def fetch_mod_detail(
         self, external_id: str, game_domain: str | None = None
     ) -> ModItem | None:
+        """请求外部数据并返回标准化结果。"""
         return await self._page.fetch_mod_detail(external_id, game_domain)
 
     def normalize(self, raw_item: dict) -> ModItem:
+        """规范化输入数据，供后续流程使用。"""
         return self._page.normalize(raw_item)
