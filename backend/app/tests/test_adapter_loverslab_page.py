@@ -1,13 +1,14 @@
 """Tests for LoversLabPageAdapter single-source fetch/normalize pattern."""
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError
 
 from app.adapters.loverslab_page import LoversLabPageAdapter
 from app.models.mod_item import ModItem
+from app.services.browser import BrowserFetchResult
 
 LISTING_HTML = """<!DOCTYPE html>
 <html><body>
@@ -50,7 +51,17 @@ SOURCE_CONFIG_JSON = (
 
 @pytest.fixture
 def adapter():
-    return LoversLabPageAdapter()
+    page_fetcher = AsyncMock()
+    page_fetcher.fetch_html = AsyncMock(
+        return_value=BrowserFetchResult(
+            url="https://www.loverslab.com/files/category/110-skyrim/",
+            final_url="https://www.loverslab.com/files/category/110-skyrim/",
+            title="Skyrim",
+            html=LISTING_HTML,
+            status="ok",
+        )
+    )
+    return LoversLabPageAdapter(page_fetcher=page_fetcher)
 
 
 def _make_response(text, status=200):
@@ -66,19 +77,14 @@ class TestLoversLabPageAdapterV02:
 
     @pytest.mark.asyncio
     async def test_fetch_returns_mod_items(self, adapter):
-        listing_resp = _make_response(LISTING_HTML)
-        detail_resp = _make_response(DETAIL_HTML)
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[listing_resp, detail_resp, detail_resp])
-
-        with patch.object(adapter, "_get_client", return_value=mock_client):
-            results = await adapter.fetch(SOURCE_CONFIG_JSON)
+        results = await adapter.fetch(SOURCE_CONFIG_JSON)
 
         assert len(results) == 2
         assert all(isinstance(r, ModItem) for r in results)
         assert results[0].source == "loverslab"
         assert results[0].source_id in ("12345", "67890")
         assert results[1].source_id in ("12345", "67890")
+        assert results[0].raw["fetch_mode"] == "browser_html"
 
     @pytest.mark.asyncio
     async def test_normalize_maps_fields(self, adapter):
@@ -145,48 +151,60 @@ class TestLoversLabPageAdapterV02:
 
     @pytest.mark.asyncio
     async def test_source_config_parsed(self, adapter):
-        listing_resp = _make_response(LISTING_HTML)
-        detail_resp = _make_response(DETAIL_HTML)
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[listing_resp, detail_resp, detail_resp])
-
         valid_json = '{"gameLabel":"Test","accessMode":"page","pageUrls":["https://www.loverslab.com/files/category/110-skyrim/"],"maxItemsPerRun":2,"updateDetection":"published_time"}'
 
-        with patch.object(adapter, "_get_client", return_value=mock_client):
-            results = await adapter.fetch(valid_json)
+        results = await adapter.fetch(valid_json)
 
-        assert mock_client.get.call_count >= 1
-        listing_call = mock_client.get.call_args_list[0]
-        assert listing_call[0][0] == "https://www.loverslab.com/files/category/110-skyrim/"
+        adapter._page_fetcher.fetch_html.assert_called_once()
+        assert adapter._page_fetcher.fetch_html.call_args.args[0] == "https://www.loverslab.com/files/category/110-skyrim/"
         assert len(results) == 2
         assert all(result.game == "Test" for result in results)
 
     @pytest.mark.asyncio
-    async def test_empty_result_returns_empty_list(self, adapter):
-        # Listing page with no file links
-        empty_listing = "<html><body><ul></ul></body></html>"
-        listing_resp = _make_response(empty_listing)
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=listing_resp)
+    async def test_reachable_listing_without_file_items_raises_structure_changed(self, adapter):
+        empty_listing = """
+        <html><body>
+          <section class="ipsDataList">
+            <p>This category page is reachable but its item structure changed.</p>
+            <a href="/forums/topic/123-not-a-file/">Forum topic</a>
+          </section>
+        </body></html>
+        """
+        adapter._page_fetcher.fetch_html.return_value = BrowserFetchResult(
+            url="https://www.loverslab.com/files/category/110-skyrim/",
+            final_url="https://www.loverslab.com/files/category/110-skyrim/",
+            title="Empty",
+            html=empty_listing,
+            status="ok",
+        )
 
-        with patch.object(adapter, "_get_client", return_value=mock_client):
-            results = await adapter.fetch(SOURCE_CONFIG_JSON)
-
-        assert results == []
+        with pytest.raises(ValueError, match="category structure changed"):
+            await adapter.fetch(SOURCE_CONFIG_JSON)
 
     @pytest.mark.asyncio
     async def test_cloudflare_challenge_on_listing_raises(self, adapter):
-        cf_html = """<!doctype html><html><head><title>Just a moment...</title></head>
-        <body>Enable JavaScript and cookies to continue<script>var x='__cf_chl_';</script>
-        challenges.cloudflare.com</body></html>"""
-        listing_resp = _make_response(cf_html)
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=listing_resp)
+        adapter._page_fetcher.fetch_html.return_value = BrowserFetchResult(
+            url="https://www.loverslab.com/files/category/110-skyrim/",
+            final_url="https://www.loverslab.com/files/category/110-skyrim/",
+            title="Just a moment",
+            html="",
+            status="cloudflare_challenge",
+        )
 
-        with (
-            patch.object(adapter, "_get_client", return_value=mock_client),
-            pytest.raises(ValueError, match="Cloudflare challenge detected"),
-        ):
+        with pytest.raises(ValueError, match="cloudflare_challenge"):
+            await adapter.fetch(SOURCE_CONFIG_JSON)
+
+    @pytest.mark.asyncio
+    async def test_redirect_to_disallowed_host_raises(self, adapter):
+        adapter._page_fetcher.fetch_html.return_value = BrowserFetchResult(
+            url="https://www.loverslab.com/files/category/110-skyrim/",
+            final_url="https://example.com/files/category/110-skyrim/",
+            title="Redirected",
+            html=LISTING_HTML,
+            status="ok",
+        )
+
+        with pytest.raises(ValueError, match="Redirected to disallowed host"):
             await adapter.fetch(SOURCE_CONFIG_JSON)
 
     def test_empty_page_urls_returns_empty(self, adapter):

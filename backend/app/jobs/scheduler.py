@@ -23,6 +23,8 @@ from app.services.settings_service import SettingsService
 scheduler = AsyncIOScheduler()
 logger = logging.getLogger(__name__)
 _RULE_WATCHDOG_LOCK = asyncio.Lock()
+SUMMARY_REPORT_JOB_ID = "llm_summary_report"
+SUMMARY_REPORT_CATCHUP_JOB_ID = "llm_summary_report_catchup"
 
 
 def _safe_int(
@@ -31,6 +33,7 @@ def _safe_int(
     min_value: int = 1,
     max_value: int | None = None,
 ) -> int:
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     try:
         parsed = int(value or "")
     except (TypeError, ValueError):
@@ -43,7 +46,9 @@ def _safe_int(
 
 
 async def _discover_single_rule(rule_id: int, rule_name: str) -> dict:
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     async def handler(db_session: Session) -> dict:
+        """处理当前模块的业务逻辑并返回结果。"""
         discovery = DiscoveryService(db_session)
         new_mods = await discovery.discover_from_rule(rule_id)
         return {
@@ -62,6 +67,7 @@ async def _discover_single_rule(rule_id: int, rule_name: str) -> dict:
 
 
 def _parse_iso_time(value: str | None) -> datetime | None:
+    """解析原始内容并返回结构化结果。"""
     if not value:
         return None
     normalized = value.strip()
@@ -79,6 +85,7 @@ def _parse_iso_time(value: str | None) -> datetime | None:
 
 
 def _extract_rule_id(metadata_json: str | None) -> int | None:
+    """从原始内容中提取目标字段。"""
     if not metadata_json:
         return None
     try:
@@ -93,7 +100,43 @@ def _extract_rule_id(metadata_json: str | None) -> int | None:
     return None
 
 
+def _should_catch_up_summary_report(
+    session: Session,
+    interval_minutes: int,
+    now: datetime | None = None,
+) -> bool:
+    """判断内部流程是否需要继续执行。"""
+    if interval_minutes <= 0:
+        return False
+
+    latest_runs = session.exec(
+        select(JobRun)
+        .where(JobRun.job_name == SUMMARY_REPORT_JOB_ID)
+        .order_by(JobRun.id.desc())
+        .limit(20)
+    ).all()
+
+    if any(run.status in {"queued", "running"} for run in latest_runs):
+        return False
+
+    latest = latest_runs[0] if latest_runs else None
+    if latest is None:
+        return True
+
+    last_at = _parse_iso_time(latest.finished_at) or _parse_iso_time(latest.started_at)
+    if last_at is None:
+        return True
+
+    current_time = now or datetime.now(UTC)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=UTC)
+    else:
+        current_time = current_time.astimezone(UTC)
+    return current_time - last_at >= timedelta(minutes=interval_minutes)
+
+
 async def _run_rule_watchdog() -> dict:
+    """执行内部任务流程。"""
     if _RULE_WATCHDOG_LOCK.locked():
         return {"triggered": 0, "skipped_locked": True}
 
@@ -169,6 +212,7 @@ async def _run_rule_watchdog() -> dict:
 
 
 def register_jobs(session: Session | None = None) -> None:
+    """处理当前模块的业务逻辑并返回结果。"""
     if session is None:
         with Session(engine) as db_session:
             register_jobs(db_session)
@@ -222,13 +266,26 @@ def register_jobs(session: Session | None = None) -> None:
         scheduler.add_job(
             generate_summary_report,
             IntervalTrigger(minutes=summary_report_interval),
-            id="llm_summary_report",
+            id=SUMMARY_REPORT_JOB_ID,
             name="LLM Summary Report",
             replace_existing=True,
         )
+        if _should_catch_up_summary_report(session, summary_report_interval):
+            scheduler.add_job(
+                generate_summary_report,
+                DateTrigger(run_date=datetime.now(UTC) + timedelta(seconds=5)),
+                id=SUMMARY_REPORT_CATCHUP_JOB_ID,
+                name="LLM Summary Report Catch-up",
+                replace_existing=True,
+                max_instances=1,
+            )
+        elif scheduler.get_job(SUMMARY_REPORT_CATCHUP_JOB_ID):
+            scheduler.remove_job(SUMMARY_REPORT_CATCHUP_JOB_ID)
     else:
-        if scheduler.get_job("llm_summary_report"):
-            scheduler.remove_job("llm_summary_report")
+        if scheduler.get_job(SUMMARY_REPORT_JOB_ID):
+            scheduler.remove_job(SUMMARY_REPORT_JOB_ID)
+        if scheduler.get_job(SUMMARY_REPORT_CATCHUP_JOB_ID):
+            scheduler.remove_job(SUMMARY_REPORT_CATCHUP_JOB_ID)
 
     scheduler.add_job(
         send_daily_digest,
@@ -284,5 +341,6 @@ def register_jobs(session: Session | None = None) -> None:
 
 
 async def setup_scheduler(session: Session | None = None) -> None:
+    """处理当前模块的业务逻辑并返回结果。"""
     register_jobs(session)
     scheduler.start()

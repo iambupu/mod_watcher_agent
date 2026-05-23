@@ -14,6 +14,7 @@ from app.api import (
     routes_favorites,
     routes_jobs,
     routes_logs,
+    routes_loverslab_browser,
     routes_mods,
     routes_notifications,
     routes_rules,
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """处理当前模块的业务逻辑并返回结果。"""
     require_safe_bind_host()
     setup_logging()
     init_db()
@@ -66,6 +68,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def local_only_api_guard(request: Request, call_next):
+    """处理当前模块的业务逻辑并返回结果。"""
     policy = AccessPolicy()
     decision = policy.evaluate(request)
     if not decision.allow:
@@ -99,6 +102,7 @@ app.include_router(routes_jobs.router)
 app.include_router(routes_logs.router)
 app.include_router(routes_notifications.router)
 app.include_router(routes_system_notifications.router)
+app.include_router(routes_loverslab_browser.router)
 
 
 FRONTEND_DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -111,6 +115,7 @@ if FRONTEND_DIST_DIR.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_frontend(full_path: str):
+        """处理当前模块的业务逻辑并返回结果。"""
         requested_path = (FRONTEND_DIST_DIR / full_path).resolve()
         try:
             requested_path.relative_to(FRONTEND_DIST_DIR.resolve())
@@ -123,4 +128,5 @@ if FRONTEND_DIST_DIR.exists():
 else:
     @app.get("/")
     async def root():
+        """处理当前模块的业务逻辑并返回结果。"""
         return {"service": "Mod Watcher Agent", "version": "0.2.0"}

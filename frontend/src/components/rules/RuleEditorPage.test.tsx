@@ -55,10 +55,14 @@ function renderWithRoute(route: string) {
     queryClient,
     ...render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[route]}>
+        <MemoryRouter
+          initialEntries={[route]}
+          future={{ v7_relativeSplatPath: true, v7_startTransition: true }}
+        >
           <Routes>
             <Route path="/rules/new" element={<RuleEditorPage />} />
             <Route path="/rules/:id/edit" element={<RuleEditorPage />} />
+            <Route path="/rules" element={<div>rules.list</div>} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
@@ -69,10 +73,14 @@ function renderWithRoute(route: string) {
 function renderWithRouteAndClient(route: string, queryClient: QueryClient) {
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[route]}>
+      <MemoryRouter
+        initialEntries={[route]}
+        future={{ v7_relativeSplatPath: true, v7_startTransition: true }}
+      >
         <Routes>
           <Route path="/rules/new" element={<RuleEditorPage />} />
           <Route path="/rules/:id/edit" element={<RuleEditorPage />} />
+          <Route path="/rules" element={<div>rules.list</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -89,10 +97,10 @@ describe("RuleEditorPage", () => {
     renderWithRoute("/rules/new");
 
     expect(screen.getByText("rules.newRule")).toBeInTheDocument();
-    expect(screen.getByText("rules.basicInfo")).toBeInTheDocument();
-    expect(screen.getByText("rules.source")).toBeInTheDocument();
-    expect(screen.getByText("rules.filters")).toBeInTheDocument();
-    expect(screen.getByText("rules.notification")).toBeInTheDocument();
+    expect(screen.getAllByText("rules.basicInfo").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("rules.source").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("rules.filters").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("rules.notification").length).toBeGreaterThan(0);
     expect(screen.getByText("rules.actions.saveRule")).toBeInTheDocument();
     expect(screen.getByText("common.cancel")).toBeInTheDocument();
     expect(screen.getByText("rules.actions.testRule")).toBeInTheDocument();
@@ -177,6 +185,18 @@ describe("RuleEditorPage", () => {
       expect(loversLabTab.className).toContain("bg-blue-600");
       expect(nexusModsTab.className).not.toContain("bg-blue-600");
     });
+  });
+
+  it("enabled_switch_updates_store", async () => {
+    const user = userEvent.setup();
+    renderWithRoute("/rules/new");
+
+    const switchEl = screen.getByRole("switch", { name: "rules.basic.enabledLabel" });
+    expect(switchEl).toHaveAttribute("aria-checked", "true");
+
+    await user.click(switchEl);
+
+    expect(useRuleEditorStore.getState().draft.enabled).toBe(false);
   });
 
   it("saves pending Nexus category and tag input before submit", async () => {

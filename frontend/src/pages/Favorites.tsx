@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -20,6 +20,7 @@ import {
   checkUpdate,
 } from "@/api/favorites";
 import { fetchModGames, generateModIntroduction } from "@/api/mods";
+import { fetchJobRun, runFavoriteCheck } from "@/api/jobs";
 import { useUIStore } from "@/stores/uiStore";
 import type { Favorite, ModSource, SummaryMode } from "@/types";
 
@@ -46,9 +47,18 @@ const Favorites: React.FC = () => {
   const queryClient = useQueryClient();
   const { summaryMode, setSummaryMode } = useUIStore();
   const [checkingId, setCheckingId] = useState<number | null>(null);
+  const [checkingAllBusy, setCheckingAllBusy] = useState(false);
+  const [checkingAllStatus, setCheckingAllStatus] = useState("");
   const [searchText, setSearchText] = useState("");
   const [game, setGame] = useState("");
   const [source, setSource] = useState<ModSource | "">("");
+  const checkAllRunRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      checkAllRunRef.current += 1;
+    };
+  }, []);
 
   const {
     data: favorites,
@@ -100,6 +110,10 @@ const Favorites: React.FC = () => {
     },
   });
 
+  const checkAllMutation = useMutation({
+    mutationFn: runFavoriteCheck,
+  });
+
   const handleGenerateIntroduction = async (modId: number) => {
     const result = await generateIntroductionMutation.mutateAsync(modId);
     return result.content;
@@ -138,6 +152,50 @@ const Favorites: React.FC = () => {
     }
   };
 
+  const handleCheckAllUpdates = async () => {
+    const runId = checkAllRunRef.current + 1;
+    checkAllRunRef.current = runId;
+    const isCurrentRun = () => checkAllRunRef.current === runId;
+    setCheckingAllBusy(true);
+    setCheckingAllStatus("");
+    try {
+      const result = await checkAllMutation.mutateAsync();
+      if (!isCurrentRun()) return;
+      setCheckingAllStatus(t("favorites.checkAllQueued", { jobId: result.job_id }));
+      for (let i = 0; i < 60; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (!isCurrentRun()) return;
+        const job = await fetchJobRun(result.job_id);
+        if (!isCurrentRun()) return;
+        if (job.status === "queued" || job.status === "running") {
+          setCheckingAllStatus(t("favorites.checkAllRunning", { jobId: result.job_id }));
+          continue;
+        }
+        if (job.status === "failed") {
+          setCheckingAllStatus(t("favorites.checkAllFailed", { error: job.error_message || "job failed" }));
+          return;
+        }
+        setCheckingAllStatus(t("favorites.checkAllDone", {
+          scanned: job.items_scanned,
+          matched: job.items_matched,
+        }));
+        queryClient.invalidateQueries({ queryKey: ["favorites"] });
+        queryClient.invalidateQueries({ queryKey: ["updates"] });
+        return;
+      }
+      setCheckingAllStatus(t("favorites.checkAllTimeout"));
+    } catch (e) {
+      if (!isCurrentRun()) return;
+      setCheckingAllStatus(t("favorites.checkUpdateFailed", {
+        error: e instanceof Error ? e.message : t("common.unknown"),
+      }));
+    } finally {
+      if (isCurrentRun()) {
+        setCheckingAllBusy(false);
+      }
+    }
+  };
+
   const handleRemove = (id: number) => {
     if (window.confirm(t("favorites.confirmRemove") || "Remove this favorite?")) {
       removeMutation.mutate(id);
@@ -154,37 +212,57 @@ const Favorites: React.FC = () => {
             <h2 className="text-2xl font-bold text-gray-900">
               {t("favorites.title")}
             </h2>
-            <Button variant="outline" onClick={() => refetch()}>
-              <RefreshCw size={14} />
-              <span className="ml-1.5">{t("common.refresh") || "Refresh"}</span>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={handleCheckAllUpdates}
+                disabled={checkingAllBusy || checkAllMutation.isPending || !favorites || favorites.length === 0}
+              >
+                {checkingAllBusy || checkAllMutation.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+                <span className="ml-1.5">{t("favorites.checkAllUpdates")}</span>
+              </Button>
+              <Button variant="outline" onClick={() => refetch()}>
+                <RefreshCw size={14} />
+                <span className="ml-1.5">{t("common.refresh") || "Refresh"}</span>
+              </Button>
+            </div>
           </div>
+
+          {checkingAllStatus && (
+            <p className="mb-4 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+              {checkingAllStatus}
+            </p>
+          )}
 
           <Card className="mb-6">
             <CardContent className="py-3">
               <div className="flex flex-wrap items-end gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">搜索</label>
+                  <label className="mb-1 block text-xs text-gray-500">{t("discover.search")}</label>
                   <input
                     value={searchText}
                     onChange={(e) => setSearchText(e.target.value)}
                     className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
-                    placeholder="标题或摘要"
+                    placeholder={t("favorites.searchPlaceholder")}
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">游戏</label>
+                  <label className="mb-1 block text-xs text-gray-500">{t("discover.game")}</label>
                   <select value={game} onChange={(e) => setGame(e.target.value)} className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm">
-                    <option value="">全部游戏</option>
+                    <option value="">{t("discover.allGames")}</option>
                     {gameOptions.map((g) => (
                       <option key={g.value} value={g.value}>{g.label} ({g.count})</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">来源</label>
+                  <label className="mb-1 block text-xs text-gray-500">{t("discover.source")}</label>
                   <select value={source} onChange={(e) => setSource(e.target.value as ModSource | "")} className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm">
-                    <option value="">全部来源</option>
+                    <option value="">{t("discover.allSources")}</option>
                     <option value="nexusmods">Nexus Mods</option>
                     <option value="loverslab">LoversLab</option>
                   </select>
@@ -233,7 +311,7 @@ const Favorites: React.FC = () => {
             <Card>
               <CardContent className="py-12 text-center">
                 <Search size={44} className="mx-auto mb-3 text-gray-300" />
-                <p className="text-sm text-gray-500">没有匹配筛选条件的收藏</p>
+                <p className="text-sm text-gray-500">{t("favorites.noFilterMatches")}</p>
               </CardContent>
             </Card>
           ) : (

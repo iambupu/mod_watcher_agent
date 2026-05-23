@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+from apscheduler.schedulers.base import STATE_RUNNING
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlmodel import Session, func, select
 
@@ -21,6 +22,7 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 def _job_to_dict(job: JobRun) -> dict:
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     return {
         "id": job.id,
         "job_name": job.job_name,
@@ -35,10 +37,12 @@ def _job_to_dict(job: JobRun) -> dict:
 
 
 def _queued_response(job: JobRun) -> dict:
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     return {"status": "queued", "job_id": job.id}
 
 
 def _count_numeric_values(result: dict) -> tuple[int, int]:
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     scanned = len(result)
     matched = sum(value for value in result.values() if isinstance(value, int))
     return scanned, matched
@@ -58,6 +62,7 @@ def _current_week_start_utc_iso() -> str:
 
 @router.get("/stats")
 def get_stats(session: Session = Depends(get_session)):
+    """读取并返回对应的数据。"""
     week_start_utc = _current_week_start_utc_iso()
     total_mods = session.exec(select(func.count(Mod.id))).one()
     new_mods_this_week = session.exec(
@@ -108,7 +113,11 @@ def get_scheduler_status():
             "name": job.name,
             "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
         })
-    return {"running": scheduler.running, "jobs": jobs}
+    return {
+        "running": scheduler.state == STATE_RUNNING,
+        "state": scheduler.state,
+        "jobs": jobs,
+    }
 
 
 @router.get("/runs/recent")
@@ -125,6 +134,7 @@ def list_job_runs(
 
 @router.get("/{job_id}")
 def get_job_run(job_id: int, session: Session = Depends(get_session)):
+    """读取并返回对应的数据。"""
     job = session.get(JobRun, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -143,6 +153,7 @@ async def discover_all(session: Session = Depends(get_session)):
     )
 
     async def handler():
+        """处理当前模块的业务逻辑并返回结果。"""
         results = await discover_new_mods()
         scanned, matched = _count_numeric_values(results)
         return {"results": results, "items_scanned": scanned, "items_matched": matched}
@@ -157,6 +168,7 @@ async def check_favorites(session: Session = Depends(get_session)):
     job = create_job_run(session, "check_favorites")
 
     async def handler():
+        """处理当前模块的业务逻辑并返回结果。"""
         results = await check_favorite_updates()
         entries = [value for value in results.values() if isinstance(value, dict)]
         matched = sum(1 for value in entries if value.get("update_detected"))
@@ -183,6 +195,7 @@ async def run_generate_missing_summaries(session: Session = Depends(get_session)
     job = create_job_run(session, "generate_summaries")
 
     async def handler():
+        """处理当前模块的业务逻辑并返回结果。"""
         results = await generate_summaries(record_job=False)
         generated = int(results.get("generated", 0) or 0)
         return {
@@ -205,11 +218,11 @@ async def run_summary_report_now():
 async def pause_scheduler():
     """Pause the scheduler."""
     scheduler.pause()
-    return {"running": False}
+    return {"running": scheduler.state == STATE_RUNNING, "state": scheduler.state}
 
 
 @router.post("/resume")
 async def resume_scheduler():
     """Resume the scheduler."""
     scheduler.resume()
-    return {"running": True}
+    return {"running": scheduler.state == STATE_RUNNING, "state": scheduler.state}

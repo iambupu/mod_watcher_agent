@@ -40,28 +40,13 @@ export interface SchedulerJob {
 
 export interface SchedulerStatus {
   running: boolean;
+  state?: number;
   jobs: SchedulerJob[];
 }
 
-export interface JobLog {
-  id: number;
-  channel: string;
-  subject: string;
-  status: string;
-  created_at: string;
-  sent_at?: string;
-}
-
-export function fetchJobLogs(): Promise<JobLog[]> {
-  return get<JobLog[]>("/jobs");
-}
-
-export function queueSummaryGeneration(): Promise<{ status: string }> {
-  return post<{ status: string }>("/jobs/generate-summaries");
-}
-
-export function runSummaryGeneration(): Promise<QueuedJob> {
-  return post<QueuedJob>("/jobs/generate-summaries/run");
+export interface SchedulerControlResult {
+  running: boolean;
+  state?: number;
 }
 
 export function runSummaryReport(): Promise<SummaryReportResult> {
@@ -86,4 +71,12 @@ export function fetchJobRuns(limit = 50): Promise<JobRunList> {
 
 export function fetchSchedulerStatus(): Promise<SchedulerStatus> {
   return get<SchedulerStatus>("/jobs/status");
+}
+
+export function pauseScheduler(): Promise<SchedulerControlResult> {
+  return post<SchedulerControlResult>("/jobs/pause");
+}
+
+export function resumeScheduler(): Promise<SchedulerControlResult> {
+  return post<SchedulerControlResult>("/jobs/resume");
 }

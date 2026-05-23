@@ -105,7 +105,7 @@ def test_validate_outbound_url_security_rules(monkeypatch: pytest.MonkeyPatch) -
     assert getattr(scheme_err.value, "status_code", None) == 422
 
 
-def test_shared_lan_allows_domain_gateway_but_blocks_private_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shared_lan_blocks_http_domain_gateway_and_private_ip(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "MW_ALLOW_LOCAL_LLM", True)
     monkeypatch.setattr(
         security,
@@ -117,7 +117,9 @@ def test_shared_lan_allows_domain_gateway_but_blocks_private_ip(monkeypatch: pyt
         ),
     )
 
-    assert validate_outbound_url("openai", "http://my-gateway.lan/v1") == "http://my-gateway.lan/v1"
+    with pytest.raises(Exception) as http_err:
+        validate_outbound_url("openai", "http://my-gateway.lan/v1")
+    assert getattr(http_err.value, "status_code", None) == 422
 
     with pytest.raises(Exception) as private_err:
         validate_outbound_url("openai", "https://192.168.1.10/v1")

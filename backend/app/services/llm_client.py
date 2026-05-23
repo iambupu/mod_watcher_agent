@@ -8,25 +8,16 @@ from sqlmodel import Session as _Session
 
 from app.schemas.watch_rule import LlmFilterConfig
 from app.security import validate_outbound_url
+from app.services.llm_provider_config import DEFAULT_MODELS as DEFAULT_MODELS
+from app.services.llm_provider_config import (
+    SUPPORTED_PROVIDERS,
+    get_provider_chain,
+    provider_config_has_credentials,
+    resolve_provider_config,
+)
 from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_MODELS = {
-    "openai": "gpt-4o-mini",
-    "anthropic": "claude-3-5-haiku-latest",
-    "gemini": "gemini-2.0-flash",
-    "groq": "mixtral-8x7b-32768",
-    "deepseek": "deepseek-v4-flash",
-    "openrouter": "gpt-4o-mini",
-    "ollama": "llama3.2",
-    "siliconflow": "Qwen/Qwen3-8B",
-    "xai": "grok-4.20-reasoning",
-    "kimi": "kimi-k2.6",
-    "qwen": "qwen-plus",
-    "minimax": "MiniMax-M2.7",
-}
-
 
 class LLMClient(ABC):
     last_error: str = ""
@@ -34,6 +25,7 @@ class LLMClient(ABC):
 
     @abstractmethod
     async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:
+        """处理当前模块的业务逻辑并返回结果。"""
         ...
 
 
@@ -41,10 +33,12 @@ class OpenAIClient(LLMClient):
     """OpenAI-compatible API: OpenAI, Groq, DeepSeek, OpenRouter, Ollama, SiliconFlow, xAI, Kimi, Qwen, MiniMax"""
 
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
+        """初始化实例并保存运行所需的依赖。"""
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
 
     async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:
+        """处理当前模块的业务逻辑并返回结果。"""
         self.last_error = ""
         self.last_detail = ""
         try:
@@ -93,9 +87,11 @@ class AnthropicClient(LLMClient):
     DEFAULT_BASE_URL = "https://api.anthropic.com/v1"
 
     def __init__(self, api_key: str):
+        """初始化实例并保存运行所需的依赖。"""
         self.api_key = api_key
 
     async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:
+        """处理当前模块的业务逻辑并返回结果。"""
         self.last_error = ""
         self.last_detail = ""
         try:
@@ -129,9 +125,11 @@ class GeminiClient(LLMClient):
     """Native Google Gemini API format"""
 
     def __init__(self, api_key: str):
+        """初始化实例并保存运行所需的依赖。"""
         self.api_key = api_key
 
     async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:
+        """处理当前模块的业务逻辑并返回结果。"""
         self.last_error = ""
         self.last_detail = ""
         try:
@@ -162,6 +160,7 @@ class OllamaClient(LLMClient):
     """Native Ollama API client. Uses think=false so reasoning models return final content."""
 
     def __init__(self, base_url: str = "http://localhost:11434"):
+        """初始化实例并保存运行所需的依赖。"""
         base = base_url.rstrip("/")
         if base.endswith("/v1"):
             base = base[:-3]
@@ -170,6 +169,7 @@ class OllamaClient(LLMClient):
         self.last_detail = ""
 
     async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:
+        """处理当前模块的业务逻辑并返回结果。"""
         self.last_error = ""
         self.last_detail = ""
         try:
@@ -203,6 +203,7 @@ def create_llm_client(
     api_key: str = "",
     base_url: str = "",
 ) -> LLMClient:
+    """创建并持久化对应的数据。"""
     provider = provider.lower().strip()
     base_url = validate_outbound_url(provider, base_url)
 
@@ -218,22 +219,8 @@ def create_llm_client(
     if provider == "gemini":
         return GeminiClient(api_key)
 
-    supported = {
-        "openai",
-        "groq",
-        "deepseek",
-        "openrouter",
-        "siliconflow",
-        "xai",
-        "kimi",
-        "qwen",
-        "minimax",
-        "anthropic",
-        "gemini",
-        "ollama",
-    }
     raise ValueError(
-        f"Unsupported LLM provider: {provider!r}. Supported: {', '.join(sorted(supported))}"
+        f"Unsupported LLM provider: {provider!r}. Supported: {', '.join(sorted(SUPPORTED_PROVIDERS))}"
     )
 
 
@@ -253,27 +240,21 @@ def create_llm_filter_client(session: _Session):
     """
 
     svc = SettingsService(session)
-    raw = svc.get("llm_providers_json") or "[]"
-    try:
-        providers: list[dict] = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning("llm_providers_json is not valid JSON")
+    primary = next(
+        (provider for provider in get_provider_chain(svc) if provider_config_has_credentials(provider)),
+        None,
+    )
+    if primary is None:
         return None
-
-    enabled = [p for p in providers if p.get("enabled") and p.get("api_key")]
-    if not enabled:
-        return None
-
-    enabled.sort(key=lambda p: int(p.get("priority", 999)))
-    primary = enabled[0]
-    primary_provider = str(primary.get("provider") or "openai").strip().lower()
-    primary_base_url = validate_outbound_url(primary_provider, str(primary.get("base_url") or ""))
+    primary_provider, primary_api_key, primary_base_url_raw, primary_model = resolve_provider_config(primary)
+    primary_base_url = validate_outbound_url(primary_provider, primary_base_url_raw)
 
     def _llm_filter(
         mods: list[dict],
         llm_config: LlmFilterConfig,
         return_details: bool = False,
     ) -> list[dict] | dict:
+        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         if not mods:
             return {"items": [], "details": []} if return_details else []
         system_prompt = (
@@ -305,7 +286,7 @@ def create_llm_filter_client(session: _Session):
                 resp = httpx.post(
                     f"{primary_base_url.rstrip('/')}/chat/completions",
                     json={
-                        "model": primary["model"],
+                        "model": primary_model,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
@@ -313,7 +294,7 @@ def create_llm_filter_client(session: _Session):
                         "temperature": 0.1,
                     },
                     headers={
-                        "Authorization": f"Bearer {primary['api_key']}",
+                        "Authorization": f"Bearer {primary_api_key}",
                         "Content-Type": "application/json",
                     },
                     timeout=_REQUEST_TIMEOUT,

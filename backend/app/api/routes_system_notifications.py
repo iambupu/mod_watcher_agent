@@ -23,6 +23,7 @@ def get_recent(
     limit: int = Query(50, ge=1, le=500, description="Maximum events to return"),
     session: Session = Depends(get_session),
 ):
+    """读取并返回对应的数据。"""
     svc = SystemNotificationService(session)
     events = svc.get_recent_events(since_id=since_id, limit=limit)
     return {
@@ -47,6 +48,7 @@ def mark_seen(
     body: MarkSeenRequest,
     session: Session = Depends(get_session),
 ):
+    """标记状态变更并返回结果。"""
     svc = SystemNotificationService(session)
     updated = svc.mark_seen(body.event_ids)
     return {"updated": updated}
@@ -57,6 +59,7 @@ def dispatch_windows(
     body: DispatchRequest,
     session: Session = Depends(get_session),
 ):
+    """处理当前模块的业务逻辑并返回结果。"""
     svc = SystemNotificationService(session)
     events = svc.get_unseen_events_by_ids(body.event_ids, limit=50)
     dispatched_ids: list[int] = []

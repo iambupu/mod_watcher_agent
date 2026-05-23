@@ -82,6 +82,12 @@ class TestSettingsService:
             assert by_name[name]["model"] == model
             assert by_name[name]["base_url"] == base_url
 
+    def test_google_search_defaults_are_available_for_loverslab_agent_tool(self, service):
+        assert service.DEFAULTS["google_search_api_key"] == ""
+        assert service.DEFAULTS["google_search_engine_id"] == ""
+        assert service.DEFAULTS["loverslab_search_scrape_enabled"] == "true"
+        assert service.DEFAULTS["loverslab_search_scrape_engine"] == "duckduckgo"
+
     def test_updated_at_is_set_on_insert(self, service):
         service.set("test_key", "test_value")
         row = service.session.exec(

@@ -57,6 +57,13 @@ log/
 backend/logs/
 .runtime/
 thoughts/
+data/
+backend/data/
+data/browser_profiles/
+data/snapshots/
+backend/data/browser_profiles/
+backend/data/snapshots/
+*.log
 
 # Python test / coverage
 .pytest_cache/
@@ -80,6 +87,10 @@ frontend/test_error.ts
 Thumbs.db
 
 # Local runtime database
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
 mod_watcher.db
 backend/mod_watcher.db
 backend/mod_watcher.db.bak-*
@@ -101,6 +112,11 @@ log/
 frontend/src/test-setup.ts
 
 # Local scratch docs
+.agents/
+docs/superpowers/
 AGENETS.md
 PLAN_repair.md
 REASONIX.md
+
+# Local UI verification screenshots
+dashboard-ui-screenshot*.png

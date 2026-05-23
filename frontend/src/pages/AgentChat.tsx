@@ -12,6 +12,8 @@ import {
   HeartOff,
   Sparkles,
   Plus,
+  Trash2,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { MarkdownText } from "@/components/MarkdownText";
@@ -128,7 +130,8 @@ const AssistantResponseCard: React.FC<{
   matchesCount: number;
   matches?: AgentModMatch[];
   responseCards?: ChatMessage["responseCards"];
-}> = ({ text, matchesCount, matches, responseCards }) => {
+  onSelectNextStep?: (value: string) => void;
+}> = ({ text, matchesCount, matches, responseCards, onSelectNextStep }) => {
   const { t } = useTranslation();
   const sections = responseCards
     ? {
@@ -197,9 +200,17 @@ const AssistantResponseCard: React.FC<{
       <div className={`${sectionClass} border-amber-200 bg-amber-50/60`}>
         <p className="mb-1 text-[12px] font-semibold tracking-wide text-amber-700">{t("agent.section.nextSteps")}</p>
         {sections.nextSteps.length > 0 ? (
-          <ul className="space-y-1 text-gray-800">
+          <ul className="space-y-1 text-slate-800">
             {sections.nextSteps.map((line, idx) => (
-              <li key={`next-${idx}`} className="leading-6">{line}</li>
+              <li key={`next-${idx}`}>
+                <button
+                  type="button"
+                  onClick={() => onSelectNextStep?.(line)}
+                  className="w-full rounded-md px-1.5 py-1 text-left leading-6 transition hover:bg-amber-100/80 hover:text-amber-900 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                >
+                  {line}
+                </button>
+              </li>
             ))}
           </ul>
         ) : (
@@ -314,6 +325,7 @@ const AgentChat: React.FC = () => {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
+  const activeSessionIdRef = useRef("");
   const [copiedId, setCopiedId] = useState<string>("");
   const [selectedModelKey, setSelectedModelKey] = useState("");
   const [selectedSource, setSelectedSource] = useState<"" | "nexusmods" | "loverslab">("");
@@ -327,6 +339,7 @@ const AgentChat: React.FC = () => {
   const saveTimerRef = useRef<number | null>(null);
   const savingRef = useRef(false);
   const pendingSaveRef = useRef<{ data: ChatMessage[]; sessionId: string; clientUpdatedAt: string } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const favoritesQuery = useQuery({
     queryKey: ["favorites"],
@@ -399,6 +412,15 @@ const AgentChat: React.FC = () => {
   );
 
   useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => message.sessionId === activeSessionId || message.role === "separator"),
+    [activeSessionId, messages],
+  );
+
+  useEffect(() => {
     if (!activeSessionId || providerDisplays.length === 0) return;
     const storageKey = `agent:selected-model:${activeSessionId}`;
     const stored = window.sessionStorage.getItem(storageKey) || "";
@@ -416,13 +438,21 @@ const AgentChat: React.FC = () => {
     }
   };
 
+  const createWelcomeMessage = (sessionId: string, id = "welcome"): ChatMessage => ({
+    id,
+    role: "assistant",
+    text: t("agent.hint"),
+    sessionId,
+  });
+
   useEffect(() => {
     if (loadedRef.current || conversationQuery.isLoading) return;
     loadedRef.current = true;
     const state = conversationQuery.data;
     if (state && state.messages.length > 0) {
-      setMessages(
-        state.messages.map((m) => ({
+      const activeConversationId = state.active_session_id || state.messages[state.messages.length - 1]?.session_id || `sess_${Date.now()}`;
+      const currentMessages = state.messages
+        .map((m) => ({
           id: m.id,
           role: m.role,
           text: m.text,
@@ -439,16 +469,19 @@ const AgentChat: React.FC = () => {
             : undefined,
           llmProvider: m.llm_provider,
           llmModel: m.llm_model,
-        })),
+        }))
+        .filter((m) => m.sessionId === activeConversationId && m.role !== "separator");
+      const firstWelcomeIndex = currentMessages.findIndex((m) => m.role === "assistant" && m.text === t("agent.hint"));
+      const dedupedMessages = currentMessages.filter(
+        (m, index) => !(m.role === "assistant" && m.text === t("agent.hint") && index !== firstWelcomeIndex),
       );
-      setActiveSessionId(state.active_session_id);
+      setActiveSessionId(activeConversationId);
+      setMessages(dedupedMessages.length > 0 ? dedupedMessages : [createWelcomeMessage(activeConversationId)]);
       return;
     }
     const initialSessionId = state?.active_session_id || `sess_${Date.now()}`;
     setActiveSessionId(initialSessionId);
-    setMessages([
-      { id: "welcome", role: "assistant", text: t("agent.hint"), sessionId: initialSessionId },
-    ]);
+    setMessages([createWelcomeMessage(initialSessionId)]);
   }, [conversationQuery.data, conversationQuery.isLoading, t]);
 
   const saveConversationMutation = useMutation({
@@ -511,8 +544,9 @@ const AgentChat: React.FC = () => {
 
   useEffect(() => {
     if (!loadedRef.current || !activeSessionId) return;
+    const activeMessages = messages.filter((message) => message.sessionId === activeSessionId);
     pendingSaveRef.current = {
-      data: messages,
+      data: activeMessages,
       sessionId: activeSessionId,
       clientUpdatedAt: new Date().toISOString(),
     };
@@ -532,11 +566,11 @@ const AgentChat: React.FC = () => {
     };
   }, []);
 
-  const buildHistory = (list: ChatMessage[]): AgentHistoryItem[] =>
+  const buildHistory = (list: ChatMessage[], sessionId: string): AgentHistoryItem[] =>
     list
       .filter(
         (m): m is ChatMessage & { role: "user" | "assistant" } =>
-          (m.role === "user" || m.role === "assistant") && m.sessionId === activeSessionId,
+          (m.role === "user" || m.role === "assistant") && m.sessionId === sessionId,
       )
       .map((m) => ({ role: m.role, text: m.text }))
       .slice(-40);
@@ -572,6 +606,7 @@ const AgentChat: React.FC = () => {
     }: {
       message: string;
       history: AgentHistoryItem[];
+      sessionId: string;
       providerOverride?: string;
       modelOverride?: string;
     }) =>
@@ -579,14 +614,14 @@ const AgentChat: React.FC = () => {
         providerOverride,
         modelOverride,
       }),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       setMessages((prev) => [
         ...prev,
         {
           id: `${Date.now()}-assistant`,
           role: "assistant",
           text: data.answer,
-          sessionId: activeSessionId,
+          sessionId: variables.sessionId,
           matches: data.matches,
           responseCards: data.response_cards
             ? {
@@ -600,18 +635,20 @@ const AgentChat: React.FC = () => {
           llmModel: data.llm_model,
         },
       ]);
-      setTimeout(() => {
-        viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight, behavior: "smooth" });
-      }, 30);
+      if (activeSessionIdRef.current === variables.sessionId) {
+        setTimeout(() => {
+          viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight, behavior: "smooth" });
+        }, 30);
+      }
     },
-    onError: (error) => {
+    onError: (error, variables) => {
       setMessages((prev) => [
         ...prev,
         {
           id: `${Date.now()}-assistant-error`,
           role: "assistant",
           text: (error as Error).message,
-          sessionId: activeSessionId,
+          sessionId: variables.sessionId,
         },
       ]);
     },
@@ -620,14 +657,16 @@ const AgentChat: React.FC = () => {
   const onSubmit = () => {
     const message = input.trim();
     if (!message) return;
+    const requestSessionId = activeSessionId || `sess_${Date.now()}`;
     setMessages((prev) => [
       ...prev,
-      { id: `${Date.now()}-user`, role: "user", text: message, sessionId: activeSessionId },
+      { id: `${Date.now()}-user`, role: "user", text: message, sessionId: requestSessionId },
     ]);
     setInput("");
     mutation.mutate({
       message: buildScopedMessage(message),
-      history: buildHistory(messages),
+      history: buildHistory(messages, requestSessionId),
+      sessionId: requestSessionId,
       providerOverride: selectedModelOption?.provider,
       modelOverride: selectedModelOption?.model,
     });
@@ -660,6 +699,7 @@ const AgentChat: React.FC = () => {
       modId: number;
       question?: string;
       history: AgentHistoryItem[];
+      sessionId: string;
       providerOverride?: string;
       modelOverride?: string;
     }) =>
@@ -667,14 +707,14 @@ const AgentChat: React.FC = () => {
         providerOverride,
         modelOverride,
       }),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       setMessages((prev) => [
         ...prev,
         {
           id: `${Date.now()}-assistant-detail`,
           role: "assistant",
           text: data.answer,
-          sessionId: activeSessionId,
+          sessionId: variables.sessionId,
           matches: data.matches,
           responseCards: data.response_cards
             ? {
@@ -688,22 +728,35 @@ const AgentChat: React.FC = () => {
           llmModel: data.llm_model,
         },
       ]);
-      setTimeout(() => {
-        viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight, behavior: "smooth" });
-      }, 30);
+      if (activeSessionIdRef.current === variables.sessionId) {
+        setTimeout(() => {
+          viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight, behavior: "smooth" });
+        }, 30);
+      }
     },
   });
 
+  const currentSessionBusy =
+    (mutation.isPending && mutation.variables?.sessionId === activeSessionId) ||
+    (detailMutation.isPending && detailMutation.variables?.sessionId === activeSessionId);
+
+  const selectNextStep = (value: string) => {
+    setInput(value);
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
   const onAskDetail = (mod: AgentModMatch) => {
     const askText = `请详细解析这个 Mod：${mod.title}`;
+    const requestSessionId = activeSessionId || `sess_${Date.now()}`;
     setMessages((prev) => [
       ...prev,
-      { id: `${Date.now()}-user-detail`, role: "user", text: askText, sessionId: activeSessionId },
+      { id: `${Date.now()}-user-detail`, role: "user", text: askText, sessionId: requestSessionId },
     ]);
     detailMutation.mutate({
       modId: mod.id,
       question: askText,
-      history: buildHistory(messages),
+      history: buildHistory(messages, requestSessionId),
+      sessionId: requestSessionId,
       providerOverride: selectedModelOption?.provider,
       modelOverride: selectedModelOption?.model,
     });
@@ -742,26 +795,13 @@ const AgentChat: React.FC = () => {
     const res = await startAgentConversation();
     const nextSessionId = res.session_id;
     setActiveSessionId(nextSessionId);
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}-separator`,
-        role: "separator",
-        text: `新对话 ${new Date().toLocaleString()}`,
-        sessionId: nextSessionId,
-      },
-    ]);
+    setMessages([createWelcomeMessage(nextSessionId, `${Date.now()}-welcome`)]);
   };
 
   const handleConfirmClearScreen = async () => {
     const currentSessionId = activeSessionId || `sess_${Date.now()}`;
     const nextMessages: ChatMessage[] = [
-      {
-        id: `${Date.now()}-assistant-cleared`,
-        role: "assistant",
-        text: t("agent.hint"),
-        sessionId: currentSessionId,
-      },
+      createWelcomeMessage(currentSessionId, `${Date.now()}-assistant-cleared`),
     ];
     try {
       if (saveTimerRef.current) {
@@ -784,7 +824,7 @@ const AgentChat: React.FC = () => {
         {
           id: `${Date.now()}-assistant-clear-error`,
           role: "assistant",
-          text: (error as Error).message || "清屏失败，请重试",
+          text: (error as Error).message || t("agent.clearFailed"),
           sessionId: currentSessionId,
         },
       ]);
@@ -793,37 +833,44 @@ const AgentChat: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#F7F8FA]">
+    <div className="min-h-screen bg-slate-50">
       <div className="flex h-screen">
         <AppSidebar active="agent" />
 
         <main className="flex-1 flex flex-col min-h-0">
-          <div className="border-b border-slate-200 bg-white px-6 py-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-[20px] font-semibold text-slate-900">{t("agent.title")}</h2>
+          <div className="px-6 py-5 lg:px-8">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-3xl font-bold tracking-normal text-slate-950">{t("agent.title")}</h1>
+                  <Sparkles size={24} className="text-blue-600" />
+                </div>
+                <p className="mt-2 text-sm font-semibold text-slate-500">{t("agent.subtitle")}</p>
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setClearConfirmOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[12px] text-amber-800 hover:bg-amber-100"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-red-200 bg-white px-4 text-sm font-bold text-red-500 transition hover:bg-red-50"
                 >
+                  <Trash2 size={16} />
                   {t("agent.clearScreen")}
                 </button>
                 <button
                   type="button"
                   onClick={handleStartNewConversation}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-[12px] text-slate-700 hover:bg-slate-50"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-blue-200 bg-white px-4 text-sm font-bold text-blue-600 transition hover:bg-blue-50"
                 >
-                  <Plus size={12} />
-                  开始新对话
+                  <Plus size={17} />
+                  {t("agent.startNewConversation")}
                 </button>
               </div>
             </div>
           </div>
 
-          <div ref={viewportRef} className="flex-1 overflow-y-auto p-6">
-            <div className="max-w-4xl mx-auto space-y-4">
-              {messages.map((msg) => (
+          <div ref={viewportRef} className="flex-1 overflow-y-auto px-6 pb-6 lg:px-8">
+            <div className="mx-auto max-w-6xl space-y-5">
+              {visibleMessages.map((msg) => (
                 <div key={msg.id}>
                   {msg.role === "separator" ? (
                     <div className="py-2">
@@ -834,12 +881,17 @@ const AgentChat: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                <div className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} ${msg.role === "assistant" ? "gap-4" : ""}`}>
+                  {msg.role === "assistant" && (
+                    <div className="mt-1 hidden h-12 w-12 shrink-0 items-center justify-center rounded-full border border-blue-100 bg-white text-blue-600 shadow-sm md:flex">
+                      <Sparkles size={22} />
+                    </div>
+                  )}
                   <div
                     className={`${
                       msg.role === "user"
-                        ? "w-full max-w-[560px] min-w-0 sm:min-w-[420px]"
-                        : "w-full max-w-[860px]"
+                        ? "w-full max-w-[620px] min-w-0 sm:min-w-[460px]"
+                        : "w-full max-w-[980px]"
                     } ${msg.role === "assistant" ? "space-y-1" : ""}`}
                   >
                     {answerModelLabel(msg) && (
@@ -848,9 +900,9 @@ const AgentChat: React.FC = () => {
                       </div>
                     )}
                     <div
-                      className={`rounded-2xl border px-4 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.05)] ${
+                      className={`rounded-2xl border px-4 py-3 shadow-[0_10px_28px_rgba(15,23,42,0.06)] ${
                       msg.role === "user"
-                        ? "border-indigo-300 bg-indigo-500 text-white"
+                        ? "border-blue-500 bg-blue-600 text-white"
                         : "border-slate-200 bg-white text-slate-900"
                      }`}
                      >
@@ -860,6 +912,7 @@ const AgentChat: React.FC = () => {
                         matchesCount={msg.matches?.length || 0}
                         matches={msg.matches}
                         responseCards={msg.responseCards}
+                        onSelectNextStep={selectNextStep}
                       />
                     ) : (
                       <div className="whitespace-pre-wrap text-[14px]">{msg.text}</div>
@@ -895,7 +948,7 @@ const AgentChat: React.FC = () => {
                   )}
                 </div>
               ))}
-              {(mutation.isPending || detailMutation.isPending) && (
+              {currentSessionBusy && (
                 <div className="flex justify-start">
                   <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[14px] text-slate-500">
                     <Loader2 size={14} className="animate-spin" />
@@ -906,86 +959,108 @@ const AgentChat: React.FC = () => {
             </div>
           </div>
 
-          <div className="border-t border-slate-200 bg-white p-4">
-            <div className="max-w-4xl mx-auto">
-              <div className="flex gap-2">
+          <div className="bg-slate-50 px-6 pb-5 lg:px-8">
+            <div className="mx-auto max-w-6xl rounded-2xl border border-blue-200 bg-white p-4 shadow-[0_12px_32px_rgba(37,99,235,0.08)]">
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-500">
+                <span>{t("agent.quickPromptLabel")}</span>
+                {[t("agent.quickPrompt.male"), t("agent.quickPrompt.recent"), t("agent.quickPrompt.downloads"), t("agent.quickPrompt.outfits")].map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => setInput(prompt)}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-3">
                 <input
+                  ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") onSubmit();
                   }}
                   placeholder={t("agent.placeholder")}
-                  className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-[14px] text-slate-900"
+                  className="h-12 flex-1 rounded-xl border border-slate-300 px-4 text-[15px] text-slate-900 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 />
-                <Button onClick={onSubmit} disabled={mutation.isPending || detailMutation.isPending}>
-                  <Send size={14} />
+                <Button onClick={onSubmit} disabled={mutation.isPending || detailMutation.isPending} className="h-12 w-14 rounded-xl shadow-sm">
+                  <Send size={20} />
                 </Button>
               </div>
-              <div className="mt-2 flex items-center justify-between">
-                <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-500">
-                  <span>{t("agent.model")}</span>
-                  <select
-                    value={selectedModelOption?.key || ""}
-                    onChange={(e) => updateSelectedModel(e.target.value)}
-                    className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[12px] text-slate-700"
-                    disabled={providerDisplays.length === 0 || mutation.isPending || detailMutation.isPending}
-                  >
-                    {providerDisplays.map((item) => (
-                      <option key={item.key} value={item.key}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                  {providerDisplays.length === 0 && (
-                    <span className="text-gray-400">{t("agent.noLlmProviders")}</span>
-                  )}
+              <div className="mt-3">
+                <div className="grid w-full grid-cols-1 gap-3 text-sm text-slate-500 md:grid-cols-2 xl:grid-cols-4">
+                  <label className="space-y-1.5">
+                    <span className="font-semibold">{t("agent.model")}</span>
+                    <select
+                      value={selectedModelOption?.key || ""}
+                      onChange={(e) => updateSelectedModel(e.target.value)}
+                      className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700"
+                      disabled={providerDisplays.length === 0 || mutation.isPending || detailMutation.isPending}
+                    >
+                      {providerDisplays.map((item) => (
+                        <option key={item.key} value={item.key}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                    {providerDisplays.length === 0 && (
+                      <span className="block text-xs text-slate-400">{t("agent.noLlmProviders")}</span>
+                    )}
+                  </label>
 
-                  <span className="ml-2">{t("discover.source")}</span>
-                  <select
-                    value={selectedSource}
-                    onChange={(e) => setSelectedSource(e.target.value as "" | "nexusmods" | "loverslab")}
-                    className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[12px] text-slate-700"
-                    disabled={mutation.isPending || detailMutation.isPending}
-                  >
-                    <option value="">{t("discover.allSources")}</option>
-                    <option value="nexusmods">{t("discover.sourceNexusmods")}</option>
-                    <option value="loverslab">{t("discover.sourceLoverslab")}</option>
-                  </select>
+                  <label className="space-y-1.5">
+                    <span className="font-semibold">{t("discover.source")}</span>
+                    <select
+                      value={selectedSource}
+                      onChange={(e) => setSelectedSource(e.target.value as "" | "nexusmods" | "loverslab")}
+                      className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700"
+                      disabled={mutation.isPending || detailMutation.isPending}
+                    >
+                      <option value="">{t("discover.allSources")}</option>
+                      <option value="nexusmods">{t("discover.sourceNexusmods")}</option>
+                      <option value="loverslab">{t("discover.sourceLoverslab")}</option>
+                    </select>
+                  </label>
 
-                  <span className="ml-2">{t("discover.game")}</span>
-                  <select
-                    value={selectedGame}
-                    onChange={(e) => setSelectedGame(e.target.value)}
-                    className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[12px] text-slate-700"
-                    disabled={mutation.isPending || detailMutation.isPending}
-                  >
-                    <option value="">{t("discover.allGames")}</option>
-                    {(gamesQuery.data || []).map((item) => (
-                      <option key={item.value} value={item.value}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
+                  <label className="space-y-1.5">
+                    <span className="font-semibold">{t("discover.game")}</span>
+                    <select
+                      value={selectedGame}
+                      onChange={(e) => setSelectedGame(e.target.value)}
+                      className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700"
+                      disabled={mutation.isPending || detailMutation.isPending}
+                    >
+                      <option value="">{t("discover.allGames")}</option>
+                      {(gamesQuery.data || []).map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-                  <span className="ml-2">{t("agent.sortField")}</span>
-                  <select
-                    value={selectedSortField}
-                    onChange={(e) =>
-                      setSelectedSortField(
-                        e.target.value as "" | "updated_at_remote" | "downloads" | "endorsements" | "likes" | "relevance",
-                      )
-                    }
-                    className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[12px] text-slate-700"
-                    disabled={mutation.isPending || detailMutation.isPending}
-                  >
-                    <option value="">{t("agent.sortAuto")}</option>
-                    <option value="updated_at_remote">{t("agent.sortUpdatedAt")}</option>
-                    <option value="downloads">{t("mod.downloads")}</option>
-                    <option value="endorsements">{t("mod.endorsements")}</option>
-                    <option value="likes">{t("mod.likes")}</option>
-                    <option value="relevance">{t("agent.sortRelevance")}</option>
-                  </select>
+                  <label className="space-y-1.5">
+                    <span className="font-semibold">{t("agent.sortField")}</span>
+                    <select
+                      value={selectedSortField}
+                      onChange={(e) =>
+                        setSelectedSortField(
+                          e.target.value as "" | "updated_at_remote" | "downloads" | "endorsements" | "likes" | "relevance",
+                        )
+                      }
+                      className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700"
+                      disabled={mutation.isPending || detailMutation.isPending}
+                    >
+                      <option value="">{t("agent.sortAuto")}</option>
+                      <option value="updated_at_remote">{t("agent.sortUpdatedAt")}</option>
+                      <option value="downloads">{t("mod.downloads")}</option>
+                      <option value="endorsements">{t("mod.endorsements")}</option>
+                      <option value="likes">{t("mod.likes")}</option>
+                      <option value="relevance">{t("agent.sortRelevance")}</option>
+                    </select>
+                  </label>
                 </div>
               </div>
             </div>
@@ -993,22 +1068,33 @@ const AgentChat: React.FC = () => {
         </main>
       </div>
       {clearConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
-            <h3 className="text-[18px] font-semibold text-slate-900">{t("agent.clearConfirmTitle")}</h3>
-            <p className="mt-2 text-[14px] leading-6 text-slate-600">{t("agent.clearConfirmBody")}</p>
-            <div className="mt-4 flex justify-end gap-2">
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/20 p-4">
+          <div className="relative w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setClearConfirmOpen(false)}
+              className="absolute right-4 top-4 rounded-full p-1 text-slate-400 hover:bg-slate-50 hover:text-slate-700"
+              aria-label={t("common.close")}
+            >
+              <X size={18} />
+            </button>
+            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-blue-100 bg-blue-50 text-blue-600">
+              <Trash2 size={34} />
+            </div>
+            <h3 className="mt-5 text-xl font-bold text-slate-950">{t("agent.clearConfirmTitle")}</h3>
+            <p className="mt-3 text-sm font-semibold leading-6 text-slate-500">{t("agent.clearConfirmBody")}</p>
+            <div className="mt-6 grid grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={() => setClearConfirmOpen(false)}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-[12px] text-slate-700 hover:bg-slate-50"
+                className="h-11 rounded-lg border border-slate-300 px-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
               >
                 {t("agent.clearConfirmCancel")}
               </button>
               <button
                 type="button"
                 onClick={handleConfirmClearScreen}
-                className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-[12px] font-medium text-amber-800 hover:bg-amber-100"
+                className="h-11 rounded-lg bg-red-500 px-3 text-sm font-bold text-white hover:bg-red-600"
               >
                 {t("agent.clearConfirmAction")}
               </button>

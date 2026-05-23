@@ -1,7 +1,6 @@
 export type ModSource = "nexusmods" | "loverslab";
 export type AdultPolicy = "include" | "exclude" | "only";
 export type SummaryMode = "original" | "translated" | "bilingual";
-export type SortMode = "updated_desc" | "downloads_desc" | "endorsements_desc" | "first_seen_desc";
 export type UILanguage = "zh-CN" | "en-US" | "ja-JP";
 export type LlmProvider =
   | "openai"
@@ -100,6 +99,10 @@ export interface UserSettings {
   watchdogMaxCatchupPerRun: number;
   // Credentials
   nexusApiKey: string;
+  googleSearchApiKey: string;
+  googleSearchEngineId: string;
+  loverslabSearchScrapeEnabled: boolean;
+  loverslabSearchScrapeEngine: "duckduckgo" | "google";
   // LLM
   llmProvider: LlmProvider;
   llmModel: string;
@@ -133,7 +136,7 @@ export type RuleSource = ModSource;
 export type LlmFilterMode = "assist_only" | "must_pass";
 export type NotifyMode = "instant" | "daily_digest" | "weekly_digest";
 export type MissingMetricsPolicy = "pass" | "reject";
-export type AccessMode = "rss" | "page" | "both";
+type AccessMode = "rss" | "page" | "both";
 
 export interface NexusModsRuleConfig {
   gameDomainName: string;
@@ -149,6 +152,7 @@ export interface LoversLabRuleConfig {
   accessMode?: AccessMode;
   feedUrls?: string[];
   pageUrls?: string[];
+  browserProfile?: string;
   updatedSinceDays?: number;
   maxItemsPerRun?: number;
   updateDetection?: "published_time" | "updated_time" | "page_hash";

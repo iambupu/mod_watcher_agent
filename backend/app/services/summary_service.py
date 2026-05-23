@@ -1,14 +1,17 @@
 import asyncio
-import json
 import logging
 from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
-from app.jobs.tracked_jobs import run_tracked_job
 from app.models.mod import Mod
 from app.models.summary import ModSummary
-from app.services.llm_client import DEFAULT_MODELS, create_llm_client
+from app.services.llm_client import create_llm_client
+from app.services.llm_provider_config import (
+    get_provider_chain,
+    provider_config_has_credentials,
+    resolve_provider_config,
+)
 from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
@@ -20,74 +23,49 @@ def load_summary_map(
     mod_ids: list[int],
     language: str,
     summary_type: str,
+    *,
+    fallback_language: str | None = None,
 ) -> dict[int, str]:
+    """加载配置或持久化数据。"""
     if not mod_ids:
         return {}
+    languages = [language]
+    if fallback_language and fallback_language != language:
+        languages.append(fallback_language)
     rows = session.exec(
-        select(ModSummary).where(
+        select(ModSummary)
+        .where(
             ModSummary.mod_id.in_(mod_ids),
-            ModSummary.language == language,
+            ModSummary.language.in_(languages),
             ModSummary.summary_type == summary_type,
         )
+        .order_by(ModSummary.id.desc())
     ).all()
-    return {row.mod_id: row.content for row in rows}
+    primary_by_mod: dict[int, str] = {}
+    fallback_by_mod: dict[int, str] = {}
+    for row in rows:
+        target = primary_by_mod if row.language == language else fallback_by_mod
+        if row.mod_id not in target:
+            target[row.mod_id] = row.content
+    for mod_id, content in fallback_by_mod.items():
+        primary_by_mod.setdefault(mod_id, content)
+    return primary_by_mod
 
 
-async def run_missing_summaries_job(mod_ids: list[int], language: str) -> None:
-    if SUMMARY_GENERATION_LOCK.locked():
-        return
-    async with SUMMARY_GENERATION_LOCK:
-        async def handler(session: Session) -> dict:
-            service = SummaryService(session)
-            count = await service.generate_missing_summaries(
-                mod_ids=mod_ids,
-                language=language,
-            )
-            return {
-                "items_scanned": len(mod_ids),
-                "items_matched": count,
-                "generated": count,
-                "language": language,
-                "mod_ids": mod_ids,
-            }
-
-        await run_tracked_job(
-            "llm_translate_summaries",
-            handler,
-            metadata={"language": language, "mod_ids": mod_ids},
-        )
-
-
-async def run_single_summary_job(
-    mod_id: int,
-    language: str,
-    summary_type: str,
-) -> None:
-    async def handler(session: Session) -> dict:
-        service = SummaryService(session)
-        result = await service.generate_summary(
-            mod_id,
-            language=language,
-            summary_type=summary_type,
-        )
-        generated = 1 if result.get("model") not in ("error", "none") else 0
-        return {
-            "items_scanned": 1,
-            "items_matched": generated,
-            "mod_id": mod_id,
-            "language": language,
-            "summary_type": summary_type,
-            "model": result.get("model"),
-        }
-
-    await run_tracked_job(
-        f"llm_{'regenerate_summary' if summary_type == 'brief' else 'generate_introduction'}",
-        handler,
-        metadata={
-            "mod_id": mod_id,
-            "language": language,
-            "summary_type": summary_type,
-        },
+def load_preferred_brief_summary_map(
+    session: Session,
+    mod_ids: list[int],
+    language: str | None = None,
+) -> dict[int, str]:
+    """加载配置或持久化数据。"""
+    preferred_language = language or SettingsService(session).get("summary_language") or "zh-CN"
+    fallback_language = "en" if preferred_language != "en" else None
+    return load_summary_map(
+        session,
+        mod_ids,
+        preferred_language,
+        "brief",
+        fallback_language=fallback_language,
     )
 
 
@@ -95,32 +73,12 @@ class SummaryService:
     """Service for generating AI-powered mod summaries."""
 
     def __init__(self, session: Session):
+        """初始化实例并保存运行所需的依赖。"""
         self.session = session
 
     def _get_provider_chain(self) -> list[dict]:
-        settings_svc = SettingsService(self.session)
-        raw = settings_svc.get("llm_providers_json") or ""
-        providers: list[dict] = []
-        if raw:
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    providers = [p for p in parsed if isinstance(p, dict) and p.get("enabled")]
-            except json.JSONDecodeError:
-                logger.warning("Invalid llm_providers_json; falling back to legacy LLM settings")
-
-        if not providers:
-            providers = [
-                {
-                    "provider": settings_svc.get("llm_provider") or "openai",
-                    "model": settings_svc.get("llm_model") or "",
-                    "api_key": settings_svc.get("llm_api_key") or "",
-                    "base_url": settings_svc.get("llm_base_url") or "",
-                    "priority": 1,
-                }
-            ]
-
-        return sorted(providers, key=lambda p: int(p.get("priority") or 999))
+        """读取内部状态或派生结果。"""
+        return get_provider_chain(SettingsService(self.session))
 
     async def generate_summary(
         self,
@@ -182,12 +140,9 @@ class SummaryService:
             content = ""
             llm_model = "none"
             for provider_config in self._get_provider_chain():
-                llm_provider = str(provider_config.get("provider") or "openai")
-                llm_api_key = str(provider_config.get("api_key") or "")
-                llm_model = str(provider_config.get("model") or "") or DEFAULT_MODELS.get(llm_provider, "gpt-4o-mini")
-                llm_base_url = str(provider_config.get("base_url") or "")
+                llm_provider, llm_api_key, llm_base_url, llm_model = resolve_provider_config(provider_config)
 
-                if not llm_api_key and llm_provider != "ollama":
+                if not provider_config_has_credentials(provider_config):
                     logger.info("Skipping LLM provider %s because API key is empty", llm_provider)
                     continue
 

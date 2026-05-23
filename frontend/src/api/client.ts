@@ -12,7 +12,6 @@ export class ApiError extends Error {
     this.detail = detail;
   }
 }
-
 export function getSecurityToken(): string {
   return localStorage.getItem(SECURITY_TOKEN_STORAGE_KEY) || "";
 }
@@ -146,19 +145,6 @@ export async function migrateTokenToCookie(): Promise<boolean> {
       }
     }
     return false;
-  } catch {
-    return false;
-  }
-}
-
-export async function checkAuthStatus(): Promise<boolean> {
-  try {
-    const res = await fetch(buildApiUrl("/auth/status"), {
-      credentials: "include",
-    });
-    if (!res.ok) return false;
-    const body = await res.json();
-    return body.authenticated === true;
   } catch {
     return false;
   }

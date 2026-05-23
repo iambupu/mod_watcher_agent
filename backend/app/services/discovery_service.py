@@ -19,9 +19,11 @@ class DiscoveryService:
     """Service for discovering new mods from configured sources."""
 
     def __init__(self, session: Session):
+        """初始化实例并保存运行所需的依赖。"""
         self.session = session
 
     async def discover_from_rule(self, rule_id: int) -> list[dict]:
+        """处理当前模块的业务逻辑并返回结果。"""
         try:
             rule = self.session.get(WatchRule, rule_id)
             if rule is None:
@@ -70,7 +72,6 @@ class DiscoveryService:
                     existing.thumbnail_url = mod_dict.get("thumbnail_url", existing.thumbnail_url)
                     existing.updated_at_remote = mod_dict.get("updated_at_remote", existing.updated_at_remote)
                     self.session.add(existing)
-                    results.append(_mod_to_dict(existing))
                 else:
                     new_mod = Mod(
                         source=mod_dict["source"],
@@ -112,7 +113,6 @@ class DiscoveryService:
                         if existing:
                             existing.last_seen_at = now
                             self.session.add(existing)
-                            results.append(_mod_to_dict(existing))
 
             self.session.commit()
             return results
@@ -124,6 +124,7 @@ class DiscoveryService:
 
 
 def _mod_item_to_dict(item: ModItem) -> dict:
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     raw = item.raw or {}
     game = raw.get("game") if isinstance(raw.get("game"), dict) else {}
     category = item.categories[0] if item.categories and len(item.categories) > 0 else None
@@ -153,6 +154,7 @@ def _mod_item_to_dict(item: ModItem) -> dict:
 
 
 def _mod_to_dict(mod: Mod) -> dict:
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     return {
         "id": mod.id,
         "source": mod.source,

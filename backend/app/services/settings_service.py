@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from sqlmodel import Session, select
 
 from app.models.settings import Setting
+from app.services.llm_provider_config import default_provider_configs
 
 
 class SettingsService:
@@ -12,75 +13,12 @@ class SettingsService:
 
     @staticmethod
     def _default_llm_providers() -> list[dict]:
-        return [
-            {
-                "provider": "ollama",
-                "enabled": True,
-                "priority": 1,
-                "model": os.getenv("LLM_MODEL", "") or "qwen3:8b",
-                "api_key": "",
-                "base_url": os.getenv("LLM_BASE_URL", "") or "http://localhost:11434/v1",
-            },
-            {
-                "provider": "openai",
-                "enabled": False,
-                "priority": 2,
-                "model": "gpt-4o-mini",
-                "api_key": "",
-                "base_url": "https://api.openai.com/v1",
-            },
-            {
-                "provider": "deepseek",
-                "enabled": False,
-                "priority": 3,
-                "model": "deepseek-v4-flash",
-                "api_key": "",
-                "base_url": "https://api.deepseek.com/v1",
-            },
-            {
-                "provider": "siliconflow",
-                "enabled": False,
-                "priority": 4,
-                "model": "Qwen/Qwen3-8B",
-                "api_key": "",
-                "base_url": "https://api.siliconflow.cn/v1",
-            },
-            {
-                "provider": "xai",
-                "enabled": False,
-                "priority": 5,
-                "model": "grok-4.20-reasoning",
-                "api_key": "",
-                "base_url": "https://api.x.ai/v1",
-            },
-            {
-                "provider": "kimi",
-                "enabled": False,
-                "priority": 6,
-                "model": "kimi-k2.6",
-                "api_key": "",
-                "base_url": "https://api.moonshot.cn/v1",
-            },
-            {
-                "provider": "qwen",
-                "enabled": False,
-                "priority": 7,
-                "model": "qwen-plus",
-                "api_key": "",
-                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            },
-            {
-                "provider": "minimax",
-                "enabled": False,
-                "priority": 8,
-                "model": "MiniMax-M2.7",
-                "api_key": "",
-                "base_url": "https://api.minimax.io/v1",
-            },
-        ]
+        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        return default_provider_configs()
 
     @classmethod
     def build_defaults(cls) -> dict[str, str]:
+        """构建后续流程需要的数据结构。"""
         return {
             "game_domain": "skyrimspecialedition",
             "nexus_api_key_configured": "false",
@@ -94,6 +32,10 @@ class SettingsService:
             "watchdog_grace_minutes": "60",
             "watchdog_max_catchup_per_run": "3",
             "nexus_api_key": "",
+            "google_search_api_key": "",
+            "google_search_engine_id": "",
+            "loverslab_search_scrape_enabled": "true",
+            "loverslab_search_scrape_engine": "duckduckgo",
             "openai_api_key": "",
             "telegram_bot_token": "",
             "telegram_chat_id": "",
@@ -119,15 +61,18 @@ class SettingsService:
         }
 
     def __init__(self, session: Session) -> None:
+        """初始化实例并保存运行所需的依赖。"""
         self.session = session
         self.DEFAULTS = self.build_defaults()
 
     def init_defaults(self) -> None:
+        """处理当前模块的业务逻辑并返回结果。"""
         for key, value in self.DEFAULTS.items():
             if self.get(key) is None:
                 self.set(key, value)
 
     def get_all(self, exclude_prefixes: tuple[str, ...] = ()) -> dict[str, str]:
+        """读取并返回对应的数据。"""
         stmt = select(Setting)
         for prefix in exclude_prefixes:
             stmt = stmt.where(Setting.key.notlike(f"{prefix}%"))
@@ -135,10 +80,12 @@ class SettingsService:
         return {row.key: row.value for row in rows}
 
     def get(self, key: str) -> str | None:
+        """读取并返回对应的数据。"""
         row = self.session.exec(select(Setting).where(Setting.key == key)).first()
         return row.value if row else None
 
     def set(self, key: str, value: str) -> None:
+        """处理当前模块的业务逻辑并返回结果。"""
         now = datetime.now(UTC).isoformat()
         existing = self.session.exec(
             select(Setting).where(Setting.key == key)
@@ -152,6 +99,7 @@ class SettingsService:
         self.session.commit()
 
     def set_batch(self, items: dict[str, str]) -> None:
+        """处理当前模块的业务逻辑并返回结果。"""
         now = datetime.now(UTC).isoformat()
         existing_rows = self.session.exec(
             select(Setting).where(Setting.key.in_(list(items.keys())))

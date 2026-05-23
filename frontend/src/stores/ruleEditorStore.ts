@@ -27,6 +27,7 @@ function createEmptyDraft(): RuleEditorDraft {
       accessMode: "rss",
       feedUrls: [],
       pageUrls: [],
+      browserProfile: "loverslab",
       updatedSinceDays: 30,
       maxItemsPerRun: 50,
       updateDetection: "published_time",
@@ -147,12 +148,7 @@ export const useRuleEditorStore = create<RuleEditorState>((set, get) => ({
     const sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig =
       activeSource === "nexusmods"
         ? draft.nexusmodsDraft
-        : {
-            ...draft.loverslabDraft,
-            // 页面抓取因反爬技术问题暂时禁用，仅保留 RSS 模式
-            accessMode: "rss" as const,
-            pageUrls: [],
-          };
+        : draft.loverslabDraft;
     return {
       name: draft.name,
       enabled: draft.enabled,

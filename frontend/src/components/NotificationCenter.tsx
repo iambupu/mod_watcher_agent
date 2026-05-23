@@ -67,6 +67,8 @@ export function NotificationCenter({ open, onClose }: NotificationCenterProps) {
   const channelLabel = (ch: string) => {
     if (ch === "telegram" || ch === "tg") return "Telegram";
     if (ch === "discord" || ch === "dc") return "Discord";
+    if (ch === "desktop") return t("notifications.channelDesktop");
+    if (ch === "all") return "Telegram / Discord";
     return ch;
   };
 
@@ -190,15 +192,31 @@ function NotificationRow({
             <span>{channelLabel(item.channel)}</span>
             <span>·</span>
             <span
-              className={`${
-                item.status === "sent" ? "text-green-600" : "text-red-500"
-              }`}
+              className={statusClassName(item.status)}
+              title={item.error_message || undefined}
             >
-              {item.status === "sent" ? t("notifications.sent") : t("notifications.failed")}
+              {statusLabel(item.status, t)}
             </span>
           </div>
+          {expanded && item.error_message && (
+            <p className="mt-1 text-xs leading-5 text-amber-700">{item.error_message}</p>
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+function statusLabel(status: string, t: (key: string) => string): string {
+  if (status === "sent") return t("notifications.sent");
+  if (status === "pending") return t("notifications.pending");
+  if (status === "skipped") return t("notifications.skipped");
+  return t("notifications.failed");
+}
+
+function statusClassName(status: string): string {
+  if (status === "sent") return "text-green-600";
+  if (status === "pending") return "text-blue-600";
+  if (status === "skipped") return "text-amber-600";
+  return "text-red-500";
 }

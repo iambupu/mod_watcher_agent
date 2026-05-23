@@ -17,14 +17,16 @@ TrackedJobHandler = Callable[[Session], Awaitable[dict[str, Any]]]
 
 
 def utc_now() -> str:
+    """处理当前模块的业务逻辑并返回结果。"""
     return datetime.now(UTC).isoformat()
 
 
-def create_tracked_job(
+def create_job_run_record(
     session: Session,
     job_name: str,
     metadata: dict[str, Any] | None = None,
 ) -> JobRun:
+    """创建并持久化对应的数据。"""
     job_run = JobRun(
         job_name=job_name,
         status="queued",
@@ -37,6 +39,51 @@ def create_tracked_job(
     return job_run
 
 
+def mark_job_running(session: Session, job_run: JobRun) -> None:
+    """标记状态变更并返回结果。"""
+    job_run.status = "running"
+    job_run.started_at = utc_now()
+    session.add(job_run)
+    session.commit()
+
+
+def mark_job_failed(session: Session, job_run: JobRun, exc: Exception) -> str:
+    """标记状态变更并返回结果。"""
+    job_run.status = "failed"
+    job_run.finished_at = utc_now()
+    redacted_error = redact_sensitive_text(str(exc))
+    job_run.error_message = redacted_error
+    session.add(job_run)
+    SystemNotificationService(session).create_event(
+        "job_failed",
+        "任务执行失败",
+        f"{job_run.job_name}: {redacted_error}",
+    )
+    session.commit()
+    return redacted_error
+
+
+def mark_job_succeeded(session: Session, job_run: JobRun, result: dict[str, Any]) -> None:
+    """标记状态变更并返回结果。"""
+    metadata = dict(result)
+    job_run.status = "succeeded"
+    job_run.finished_at = utc_now()
+    job_run.items_scanned = int(metadata.pop("items_scanned", 0) or 0)
+    job_run.items_matched = int(metadata.pop("items_matched", 0) or 0)
+    job_run.metadata_json = json.dumps(metadata, ensure_ascii=False)
+    session.add(job_run)
+    session.commit()
+
+
+def create_tracked_job(
+    session: Session,
+    job_name: str,
+    metadata: dict[str, Any] | None = None,
+) -> JobRun:
+    """创建并持久化对应的数据。"""
+    return create_job_run_record(session, job_name, metadata)
+
+
 async def run_tracked_job(
     job_name: str,
     handler: TrackedJobHandler,
@@ -45,9 +92,7 @@ async def run_tracked_job(
     """Run an async task immediately while recording it in job_runs."""
     with Session(engine) as session:
         job_run = create_tracked_job(session, job_name, metadata=metadata)
-        job_run.status = "running"
-        job_run.started_at = utc_now()
-        session.add(job_run)
+        mark_job_running(session, job_run)
         job_run_id = int(job_run.id)
 
     try:
@@ -58,27 +103,11 @@ async def run_tracked_job(
         with Session(engine) as session:
             job_run = session.get(JobRun, job_run_id)
             if job_run is not None:
-                job_run.status = "failed"
-                job_run.finished_at = utc_now()
-                redacted_error = redact_sensitive_text(str(exc))
-                job_run.error_message = redacted_error
-                session.add(job_run)
-                SystemNotificationService(session).create_event(
-                    "job_failed",
-                    "任务执行失败",
-                    f"{job_name}: {redacted_error}",
-                )
-                session.commit()
+                mark_job_failed(session, job_run, exc)
         raise
 
     with Session(engine) as session:
         job_run = session.get(JobRun, job_run_id)
         if job_run is not None:
-            job_run.status = "succeeded"
-            job_run.finished_at = utc_now()
-            job_run.items_scanned = int(result.get("items_scanned", 0) or 0)
-            job_run.items_matched = int(result.get("items_matched", 0) or 0)
-            job_run.metadata_json = json.dumps(result, ensure_ascii=False)
-            session.add(job_run)
-            session.commit()
+            mark_job_succeeded(session, job_run, result)
     return result
