@@ -1,12 +1,15 @@
 """Tests for FavoriteService."""
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from app.adapters.base import BaseAdapter
 from app.models.favorite import Favorite
 from app.models.mod import Mod
+from app.models.mod_item import ModItem
 from app.models.update_event import ModUpdateEvent
 from app.services.favorite_service import FavoriteService
 
@@ -155,6 +158,71 @@ class TestCheckUpdate:
         reloaded = session.get(Favorite, fav.id)
         assert reloaded.last_known_version == "2.0.0"
         assert reloaded.last_checked_at is not None
+
+    @pytest.mark.asyncio
+    async def test_detects_update_from_mod_item_detail(self, service, mod, session):
+        fav = await service.add_favorite(mod.id)
+        mock_detail = ModItem(
+            source_id="1001",
+            source="nexusmods",
+            name="Test Mod",
+            game="Skyrim Special Edition",
+            url="https://www.nexusmods.com/skyrimspecialedition/mods/1001",
+            updated_at=datetime(2025, 6, 1, 12, 0, tzinfo=UTC),
+            raw={"version": "2.0.0"},
+        )
+        adapter = service._adapter_class()
+        with patch.object(
+            adapter,
+            "fetch_mod_detail",
+            new_callable=AsyncMock,
+            return_value=mock_detail,
+        ), patch.object(service, "_adapter_class", return_value=adapter):
+            result = await service.check_update(fav.id)
+
+        assert result is not None
+        assert result.new_version == "2.0.0"
+        assert result.new_updated_at == "2025-06-01T12:00:00+00:00"
+
+    @pytest.mark.asyncio
+    async def test_loverslab_favorite_uses_source_adapter(self, service, session, monkeypatch):
+        class FakeLoversLabAdapter:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def fetch_mod_detail(self, external_id, game_domain):
+                assert external_id == "ll-file-1001"
+                return ModItem(
+                    source_id=external_id,
+                    source="loverslab",
+                    name="LL Mod",
+                    game="LoversLab",
+                    url="https://www.loverslab.com/files/file/1001-ll-mod/",
+                    updated_at=datetime(2025, 6, 1, 12, 0, tzinfo=UTC),
+                    raw={"version": "2.0.0"},
+                )
+
+        monkeypatch.setitem(BaseAdapter.adapters, "loverslab", FakeLoversLabAdapter)
+        ll_mod = Mod(
+            source="loverslab",
+            external_id="ll-file-1001",
+            game="LoversLab",
+            title="LL Mod",
+            url="https://www.loverslab.com/files/file/1001-ll-mod/",
+            version="1.0.0",
+            updated_at_remote="2025-01-01T00:00:00Z",
+            first_seen_at="2025-01-01T00:00:00Z",
+            last_seen_at="2025-01-01T00:00:00Z",
+        )
+        session.add(ll_mod)
+        session.commit()
+        session.refresh(ll_mod)
+        fav = await service.add_favorite(ll_mod.id)
+
+        result = await service.check_update(fav.id)
+
+        assert result is not None
+        assert result.new_version == "2.0.0"
 
     @pytest.mark.asyncio
     async def test_nonexistent_favorite_raises_valueerror(self, service):

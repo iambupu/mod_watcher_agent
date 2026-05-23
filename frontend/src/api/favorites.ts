@@ -1,6 +1,7 @@
 import { get, post, put, del } from "./client";
 import { fetchMod } from "./mods";
 import type { Favorite, ModItem, UpdateEvent } from "@/types";
+import { hydrateUpdateEvent, type BackendUpdateEvent } from "./updates";
 
 interface BackendFavorite {
   id: number;
@@ -81,9 +82,6 @@ export const fetchFavorites = async (): Promise<Favorite[]> => {
   return Promise.all(raw.map(hydrateFavorite));
 };
 
-export const fetchFavorite = async (id: number): Promise<Favorite> =>
-  hydrateFavorite(await get<BackendFavorite>(`/favorites/${id}`));
-
 export const addFavorite = async (data: {
   mod_id: number;
   tracking_enabled?: boolean;
@@ -102,4 +100,13 @@ export const checkUpdate = (
   favorite_id: number;
   update_detected: boolean;
   update_event: UpdateEvent | null;
-}> => post(`/favorites/${id}/check-update`);
+}> =>
+  post<{
+    favorite_id: number;
+    update_detected: boolean;
+    update_event: BackendUpdateEvent | null;
+  }>(`/favorites/${id}/check-update`).then((result) => ({
+    favorite_id: result.favorite_id,
+    update_detected: result.update_detected,
+    update_event: result.update_event ? hydrateUpdateEvent(result.update_event) : null,
+  }));

@@ -134,6 +134,16 @@ class TestUpdateTrackingService:
         with pytest.raises(ValueError, match="not found"):
             service.mark_seen(9999)
 
+    def test_mark_all_seen_updates_only_unseen(self, service, session):
+        unseen_a = self._create_event(session, seen=False, detected_at="2025-01-01T00:00:00")
+        seen = self._create_event(session, seen=True, detected_at="2025-01-02T00:00:00")
+        unseen_b = self._create_event(session, seen=False, detected_at="2025-01-03T00:00:00")
+
+        assert service.mark_all_seen() == 2
+        assert session.get(ModUpdateEvent, unseen_a.id).seen is True
+        assert session.get(ModUpdateEvent, seen.id).seen is True
+        assert session.get(ModUpdateEvent, unseen_b.id).seen is True
+
     # ── get_unseen_count ──────────────────────────────────────────────
 
     def test_get_unseen_count_zero_when_all_seen(self, service, session):

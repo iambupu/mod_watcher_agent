@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -37,6 +37,16 @@ const Rules: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<WatchRule | null>(null);
   const [runStatus, setRunStatus] = useState<Record<number, string>>({});
   const [isImporting, setIsImporting] = useState(false);
+  const mountedRef = useRef(true);
+  const ruleRunTokensRef = useRef(new Map<number, number>());
+  const localImportInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      ruleRunTokensRef.current.clear();
+    };
+  }, []);
 
   const {
     data: rules = [],
@@ -72,41 +82,46 @@ const Rules: React.FC = () => {
   const runMutation = useMutation({
     mutationFn: runRule,
     onSuccess: (data, ruleId) => {
+      const token = Date.now();
+      ruleRunTokensRef.current.set(ruleId, token);
       setRunStatus((prev) => ({
         ...prev,
-        [ruleId]: `Queued job #${data.job_id}`,
+        [ruleId]: t("jobs.queued", { jobId: data.job_id }),
       }));
-      pollRuleJob(data.job_id, ruleId);
+      pollRuleJob(data.job_id, ruleId, token);
     },
     onError: (err: Error, ruleId) => {
       setRunStatus((prev) => ({
         ...prev,
-        [ruleId]: `Error: ${err.message}`,
+        [ruleId]: t("jobs.failed", { error: err.message }),
       }));
     },
   });
 
-  const pollRuleJob = async (jobId: number, ruleId: number) => {
+  const pollRuleJob = async (jobId: number, ruleId: number, token: number) => {
+    const isCurrentRun = () => mountedRef.current && ruleRunTokensRef.current.get(ruleId) === token;
     for (let i = 0; i < 60; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (!isCurrentRun()) return;
       const job = await fetchJobRun(jobId);
+      if (!isCurrentRun()) return;
       if (job.status === "queued" || job.status === "running") {
         setRunStatus((prev) => ({
           ...prev,
-          [ruleId]: `Job #${jobId} ${job.status}`,
+          [ruleId]: t("jobs.running", { jobId, status: t(`jobs.status.${job.status}`) }),
         }));
         continue;
       }
       if (job.status === "failed") {
         setRunStatus((prev) => ({
           ...prev,
-          [ruleId]: `Error: ${job.error_message || "job failed"}`,
+          [ruleId]: t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }),
         }));
         return;
       }
       setRunStatus((prev) => ({
         ...prev,
-        [ruleId]: `Found ${job.items_matched} new mods`,
+        [ruleId]: t("jobs.foundMods", { count: job.items_matched }),
       }));
       queryClient.invalidateQueries({ queryKey: ["rules"] });
       return;
@@ -148,7 +163,7 @@ const Rules: React.FC = () => {
   }, [recentJobRuns?.items]);
 
   const formatTime = (value?: string) => {
-    if (!value) return "未执行";
+    if (!value) return t("rules.neverRun");
     const normalized = value.includes("T") ? value : value.replace(" ", "T");
     const date = new Date(normalized);
     if (Number.isNaN(date.getTime())) return value;
@@ -179,10 +194,10 @@ const Rules: React.FC = () => {
     setIsImporting(true);
     try {
       const result = await importRulesByUrl(url);
-      alert(`导入完成：成功 ${result.imported}，跳过 ${result.skipped}`);
+      alert(t("rules.importDone", { imported: result.imported, skipped: result.skipped }));
       refreshAfterImport();
     } catch (err) {
-      alert((err as Error).message || "导入失败");
+      alert((err as Error).message || t("rules.importFailed"));
     } finally {
       setIsImporting(false);
     }
@@ -195,10 +210,10 @@ const Rules: React.FC = () => {
     setIsImporting(true);
     try {
       const result = await importRulesFromLocalFile(file);
-      alert(`导入完成：成功 ${result.imported}，跳过 ${result.skipped}`);
+      alert(t("rules.importDone", { imported: result.imported, skipped: result.skipped }));
       refreshAfterImport();
     } catch (err) {
-      alert((err as Error).message || "导入失败");
+      alert((err as Error).message || t("rules.importFailed"));
     } finally {
       setIsImporting(false);
     }
@@ -217,18 +232,26 @@ const Rules: React.FC = () => {
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={handleExport}>
                 <Download size={16} />
-                <span className="ml-1">导出</span>
+                <span className="ml-1">{t("settings.export")}</span>
               </Button>
-              <label className="inline-flex">
-                <input type="file" accept="application/json,.json" className="hidden" onChange={handleImportLocal} />
-                <Button variant="outline" disabled={isImporting}>
-                  <Upload size={16} />
-                  <span className="ml-1">本地导入</span>
-                </Button>
-              </label>
+              <input
+                ref={localImportInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={handleImportLocal}
+              />
+              <Button
+                variant="outline"
+                disabled={isImporting}
+                onClick={() => localImportInputRef.current?.click()}
+              >
+                <Upload size={16} />
+                <span className="ml-1">{t("rules.importLocal")}</span>
+              </Button>
               <Button variant="outline" onClick={handleImportByUrl} disabled={isImporting}>
                 <Link2 size={16} />
-                <span className="ml-1">URL导入</span>
+                <span className="ml-1">{t("rules.importUrl")}</span>
               </Button>
               <Button onClick={() => navigate("/rules/new")}>
                 <Plus size={16} />
@@ -240,12 +263,12 @@ const Rules: React.FC = () => {
           {isLoading ? (
             <div className="text-center py-12">
               <Loader2 size={32} className="animate-spin mx-auto text-gray-400" />
-              <p className="text-gray-500 mt-2">Loading rules...</p>
+              <p className="text-gray-500 mt-2">{t("rules.loading")}</p>
             </div>
           ) : isError ? (
             <div className="text-center py-12">
               <p className="text-red-500">
-                {(error as Error)?.message || "Failed to load rules"}
+                {(error as Error)?.message || t("rules.loadFailed")}
               </p>
               <Button
                 variant="outline"
@@ -254,7 +277,7 @@ const Rules: React.FC = () => {
                   queryClient.invalidateQueries({ queryKey: ["rules"] })
                 }
               >
-                Retry
+                {t("common.retry")}
               </Button>
             </div>
           ) : rules.length === 0 ? (
@@ -282,7 +305,7 @@ const Rules: React.FC = () => {
                             rule.enabled ? "bg-blue-600" : "bg-gray-300"
                           }`}
                           aria-label={
-                            rule.enabled ? "Disable rule" : "Enable rule"
+                            rule.enabled ? t("rules.disableRule") : t("rules.enableRule")
                           }
                         >
                           <span
@@ -301,9 +324,9 @@ const Rules: React.FC = () => {
                             </Badge>
                           </div>
                           <div className="mt-1 text-xs text-gray-500">
-                            最近执行：{formatTime(latestRunByRuleId.get(rule.id))}
+                            {t("rules.lastRun")}: {formatTime(latestRunByRuleId.get(rule.id))}
                             <span className="mx-2">·</span>
-                            执行间隔：{rule.intervalMinutes} 分钟
+                            {t("rules.intervalMinutes", { minutes: rule.intervalMinutes })}
                           </div>
                         </div>
                       </div>
@@ -348,11 +371,10 @@ const Rules: React.FC = () => {
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
               <div className="bg-white rounded-xl p-6 shadow-xl max-w-sm w-full mx-4">
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Delete Rule
+                  {t("rules.deleteTitle")}
                 </h3>
                 <p className="text-sm text-gray-600 mb-4">
-                  Are you sure you want to delete "{deleteTarget.name}"? This
-                  action cannot be undone.
+                  {t("rules.deleteConfirm", { name: deleteTarget.name })}
                 </p>
                 <div className="flex justify-end gap-2">
                   <Button
@@ -360,7 +382,7 @@ const Rules: React.FC = () => {
                     onClick={() => setDeleteTarget(null)}
                     disabled={deleteMutation.isPending}
                   >
-                    Cancel
+                    {t("common.cancel")}
                   </Button>
                   <Button
                     variant="destructive"
@@ -370,7 +392,7 @@ const Rules: React.FC = () => {
                     {deleteMutation.isPending ? (
                       <Loader2 size={14} className="animate-spin" />
                     ) : (
-                      "Delete"
+                      t("common.delete")
                     )}
                   </Button>
                 </div>

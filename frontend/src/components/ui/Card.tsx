@@ -34,12 +34,3 @@ interface CardContentProps {
 export const CardContent: React.FC<CardContentProps> = ({ className = "", children }) => {
   return <div className={`px-4 py-3 ${className}`}>{children}</div>;
 };
-
-interface CardFooterProps {
-  className?: string;
-  children: React.ReactNode;
-}
-
-export const CardFooter: React.FC<CardFooterProps> = ({ className = "", children }) => {
-  return <div className={`px-4 py-3 border-t border-gray-100 ${className}`}>{children}</div>;
-};
