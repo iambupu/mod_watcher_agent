@@ -2,16 +2,17 @@ import asyncio
 import logging
 import random
 import re
-from datetime import UTC, datetime
-from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 from selectolax.parser import HTMLParser
 
 from app.adapters.base import BaseAdapter
+from app.adapters.loverslab_common import loverslab_mod_item_from_raw
 from app.models.mod_item import ModItem
 from app.schemas.watch_rule import LoversLabRuleConfig
+from app.services.browser import BrowserPageFetcher
+from app.services.loverslab.category_parser import parse_category_items
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,12 @@ class LoversLabPageAdapter(BaseAdapter):
     """
 
     def __init__(self, **kwargs):
+        """初始化实例并保存运行所需的依赖。"""
         self._client: httpx.AsyncClient | None = None
+        self._page_fetcher: BrowserPageFetcher = kwargs.get("page_fetcher") or BrowserPageFetcher()
 
     async def _get_client(self) -> httpx.AsyncClient:
+        """读取内部状态或派生结果。"""
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(REQUEST_TIMEOUT),
@@ -51,6 +55,7 @@ class LoversLabPageAdapter(BaseAdapter):
         return self._client
 
     async def _get_allowed_url(self, url: str) -> httpx.Response:
+        """读取内部状态或派生结果。"""
         current_url = self._validate_loverslab_url(url)
         client = await self._get_client()
         for _ in range(5):
@@ -94,19 +99,20 @@ class LoversLabPageAdapter(BaseAdapter):
             if len(all_items) >= config.maxItemsPerRun:
                 break
 
-            try:
-                response = await self._get_allowed_url(page_url)
-                response.raise_for_status()
-            except (ValueError, httpx.HTTPStatusError, httpx.TimeoutException, httpx.RequestError) as exc:
-                logger.warning(
-                    "Failed to fetch listing page %s: %s", page_url, exc
+            result = await self._page_fetcher.fetch_html(
+                page_url,
+                profile_name=config.browserProfile or "loverslab",
+                headless=False,
+            )
+            if result.status != "ok":
+                raise ValueError(
+                    f"LoversLab browser fetch failed for {page_url}: {result.status}"
+                    + (f" ({result.error})" if result.error else "")
                 )
-                continue
-            finally:
-                delay = random.uniform(MIN_DELAY, MAX_DELAY)
-                await asyncio.sleep(delay)
+            if not self._is_allowed_loverslab_url(result.final_url or page_url):
+                raise ValueError(f"Redirected to disallowed host: {result.final_url}")
 
-            html = response.text
+            html = result.html
             if not html or len(html) < 50:
                 logger.warning("Empty listing page HTML for %s", page_url)
                 continue
@@ -116,17 +122,25 @@ class LoversLabPageAdapter(BaseAdapter):
                     "Try accessMode='rss' first, or use a reachable page URL."
                 )
 
-            file_links = self._parse_listing_links(html, page_url)
+            category_items = parse_category_items(
+                html,
+                result.final_url or page_url,
+                game_label=config.gameLabel,
+                max_items=config.maxItemsPerRun - len(all_items),
+            )
+            if not category_items:
+                raise ValueError(
+                    "LoversLab category structure changed: page was reachable, "
+                    "but no /files/file/ items were parsed."
+                )
 
-            for external_id in file_links:
+            for item in category_items:
                 if len(all_items) >= config.maxItemsPerRun:
                     break
-                if external_id in seen_external_ids:
+                if item.source_id in seen_external_ids:
                     continue
-                seen_external_ids.add(external_id)
-                detail = await self.fetch_mod_detail(external_id, config.gameLabel)
-                if detail:
-                    all_items.append(self.normalize(detail))
+                seen_external_ids.add(item.source_id)
+                all_items.append(item)
 
         return all_items
 
@@ -190,25 +204,8 @@ class LoversLabPageAdapter(BaseAdapter):
         return self._parse_page(html, external_id, url, game_domain or "")
 
     def normalize(self, raw_item: dict) -> ModItem:
-        updated_at = self._parse_updated_at(raw_item.get("updated_at_remote"))
-        return ModItem(
-            source_id=raw_item.get("external_id", ""),
-            source=raw_item.get("source", "loverslab"),
-            name=raw_item.get("title", ""),
-            game=raw_item.get("game", ""),
-            url=raw_item.get("url", ""),
-            summary=raw_item.get("original_summary") or "",
-            author=raw_item.get("author") or "",
-            downloads=raw_item.get("downloads") or 0,
-            endorsements=raw_item.get("endorsements") or 0,
-            likes=raw_item.get("likes") or 0,
-            categories=raw_item.get("categories", []),
-            tags=raw_item.get("tags", []),
-            thumbnail_url=raw_item.get("thumbnail_url") or "",
-            updated_at=updated_at,
-            is_adult=raw_item.get("adult_content", False),
-            raw=raw_item,
-        )
+        """规范化输入数据，供后续流程使用。"""
+        return loverslab_mod_item_from_raw(raw_item)
 
     def _parse_listing_links(
         self, html: str, base_url: str
@@ -343,6 +340,7 @@ class LoversLabPageAdapter(BaseAdapter):
         tree: HTMLParser,
         selectors: tuple[str, ...],
     ) -> str | None:
+        """从原始内容中提取目标字段。"""
         for selector in selectors:
             el = tree.css_first(selector)
             if el:
@@ -356,6 +354,7 @@ class LoversLabPageAdapter(BaseAdapter):
         tree: HTMLParser,
         predicate,
     ) -> str | None:
+        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         for selector in ("li", "dt", "span", "div"):
             elements = tree.css(selector)
             for el in elements:
@@ -578,6 +577,7 @@ class LoversLabPageAdapter(BaseAdapter):
 
     @staticmethod
     def _extract_external_id_from_url(url: str) -> str | None:
+        """从原始内容中提取目标字段。"""
         parsed = urlsplit(url)
         host = (parsed.hostname or "").lower()
         if host and host not in ALLOWED_HOSTS:
@@ -589,6 +589,7 @@ class LoversLabPageAdapter(BaseAdapter):
 
     @classmethod
     def _validate_loverslab_url(cls, url: str) -> str:
+        """校验内部输入是否符合业务约束。"""
         normalized = (url or "").strip()
         parsed = urlsplit(normalized)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -599,37 +600,13 @@ class LoversLabPageAdapter(BaseAdapter):
 
     @staticmethod
     def _is_allowed_loverslab_url(url: str) -> bool:
+        """判断内部条件是否成立。"""
         host = (urlsplit(url).hostname or "").lower()
         return host in ALLOWED_HOSTS
 
     @staticmethod
-    def _parse_updated_at(value: Any) -> datetime | None:
-        if isinstance(value, datetime):
-            return value if value.tzinfo else value.replace(tzinfo=UTC)
-        if not isinstance(value, str):
-            return None
-
-        text = value.strip()
-        if not text:
-            return None
-
-        try:
-            iso = text.replace("Z", "+00:00")
-            parsed = datetime.fromisoformat(iso)
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-        except ValueError:
-            pass
-
-        for fmt in ("%b %d, %Y %H:%M", "%b %d, %Y", "%B %d, %Y %H:%M", "%B %d, %Y"):
-            try:
-                return datetime.strptime(text, fmt).replace(tzinfo=UTC)
-            except ValueError:
-                continue
-
-        return None
-
-    @staticmethod
     def _is_cloudflare_challenge_html(html: str) -> bool:
+        """判断内部条件是否成立。"""
         lowered = html.lower()
         return (
             "just a moment..." in lowered

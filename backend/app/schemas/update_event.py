@@ -1,6 +1,8 @@
 
 from pydantic import BaseModel
 
+from app.schemas.mod import ModRead
+
 
 class UpdateEventRead(BaseModel):
     id: int
@@ -15,6 +17,7 @@ class UpdateEventRead(BaseModel):
     detected_at: str
     seen: bool
     translated_summary: str | None = None
+    mod: ModRead | None = None
 
     model_config = {"from_attributes": True}
 

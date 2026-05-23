@@ -1,105 +1,104 @@
 import React from "react";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  LayoutDashboard,
+  BellRing,
+  Bot,
+  Clock,
+  Database,
+  Download,
   Heart,
+  LayoutDashboard,
+  MessageCircle,
+  Pause,
+  Play,
+  RefreshCw,
   SlidersHorizontal,
   Sparkles,
-  RefreshCw,
-  ExternalLink,
-  Download,
+  Star,
   ThumbsUp,
+  TrendingUp,
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import AppSidebar from "@/components/layout/AppSidebar";
+import { MarkdownText } from "@/components/MarkdownText";
+import { SourceBadge } from "@/components/SourceBadge";
 import { fetchStats } from "@/api/stats";
 import type { Stats } from "@/api/stats";
 import { fetchMods } from "@/api/mods";
+import { fetchJobRuns, fetchSchedulerStatus, pauseScheduler, resumeScheduler, runSummaryReport } from "@/api/jobs";
+import type { JobRun } from "@/api/jobs";
+import { fetchSettings } from "@/api/settings";
 import type { ModItem } from "@/types";
-import { runSummaryReport } from "@/api/jobs";
 
 interface StatCardConfig {
   icon: React.ReactNode;
   labelKey: string;
   valueKey: keyof Stats;
-  color: string;
-  bgColor: string;
+  tone: "blue" | "green" | "red" | "purple" | "orange";
+  noteKey: string;
 }
 
 const STAT_CARDS: StatCardConfig[] = [
   {
-    icon: <LayoutDashboard size={20} />,
+    icon: <LayoutDashboard size={24} />,
     labelKey: "dashboard.totalMods",
     valueKey: "total_mods",
-    color: "text-blue-600",
-    bgColor: "bg-blue-50",
+    tone: "blue",
+    noteKey: "dashboard.statNote.totalMods",
   },
   {
-    icon: <Sparkles size={20} />,
+    icon: <TrendingUp size={24} />,
     labelKey: "dashboard.newModsThisWeek",
     valueKey: "new_mods_this_week",
-    color: "text-green-600",
-    bgColor: "bg-green-50",
+    tone: "green",
+    noteKey: "dashboard.statNote.newModsThisWeek",
   },
   {
-    icon: <Heart size={20} />,
+    icon: <Heart size={24} />,
     labelKey: "dashboard.totalFavorites",
     valueKey: "total_favorites",
-    color: "text-red-600",
-    bgColor: "bg-red-50",
+    tone: "red",
+    noteKey: "dashboard.statNote.totalFavorites",
   },
   {
-    icon: <SlidersHorizontal size={20} />,
+    icon: <SlidersHorizontal size={24} />,
     labelKey: "dashboard.watchRules",
     valueKey: "total_rules",
-    color: "text-purple-600",
-    bgColor: "bg-purple-50",
+    tone: "purple",
+    noteKey: "dashboard.statNote.watchRules",
   },
   {
-    icon: <RefreshCw size={20} />,
+    icon: <BellRing size={24} />,
     labelKey: "dashboard.unseenUpdates",
     valueKey: "unseen_updates",
-    color: "text-orange-600",
-    bgColor: "bg-orange-50",
+    tone: "orange",
+    noteKey: "dashboard.statNote.unseenUpdates",
   },
 ];
 
-const StatCard: React.FC<{ config: StatCardConfig; value?: number; loading?: boolean }> = ({
-  config,
-  value,
-  loading,
-}) => {
-  const { t } = useTranslation();
-
-  if (loading) {
-    return (
-      <Card>
-        <CardContent className="flex items-center gap-4 py-4">
-          <div className="p-3 rounded-lg bg-gray-100 animate-pulse">
-            <div className="w-5 h-5 bg-gray-200 rounded" />
-          </div>
-          <div className="flex-1 space-y-2">
-            <div className="h-6 w-12 bg-gray-200 rounded animate-pulse" />
-            <div className="h-4 w-20 bg-gray-200 rounded animate-pulse" />
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <CardContent className="flex items-center gap-4 py-4">
-        <div className={`p-3 rounded-lg ${config.bgColor} ${config.color}`}>{config.icon}</div>
-        <div>
-          <p className="text-2xl font-bold text-gray-900">{value ?? 0}</p>
-          <p className="text-sm text-gray-500">{t(config.labelKey)}</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
+const toneClasses = {
+  blue: {
+    icon: "bg-blue-50 text-blue-600",
+    delta: "text-blue-600",
+  },
+  green: {
+    icon: "bg-emerald-50 text-emerald-600",
+    delta: "text-emerald-600",
+  },
+  red: {
+    icon: "bg-rose-50 text-rose-600",
+    delta: "text-rose-600",
+  },
+  purple: {
+    icon: "bg-purple-50 text-purple-600",
+    delta: "text-purple-600",
+  },
+  orange: {
+    icon: "bg-orange-50 text-orange-600",
+    delta: "text-orange-600",
+  },
 };
 
 function compactNumber(value?: number): string {
@@ -107,59 +106,122 @@ function compactNumber(value?: number): string {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
-function pickSummary(mod: ModItem): string {
-  return mod.translated_summary || mod.original_summary || "";
+function formatTime(value?: string | null): string {
+  if (!value) return "-";
+  return new Date(value).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-const RecommendedModCard: React.FC<{ mod: ModItem }> = ({ mod }) => {
-  const { t } = useTranslation();
-  const summary = pickSummary(mod);
+function formatDateTime(value: Date): string {
+  return value.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
+function jobStatusClass(status: JobRun["status"]): string {
+  if (status === "succeeded") return "bg-emerald-50 text-emerald-700";
+  if (status === "running") return "bg-blue-50 text-blue-700";
+  if (status === "queued") return "bg-slate-100 text-slate-600";
+  return "bg-rose-50 text-rose-700";
+}
+
+function parseJobMetadata(job: JobRun): Record<string, unknown> {
+  if (!job.metadata_json) return {};
+  try {
+    const parsed = JSON.parse(job.metadata_json);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function getJobDisplayName(job: JobRun): string {
+  const ruleName = parseJobMetadata(job).rule_name;
+  return typeof ruleName === "string" && ruleName.trim() ? ruleName : job.job_name;
+}
+
+function getLatestSummaryJob(jobs: JobRun[]): JobRun | undefined {
+  return jobs.find((job) => job.job_name === "llm_summary_report");
+}
+
+function getLatestSummaryReportJob(jobs: JobRun[]): JobRun | undefined {
+  for (const job of jobs) {
+    if (job.job_name !== "llm_summary_report") continue;
+    const report = parseJobMetadata(job).report;
+    if (typeof report === "string" && report.trim()) return job;
+  }
+  return undefined;
+}
+
+const StatCard: React.FC<{ config: StatCardConfig; value?: number; loading?: boolean }> = ({
+  config,
+  value,
+  loading,
+}) => {
+  const { t } = useTranslation();
+  const tone = toneClasses[config.tone];
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-4">
+        <div className={`flex h-16 w-16 items-center justify-center rounded-xl ${tone.icon}`}>
+          {loading ? <div className="h-6 w-6 animate-pulse rounded bg-slate-200" /> : config.icon}
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-500">{t(config.labelKey)}</p>
+          <p className="mt-1 text-3xl font-bold text-slate-950">{loading ? "--" : value ?? 0}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-400">
+            <span className={tone.delta}>{t(config.noteKey)}</span>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RecommendedModCard: React.FC<{ mod: ModItem }> = ({ mod }) => {
   return (
     <a
       href={mod.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="group flex min-h-[150px] flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm transition hover:border-blue-200 hover:shadow-md"
+      className="group min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
     >
-      <div className="flex gap-3 p-3">
-        <div className="h-20 w-24 flex-shrink-0 overflow-hidden rounded-md bg-gray-100">
-          {mod.thumbnail_url ? (
-            <img src={mod.thumbnail_url} alt={mod.title} className="h-full w-full object-cover" loading="lazy" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-gray-300">
-              <Sparkles size={24} />
-            </div>
+      <div className="aspect-[4/3] overflow-hidden bg-slate-100">
+        {mod.thumbnail_url ? (
+          <img src={mod.thumbnail_url} alt={mod.title} className="h-full w-full object-cover" loading="lazy" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-slate-300">
+            <Sparkles size={32} />
+          </div>
+        )}
+      </div>
+      <div className="space-y-2 p-3">
+        <h4 className="line-clamp-2 min-h-10 text-sm font-bold leading-5 text-slate-900 group-hover:text-blue-700">
+          {mod.title}
+        </h4>
+        <p className="truncate text-xs font-semibold text-slate-500">{mod.game || mod.game_domain || "-"}</p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <SourceBadge source={mod.source} />
+          {mod.adult_content && (
+            <span className="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
+              NSFW
+            </span>
           )}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start gap-2">
-            <h4 className="line-clamp-2 text-sm font-semibold text-gray-900 group-hover:text-blue-700">
-              {mod.title}
-            </h4>
-            <ExternalLink size={14} className="mt-0.5 flex-shrink-0 text-gray-400" />
-          </div>
-          <p className="mt-1 truncate text-xs text-gray-500">{mod.game || mod.game_domain || mod.source}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500">
-            {mod.downloads !== undefined && mod.downloads !== null && (
-              <span className="inline-flex items-center gap-1">
-                <Download size={12} />
-                {compactNumber(mod.downloads)}
-              </span>
-            )}
-            {mod.endorsements !== undefined && mod.endorsements !== null && (
-              <span className="inline-flex items-center gap-1">
-                <ThumbsUp size={12} />
-                {compactNumber(mod.endorsements)}
-              </span>
-            )}
-          </div>
+        <div className="flex items-center gap-3 text-xs font-semibold text-slate-400">
+          <span className="inline-flex items-center gap-1">
+            <Download size={12} />
+            {compactNumber(mod.downloads)}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <ThumbsUp size={12} />
+            {compactNumber(mod.endorsements)}
+          </span>
         </div>
-      </div>
-      <div className="border-t border-gray-100 px-3 py-2">
-        <p className="line-clamp-3 text-xs leading-5 text-gray-600">
-          {summary || t("dashboard.llmSummaryNoSummary")}
-        </p>
       </div>
     </a>
   );
@@ -167,9 +229,12 @@ const RecommendedModCard: React.FC<{ mod: ModItem }> = ({ mod }) => {
 
 const Dashboard: React.FC = () => {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [manualSummaryReport, setManualSummaryReport] = React.useState("");
   const [manualSummaryStatus, setManualSummaryStatus] = React.useState("");
-  const { data: stats, isLoading, isError, refetch } = useQuery({
+  const [showSchedulerDialog, setShowSchedulerDialog] = React.useState(false);
+
+  const { data: stats, isLoading: statsLoading, isError: statsError, refetch: refetchStats } = useQuery({
     queryKey: ["stats"],
     queryFn: fetchStats,
   });
@@ -180,14 +245,55 @@ const Dashboard: React.FC = () => {
     refetch: refetchRecommendations,
   } = useQuery({
     queryKey: ["dashboard-recommendations"],
-    queryFn: () => fetchMods({ sortBy: "downloads", sortOrder: "desc", limit: 3 }),
+    queryFn: () => fetchMods({ sortBy: "downloads", sortOrder: "desc", limit: 5 }),
   });
+  const { data: recentJobsData, isError: recentJobsError } = useQuery({
+    queryKey: ["dashboard-job-runs"],
+    queryFn: () => fetchJobRuns(200),
+    refetchInterval: 15000,
+  });
+  const { data: schedulerStatus, isError: schedulerError } = useQuery({
+    queryKey: ["dashboard-scheduler-status"],
+    queryFn: fetchSchedulerStatus,
+    refetchInterval: 30000,
+  });
+  const { data: settings, isError: settingsError } = useQuery({
+    queryKey: ["settings"],
+    queryFn: fetchSettings,
+  });
+
   const recommendedMods = recommendationData?.items ?? [];
-  const summaryText = t("dashboard.llmSummaryBody", {
-    count: recommendedMods.length,
-    total: stats?.total_mods ?? 0,
-    weekly: stats?.new_mods_this_week ?? 0,
-  });
+  const displayStats: Stats = stats ?? {
+    total_mods: recommendationData?.total ?? 0,
+    new_mods_this_week: 0,
+    total_favorites: 0,
+    total_rules: 0,
+    unseen_updates: 0,
+  };
+  const showStatsLoading = statsLoading && recommendationData === undefined;
+  const focusMods = recommendedMods.slice(0, 4);
+  const recentJobs = recentJobsData?.items ?? [];
+  const latestSummaryJob = getLatestSummaryJob(recentJobs);
+  const latestSummaryReportJob = getLatestSummaryReportJob(recentJobs);
+  const latestSummaryReport = latestSummaryReportJob ? String(parseJobMetadata(latestSummaryReportJob).report || "") : "";
+  const contentSummary = manualSummaryReport || latestSummaryReport;
+  const latestSummaryJobMetadata = latestSummaryJob ? parseJobMetadata(latestSummaryJob) : {};
+  const latestSummaryGenerated = latestSummaryJobMetadata.generated === true;
+  const latestSummaryNoContent = latestSummaryJob && !latestSummaryGenerated;
+  const contentSummarySource = manualSummaryReport
+    ? t("dashboard.summarySourceManual")
+    : latestSummaryNoContent
+      ? t("dashboard.summarySourceScheduledNoContent", {
+          time: formatTime(latestSummaryJob.finished_at || latestSummaryJob.started_at),
+        })
+      : latestSummaryReportJob
+      ? t("dashboard.summarySourceScheduled", {
+          time: formatTime(latestSummaryReportJob.finished_at || latestSummaryReportJob.started_at),
+        })
+      : t("dashboard.summarySourcePending");
+  const activeProvider = settings?.llmProviders
+    ?.filter((provider) => provider.enabled)
+    .sort((a, b) => a.priority - b.priority)[0];
 
   const summaryReportMutation = useMutation({
     mutationFn: runSummaryReport,
@@ -229,127 +335,453 @@ const Dashboard: React.FC = () => {
     },
   });
 
+  const schedulerMutation = useMutation({
+    mutationFn: (nextRunning: boolean) => (nextRunning ? resumeScheduler() : pauseScheduler()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["dashboard-scheduler-status"] });
+    },
+  });
+
+  const refreshDashboard = () => {
+    refetchStats();
+    refetchRecommendations();
+    queryClient.invalidateQueries({ queryKey: ["dashboard-job-runs"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-scheduler-status"] });
+    queryClient.invalidateQueries({ queryKey: ["settings"] });
+  };
+
+  const visibleRecentJobs = recentJobs.slice(0, 5);
+  const visibleSchedulerJobs = [...(schedulerStatus?.jobs ?? [])]
+    .sort((a, b) => {
+      if (!a.next_run_time) return 1;
+      if (!b.next_run_time) return -1;
+      return new Date(a.next_run_time).getTime() - new Date(b.next_run_time).getTime();
+    })
+    .slice(0, 5);
+  const sortedSchedulerJobs = [...(schedulerStatus?.jobs ?? [])].sort((a, b) => {
+    if (!a.next_run_time) return 1;
+    if (!b.next_run_time) return -1;
+    return new Date(a.next_run_time).getTime() - new Date(b.next_run_time).getTime();
+  });
+  const systemItems = [
+    {
+      label: "Nexus Mods API",
+      detail: statsError ? t("dashboard.statusUnavailable") : t("dashboard.statusReachable"),
+      ok: !statsError,
+    },
+    {
+      label: "Mod Database",
+      detail: recommendationsError ? t("dashboard.statusUnavailable") : t("dashboard.statusReachable"),
+      ok: !recommendationsError,
+    },
+    {
+      label: activeProvider
+        ? t("dashboard.llmServiceWithModel", { provider: activeProvider.provider, model: activeProvider.model || "-" })
+        : t("dashboard.llmService"),
+      detail: settingsError ? t("dashboard.statusUnavailable") : t("dashboard.statusConfigured"),
+      ok: !settingsError && Boolean(activeProvider),
+    },
+    {
+      label: t("dashboard.schedulerJobs"),
+      detail: schedulerStatus?.running
+        ? t("dashboard.nextJobsCount", { count: schedulerStatus.jobs.length })
+        : t("dashboard.schedulerPaused"),
+      ok: !schedulerError && Boolean(schedulerStatus?.running),
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50">
       <div className="flex h-screen">
         <AppSidebar active="dashboard" />
 
-        <main className="flex-1 overflow-y-auto p-6">
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold text-gray-900">{t("dashboard.welcome")}</h2>
-            <p className="text-sm text-gray-500 mt-1">{t("dashboard.welcomeDesc")}</p>
-          </div>
+        <main className="flex-1 overflow-y-auto">
+          <div className="space-y-5 px-6 py-6 lg:px-8">
+            <header className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-3xl font-bold tracking-normal text-slate-950">{t("dashboard.workbenchTitle")}</h1>
+                  <Sparkles size={24} className="text-blue-600" />
+                </div>
+                <p className="mt-2 text-sm font-semibold text-slate-500">{t("dashboard.workbenchDesc")}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm font-semibold text-slate-600">{formatDateTime(new Date())}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-sm"
+                  onClick={refreshDashboard}
+                >
+                  <RefreshCw size={17} />
+                  <span className="ml-2">{t("dashboard.refreshData")}</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-sm"
+                  onClick={() => schedulerMutation.mutate(!(schedulerStatus?.running ?? false))}
+                  disabled={schedulerMutation.isPending || schedulerError}
+                >
+                  {schedulerStatus?.running ? <Pause size={17} /> : <Play size={17} />}
+                  <span className="ml-2">
+                    {schedulerStatus?.running ? t("dashboard.pauseScheduler") : t("dashboard.resumeScheduler")}
+                  </span>
+                </Button>
+              </div>
+            </header>
 
-          {isError ? (
-            <Card>
-              <CardContent className="flex flex-col items-center gap-3 py-8">
-                <p className="text-sm text-gray-500">{t("dashboard.loadFailed")}</p>
-                <Button variant="outline" size="sm" onClick={() => refetch()}>
+            {statsError ? (
+              <div className="rounded-lg border border-rose-100 bg-white px-4 py-6 text-center shadow-sm">
+                <p className="text-sm font-semibold text-slate-500">{t("dashboard.loadFailed")}</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={() => refetchStats()}>
                   <RefreshCw size={14} className="mr-1.5" />
                   {t("dashboard.retry")}
                 </Button>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-              {STAT_CARDS.map((card) => (
-                <StatCard
-                  key={card.valueKey}
-                  config={card}
-                  value={stats?.[card.valueKey]}
-                  loading={isLoading}
-                />
-              ))}
-            </div>
-          )}
-
-          <section className="mt-6 space-y-4">
-            <div>
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Sparkles size={18} className="text-blue-600" />
-                  <h3 className="text-lg font-semibold text-gray-900">{t("dashboard.llmSummaryTitle")}</h3>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => summaryReportMutation.mutate()}
-                  disabled={summaryReportMutation.isPending}
-                >
-                  {summaryReportMutation.isPending ? (
-                    <RefreshCw size={14} className="mr-1.5 animate-spin" />
-                  ) : (
-                    <Sparkles size={14} className="mr-1.5" />
-                  )}
-                  {t("dashboard.summaryGenerateNow")}
-                </Button>
               </div>
-              <p className="mt-1 text-sm text-gray-500">{t("dashboard.llmSummarySubtitle")}</p>
-            </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                {STAT_CARDS.map((card) => (
+                  <StatCard
+                    key={card.valueKey}
+                    config={card}
+                    value={displayStats[card.valueKey]}
+                    loading={showStatsLoading}
+                  />
+                ))}
+              </div>
+            )}
 
-            <Card>
-              <CardContent className="space-y-4 py-5">
-                <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3">
-                  <p className="text-sm font-medium text-blue-900">{t("dashboard.llmSummaryExplanation")}</p>
-                  <p className="mt-1 text-sm leading-6 text-blue-800">{summaryText}</p>
+            <div className="grid gap-5">
+              <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={22} className="text-blue-600" />
+                    <h2 className="text-xl font-bold text-slate-950">{t("dashboard.intelSummary")}</h2>
+                    <span className="text-xs font-semibold text-slate-400">{t("dashboard.lastAnalysis")}</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="bg-slate-50 text-slate-700 hover:bg-slate-100"
+                    onClick={() => summaryReportMutation.mutate()}
+                    disabled={summaryReportMutation.isPending}
+                  >
+                    <RefreshCw size={14} className={summaryReportMutation.isPending ? "mr-1.5 animate-spin" : "mr-1.5"} />
+                    {t("dashboard.rerunAnalysis")}
+                  </Button>
+                </div>
+
+                <div className="min-w-0 rounded-lg border border-indigo-100 bg-indigo-50/60 p-4">
+                  <div className="mb-2 flex items-center gap-2 text-indigo-700">
+                    <MessageCircle size={20} />
+                    <h3 className="font-bold">{t("dashboard.contentSummary")}</h3>
+                    <span className="rounded-md border border-indigo-100 bg-white/80 px-2 py-0.5 text-xs font-semibold text-indigo-600">
+                      {contentSummarySource}
+                    </span>
+                  </div>
+                  <MarkdownText
+                    className="text-sm font-medium text-slate-700"
+                    text={contentSummary || t("dashboard.summaryReportNotGenerated", {
+                      total: displayStats.total_mods,
+                      weekly: displayStats.new_mods_this_week,
+                    })}
+                  />
                 </div>
 
                 {(manualSummaryStatus || manualSummaryReport) && (
-                  <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-3">
+                  <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-3">
                     {manualSummaryStatus && (
-                      <p className="text-xs font-medium text-indigo-800">{manualSummaryStatus}</p>
-                    )}
-                    {manualSummaryReport && (
-                      <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-indigo-900">
-                        {manualSummaryReport}
-                      </p>
+                      <p className="text-xs font-semibold text-indigo-800">{manualSummaryStatus}</p>
                     )}
                   </div>
                 )}
+              </section>
 
-                <div>
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <h4 className="text-sm font-semibold text-gray-900">{t("dashboard.recommendedMods")}</h4>
-                    {recommendationsError && (
-                      <Button variant="outline" size="sm" onClick={() => refetchRecommendations()}>
-                        <RefreshCw size={14} className="mr-1.5" />
-                        {t("dashboard.retry")}
-                      </Button>
-                    )}
-                  </div>
+            </div>
 
-                  {recommendationsLoading ? (
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                      {[0, 1, 2].map((item) => (
-                        <div key={item} className="h-40 rounded-lg border border-gray-200 bg-white p-3">
-                          <div className="flex gap-3">
-                            <div className="h-20 w-24 animate-pulse rounded-md bg-gray-100" />
-                            <div className="flex-1 space-y-2">
-                              <div className="h-4 w-3/4 animate-pulse rounded bg-gray-100" />
-                              <div className="h-3 w-1/2 animate-pulse rounded bg-gray-100" />
-                              <div className="h-3 w-2/3 animate-pulse rounded bg-gray-100" />
+            <div className="grid gap-5 xl:grid-cols-3">
+              <section className="rounded-lg border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-5 shadow-sm">
+                <div className="mb-4 flex items-center gap-2 text-blue-700">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
+                    <Star size={18} />
+                  </span>
+                  <h2 className="text-xl font-bold">{t("dashboard.focusMods")}</h2>
+                </div>
+                {focusMods.length > 0 ? (
+                  <ol className="space-y-3">
+                    {focusMods.map((mod, index) => {
+                      const gameLabel = mod.game || mod.game_domain || "-";
+                      const socialCount = mod.endorsements ?? mod.likes;
+
+                      return (
+                        <li key={mod.id} className="rounded-lg border border-blue-100 bg-white/90 p-3 shadow-sm">
+                          <div className="flex items-start gap-3">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">
+                              {index + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <SourceBadge source={mod.source} />
+                                <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                                  {gameLabel}
+                                </span>
+                                {mod.adult_content && (
+                                  <span className="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-bold text-rose-700">
+                                    NSFW
+                                  </span>
+                                )}
+                              </div>
+                              <a
+                                href={mod.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={mod.title}
+                                className="mt-2 block truncate text-sm font-bold text-slate-950 hover:text-blue-700"
+                              >
+                                {mod.title}
+                              </a>
+                              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
+                                <span className="inline-flex items-center gap-1">
+                                  <Download size={12} />
+                                  {compactNumber(mod.downloads)}
+                                </span>
+                                <span className="inline-flex items-center gap-1">
+                                  <ThumbsUp size={12} />
+                                  {compactNumber(socialCount)}
+                                </span>
+                              </div>
                             </div>
+                            <span className="shrink-0 rounded-md bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">
+                              {index % 2 === 0 ? t("dashboard.newTag") : t("dashboard.updatedTag")}
+                            </span>
                           </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                ) : (
+                  <p className="rounded-lg bg-slate-50 px-3 py-4 text-sm font-semibold text-slate-500">
+                    {t("dashboard.noRecommendations")}
+                  </p>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-xl font-bold text-slate-950">{t("dashboard.systemStatus")}</h2>
+                  <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                    {systemItems.every((item) => item.ok) ? t("dashboard.allNormal") : t("dashboard.needsAttention")}
+                  </span>
+                </div>
+                <div className="space-y-4">
+                  {systemItems.map((item) => (
+                    <div key={item.label} className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-50 text-slate-500">
+                        {item.label === "Mod Database" ? <Database size={18} /> : <Clock size={18} />}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-bold text-slate-800">{item.label}</p>
+                        <p className="truncate text-xs font-semibold text-slate-400">{item.detail}</p>
+                      </div>
+                      <span className={`h-2.5 w-2.5 rounded-full ${item.ok ? "bg-emerald-500" : "bg-rose-500"}`} />
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-5 rounded-lg border border-slate-100 bg-slate-50/80 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <p className="text-sm font-bold text-slate-800">{t("dashboard.schedulerPreview")}</p>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="rounded-md bg-white px-2 py-0.5 text-xs font-bold text-slate-500">
+                        {t("common.total", { total: schedulerStatus?.jobs.length ?? 0 })}
+                      </span>
+                      {sortedSchedulerJobs.length > visibleSchedulerJobs.length && (
+                        <button
+                          type="button"
+                          onClick={() => setShowSchedulerDialog(true)}
+                          className="rounded-md bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-600 hover:bg-blue-100"
+                        >
+                          {t("dashboard.schedulerMore")}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {schedulerError ? (
+                    <p className="rounded-md bg-white px-3 py-3 text-sm font-semibold text-slate-500">
+                      {t("dashboard.schedulerPreviewFailed")}
+                    </p>
+                  ) : visibleSchedulerJobs.length > 0 ? (
+                    <div className="space-y-2">
+                      {visibleSchedulerJobs.map((job) => (
+                        <div key={job.id} className="flex items-center gap-3 rounded-md bg-white px-3 py-2">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600">
+                            <Clock size={15} />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-bold text-slate-800" title={job.name}>
+                              {job.name}
+                            </p>
+                            <p className="truncate text-xs font-semibold text-slate-400">
+                              {job.id}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-xs font-bold text-slate-500">
+                            {formatTime(job.next_run_time)}
+                          </span>
                         </div>
                       ))}
                     </div>
-                  ) : recommendedMods.length > 0 ? (
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                      {recommendedMods.map((mod) => (
-                        <RecommendedModCard key={mod.id} mod={mod} />
-                      ))}
-                    </div>
                   ) : (
-                    <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center">
-                      <p className="text-sm text-gray-500">{t("dashboard.noRecommendations")}</p>
-                    </div>
+                    <p className="rounded-md bg-white px-3 py-3 text-sm font-semibold text-slate-500">
+                      {t("dashboard.noScheduledJobs")}
+                    </p>
                   )}
                 </div>
-              </CardContent>
-            </Card>
-          </section>
+              </section>
+
+              <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-xl font-bold text-slate-950">{t("dashboard.recentTasks")}</h2>
+                  <Link to="/logs?tab=finished" className="text-sm font-bold text-blue-600 hover:text-blue-700">
+                    {t("dashboard.viewAll")} →
+                  </Link>
+                </div>
+                {recentJobsError ? (
+                  <p className="rounded-lg bg-slate-50 px-3 py-4 text-sm font-semibold text-slate-500">
+                    {t("dashboard.tasksLoadFailed")}
+                  </p>
+                ) : visibleRecentJobs.length > 0 ? (
+                  <div className="divide-y divide-slate-100">
+                    {visibleRecentJobs.map((job) => (
+                      <div key={job.id} className="flex items-center gap-3 py-3">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                          <Database size={16} />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-bold text-slate-800">{getJobDisplayName(job)}</p>
+                          <p className="truncate text-xs font-semibold text-slate-400">
+                            {getJobDisplayName(job) === job.job_name ? "" : `${job.job_name} · `}
+                            {t("dashboard.taskMeta", { scanned: job.items_scanned, matched: job.items_matched })}
+                          </p>
+                        </div>
+                        <span className={`rounded-md px-2.5 py-1 text-xs font-bold ${jobStatusClass(job.status)}`}>
+                          {job.status}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-400">{formatTime(job.finished_at || job.started_at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded-lg bg-slate-50 px-3 py-4 text-sm font-semibold text-slate-500">
+                    {t("dashboard.noRecentTasks")}
+                  </p>
+                )}
+              </section>
+            </div>
+
+            <div className="grid gap-5">
+              <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-xl font-bold text-slate-950">{t("dashboard.recommendedMods")}</h2>
+                  <Link to="/discover" className="text-sm font-bold text-blue-600 hover:text-blue-700">
+                    {t("dashboard.viewAll")} →
+                  </Link>
+                </div>
+                {recommendationsLoading ? (
+                  <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+                    {[0, 1, 2, 3, 4].map((item) => (
+                      <div key={item} className="h-64 animate-pulse rounded-lg bg-slate-100" />
+                    ))}
+                  </div>
+                ) : recommendedMods.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+                    {recommendedMods.map((mod) => (
+                      <RecommendedModCard key={mod.id} mod={mod} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center">
+                    <p className="text-sm font-semibold text-slate-500">{t("dashboard.noRecommendations")}</p>
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <section className="flex flex-col gap-4 rounded-lg border border-blue-200 bg-blue-50/60 p-5 shadow-sm md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-4">
+                <span className="flex h-14 w-14 items-center justify-center rounded-xl border border-blue-100 bg-white text-blue-600 shadow-sm">
+                  <Bot size={28} />
+                </span>
+                <div>
+                  <h2 className="text-xl font-bold text-blue-700">{t("dashboard.agentTitle")}</h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">{t("dashboard.agentDesc")}</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="rounded-lg border border-blue-100 bg-white px-4 py-2 text-sm font-semibold text-slate-600">
+                  {t("dashboard.agentPrompt1")}
+                </span>
+                <span className="rounded-lg border border-blue-100 bg-white px-4 py-2 text-sm font-semibold text-slate-600">
+                  {t("dashboard.agentPrompt2")}
+                </span>
+                <Link to="/agent">
+                  <Button className="h-11 rounded-lg px-5">
+                    <MessageCircle size={17} />
+                    <span className="ml-2">{t("dashboard.startChat")}</span>
+                  </Button>
+                </Link>
+              </div>
+            </section>
+          </div>
         </main>
       </div>
+      {showSchedulerDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="max-h-[82vh] w-full max-w-2xl overflow-hidden rounded-lg bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-950">{t("dashboard.schedulerPreview")}</h2>
+                <p className="mt-1 text-sm font-semibold text-slate-500">
+                  {t("common.total", { total: sortedSchedulerJobs.length })}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSchedulerDialog(false)}
+                className="rounded-md px-3 py-1.5 text-sm font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                {t("common.close")}
+              </button>
+            </div>
+            <div className="max-h-[64vh] overflow-y-auto p-4">
+              {sortedSchedulerJobs.length > 0 ? (
+                <div className="space-y-2">
+                  {sortedSchedulerJobs.map((job) => (
+                    <div key={job.id} className="flex items-center gap-3 rounded-lg border border-slate-100 px-3 py-3">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600">
+                        <Clock size={16} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-bold text-slate-900" title={job.name}>
+                          {job.name}
+                        </p>
+                        <p className="truncate text-xs font-semibold text-slate-400">{job.id}</p>
+                      </div>
+                      <span className="shrink-0 rounded-md bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-600">
+                        {formatTime(job.next_run_time)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-lg bg-slate-50 px-3 py-6 text-center text-sm font-semibold text-slate-500">
+                  {t("dashboard.noScheduledJobs")}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

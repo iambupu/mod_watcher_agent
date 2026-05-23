@@ -1,9 +1,15 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NotificationSection } from "./NotificationSection";
 import { RuleEditorActions } from "./RuleEditorActions";
 import { useRuleEditorStore } from "@/stores/ruleEditorStore";
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+  }),
+}));
 
 const DEFAULT_STATE = {
   draft: {

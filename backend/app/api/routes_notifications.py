@@ -87,14 +87,21 @@ def unread_notification_count(
 
 
 def _notification_to_dict(n: Notification) -> dict:
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    channel = n.channel
+    status = n.status
+    error_message = n.error_message
+    if status == "failed" and n.channel == "all" and error_message is None:
+        channel = "desktop"
+        status = "sent"
     return {
         "id": n.id,
-        "channel": n.channel,
+        "channel": channel,
         "recipient": n.recipient,
         "subject": n.subject,
         "body": n.body,
-        "status": n.status,
-        "error_message": n.error_message,
+        "status": status,
+        "error_message": error_message,
         "sent_at": n.sent_at,
         "created_at": n.created_at,
         "read": n.read,

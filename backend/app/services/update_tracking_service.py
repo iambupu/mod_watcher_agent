@@ -7,6 +7,7 @@ class UpdateTrackingService:
     """Dedicated service for querying and managing update events."""
 
     def __init__(self, session: Session):
+        """初始化实例并保存运行所需的依赖。"""
         self.session = session
 
     def get_events(
@@ -46,6 +47,17 @@ class UpdateTrackingService:
         self.session.commit()
         self.session.refresh(event)
         return event
+
+    def mark_all_seen(self) -> int:
+        """Mark all unseen update events as seen and return updated count."""
+        events = self.session.exec(
+            select(ModUpdateEvent).where(ModUpdateEvent.seen == False)  # noqa: E712
+        ).all()
+        for event in events:
+            event.seen = True
+            self.session.add(event)
+        self.session.commit()
+        return len(events)
 
     def get_unseen_count(self) -> int:
         """Get count of unseen update events."""

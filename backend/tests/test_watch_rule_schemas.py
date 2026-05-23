@@ -81,6 +81,7 @@ class TestLoversLabRuleConfig:
         assert cfg.updatedSinceDays is None
         assert cfg.maxItemsPerRun == 50
         assert cfg.updateDetection == "published_time"
+        assert cfg.browserProfile == "loverslab"
 
     def test_valid_full_loverslab_config(self):
         """Full LoversLab config with feed URLs and custom settings."""
@@ -348,6 +349,35 @@ class TestWatchRuleCreate:
                 source="nexusmods",
             )
 
+    def test_source_config_must_match_source_on_create(self):
+        """sourceConfig must be the schema that belongs to source."""
+        from app.schemas.watch_rule import (
+            LoversLabRuleConfig,
+            NexusModsRuleConfig,
+            WatchRuleCreate,
+        )
+
+        with pytest.raises(ValidationError):
+            WatchRuleCreate(
+                name="mismatched ll config",
+                source="nexusmods",
+                sourceConfig=LoversLabRuleConfig(
+                    gameLabel="Skyrim SE",
+                    accessMode="rss",
+                    feedUrls=["https://www.loverslab.com/files/rss/"],
+                ),
+            )
+
+        with pytest.raises(ValidationError):
+            WatchRuleCreate(
+                name="mismatched nexus config",
+                source="loverslab",
+                sourceConfig=NexusModsRuleConfig(
+                    gameDomainName="skyrimspecialedition",
+                    updatedSinceDays=7,
+                ),
+            )
+
     def test_defaults_on_create(self):
         """Default values for enabled, filters, notification on create."""
         from app.schemas.watch_rule import (
@@ -389,6 +419,20 @@ class TestWatchRuleUpdate:
         update = WatchRuleUpdate(name="Renamed Rule")
         assert update.name == "Renamed Rule"
         assert update.enabled is None
+
+    def test_update_source_config_must_match_source_when_both_supplied(self):
+        """WatchRuleUpdate validates source/sourceConfig when both are present."""
+        from app.schemas.watch_rule import LoversLabRuleConfig, WatchRuleUpdate
+
+        with pytest.raises(ValidationError):
+            WatchRuleUpdate(
+                source="nexusmods",
+                sourceConfig=LoversLabRuleConfig(
+                    gameLabel="Skyrim SE",
+                    accessMode="rss",
+                    feedUrls=["https://www.loverslab.com/files/rss/"],
+                ),
+            )
 
 
 class TestWatchRuleRead:

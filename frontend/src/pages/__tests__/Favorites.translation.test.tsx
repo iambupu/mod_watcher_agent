@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { useUIStore } from '@/stores/uiStore';
 import * as favoritesApi from '@/api/favorites';
 import Favorites from '@/pages/Favorites';
@@ -64,7 +65,9 @@ describe('Favorites - translated_summary display', () => {
   function renderFavorites() {
     return render(
       <QueryClientProvider client={queryClient}>
-        <Favorites />
+        <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+          <Favorites />
+        </MemoryRouter>
       </QueryClientProvider>,
     );
   }

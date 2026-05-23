@@ -4,9 +4,10 @@ import json
 from unittest.mock import patch
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.adapters.base import BaseAdapter
+from app.models.mod import Mod
 from app.models.mod_item import ModItem
 from app.models.watch_rule import WatchRule
 from app.services.discovery_service import DiscoveryService
@@ -226,3 +227,62 @@ class TestDiscoverNexusmodsRule:
         results = await service.discover_from_rule(rule.id)
 
         assert results == []
+
+    @pytest.mark.asyncio
+    async def test_discover_existing_mod_updates_seen_but_does_not_return_new_mod(self, session):
+        """Existing matches should not be reported as newly discovered."""
+        BaseAdapter.adapters["nexusmods"] = _make_mock_adapter(
+            "nexusmods",
+            [_make_mod_item(source_id="2001", source="nexusmods", name="Sword Mod")],
+        )
+        session.add(
+            Mod(
+                source="nexusmods",
+                external_id="2001",
+                game="Skyrim Special Edition",
+                title="Old Sword Mod",
+                url="https://example.com/mods/1001",
+                first_seen_at="2025-01-01T00:00:00+00:00",
+                last_seen_at="2025-01-01T00:00:00+00:00",
+            )
+        )
+        session.commit()
+        rule = _create_rule(session, "nexus-rule", source="nexusmods")
+
+        with patch(
+            "app.services.discovery_service.FilterService.apply_filters",
+            return_value=[
+                {
+                    "source": "nexusmods",
+                    "external_id": "2001",
+                    "title": "Sword Mod",
+                    "game": "Skyrim Special Edition",
+                    "game_domain": None,
+                    "url": "https://example.com/mods/1001",
+                    "author": "TestAuthor",
+                    "category": None,
+                    "version": None,
+                    "created_at_remote": None,
+                    "updated_at_remote": None,
+                    "published_at_remote": None,
+                    "downloads": 0,
+                    "unique_downloads": None,
+                    "endorsements": 0,
+                    "views": None,
+                    "likes": 0,
+                    "adult_content": False,
+                    "thumbnail_url": "",
+                    "original_summary": "A test mod.",
+                }
+            ],
+        ):
+            service = DiscoveryService(session)
+            results = await service.discover_from_rule(rule.id)
+
+        assert results == []
+        existing = session.exec(
+            select(Mod).where(Mod.source == "nexusmods", Mod.external_id == "2001")
+        ).one()
+        assert existing is not None
+        assert existing.title == "Sword Mod"
+        assert existing.last_seen_at != "2025-01-01T00:00:00+00:00"

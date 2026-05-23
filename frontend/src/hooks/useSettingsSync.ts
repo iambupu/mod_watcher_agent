@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { getSettings } from '@/api/settings';
+import { fetchSettings } from '@/api/settings';
 import { useUIStore } from '@/stores/uiStore';
 
 const SETTINGS_SYNC_TTL_MS = 60_000;
@@ -13,7 +13,7 @@ export function useSettingsSync() {
     if (settingsSyncedAt > 0 && Date.now() - settingsSyncedAt < SETTINGS_SYNC_TTL_MS) {
       return;
     }
-    getSettings()
+    fetchSettings()
       .then((settings) => {
         if (settings.summaryMode) {
           setSummaryMode(settings.summaryMode);

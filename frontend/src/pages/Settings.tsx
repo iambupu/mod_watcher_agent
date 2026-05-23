@@ -9,23 +9,10 @@ import AppSidebar from "@/components/layout/AppSidebar";
 import { ApiError, getSecurityToken, setSecurityToken } from "@/api/client";
 
 import { NotificationSettings } from "@/components/NotificationSettings";
-import { DEFAULT_PROVIDER_BASE_URLS, fetchSettings, updateSettings, testLlmProviders, testTelegram, testDiscord, exportSettings, importSettings, setAutoStart as applyAutoStart, type LlmProviderTestResult } from "@/api/settings";
+import { DEFAULT_LLM_PROVIDERS, DEFAULT_PROVIDER_BASE_URLS, fetchSettings, updateSettings, testLlmProviders, testTelegram, testDiscord, exportSettings, importSettings, setAutoStart as applyAutoStart, type LlmProviderTestResult } from "@/api/settings";
 import type { UserSettings, UILanguage, LlmProvider, LlmProviderConfig } from "@/types";
 
-const PROVIDER_OPTIONS: { provider: LlmProvider; label: string; defaultModel: string }[] = [
-  { provider: "ollama", label: "Ollama (Local)", defaultModel: "qwen3:8b" },
-  { provider: "openai", label: "OpenAI", defaultModel: "gpt-4o-mini" },
-  { provider: "anthropic", label: "Anthropic", defaultModel: "claude-3-5-haiku-latest" },
-  { provider: "gemini", label: "Google Gemini", defaultModel: "gemini-2.0-flash" },
-  { provider: "groq", label: "Groq", defaultModel: "mixtral-8x7b-32768" },
-  { provider: "deepseek", label: "DeepSeek", defaultModel: "deepseek-v4-flash" },
-  { provider: "openrouter", label: "OpenRouter", defaultModel: "gpt-4o-mini" },
-  { provider: "siliconflow", label: "硅基流动 (SiliconFlow)", defaultModel: "Qwen/Qwen3-8B" },
-  { provider: "xai", label: "xAI", defaultModel: "grok-4.20-reasoning" },
-  { provider: "kimi", label: "Kimi", defaultModel: "kimi-k2.6" },
-  { provider: "qwen", label: "通义千问 (Qwen)", defaultModel: "qwen-plus" },
-  { provider: "minimax", label: "MiniMax", defaultModel: "MiniMax-M2.7" },
-];
+const PROVIDER_OPTIONS = DEFAULT_LLM_PROVIDERS;
 
 function normalizeProviders(providers: LlmProviderConfig[]): LlmProviderConfig[] {
   const byProvider = new Map(providers.map((p) => [p.provider, p]));
@@ -63,6 +50,10 @@ const Settings: React.FC = () => {
   const [watchdogGraceMinutes, setWatchdogGraceMinutes] = useState(60);
   const [watchdogMaxCatchupPerRun, setWatchdogMaxCatchupPerRun] = useState(3);
   const [nexusApiKey, setNexusApiKey] = useState("");
+  const [googleSearchApiKey, setGoogleSearchApiKey] = useState("");
+  const [googleSearchEngineId, setGoogleSearchEngineId] = useState("");
+  const [loverslabSearchScrapeEnabled, setLoverslabSearchScrapeEnabled] = useState(true);
+  const [loverslabSearchScrapeEngine, setLoverslabSearchScrapeEngine] = useState<"duckduckgo" | "google">("duckduckgo");
   const [llmProvider, setLlmProvider] = useState<LlmProvider>("openai");
   const [llmModel, setLlmModel] = useState("");
   const [llmApiKey, setLlmApiKey] = useState("");
@@ -108,6 +99,10 @@ const Settings: React.FC = () => {
       setWatchdogGraceMinutes(settings.watchdogGraceMinutes);
       setWatchdogMaxCatchupPerRun(settings.watchdogMaxCatchupPerRun);
       setNexusApiKey(settings.nexusApiKey);
+      setGoogleSearchApiKey(settings.googleSearchApiKey);
+      setGoogleSearchEngineId(settings.googleSearchEngineId);
+      setLoverslabSearchScrapeEnabled(settings.loverslabSearchScrapeEnabled);
+      setLoverslabSearchScrapeEngine(settings.loverslabSearchScrapeEngine);
       setLlmProvider(settings.llmProvider);
       setLlmModel(settings.llmModel);
       setLlmApiKey(settings.llmApiKey);
@@ -191,6 +186,10 @@ const Settings: React.FC = () => {
       watchdogGraceMinutes,
       watchdogMaxCatchupPerRun,
       nexusApiKey,
+      googleSearchApiKey,
+      googleSearchEngineId,
+      loverslabSearchScrapeEnabled,
+      loverslabSearchScrapeEngine,
       llmProvider,
       llmModel,
       llmApiKey,
@@ -328,8 +327,8 @@ const Settings: React.FC = () => {
       <div className="flex h-screen">
         <AppSidebar active="settings" />
 
-        <main className="flex-1 overflow-y-auto p-6">
-          <div className="mb-6 flex items-center gap-3">
+        <main className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="mb-5 flex items-center gap-3">
             <h2 className="text-2xl font-bold text-gray-900">{t("settings.title")}</h2>
           </div>
 
@@ -339,97 +338,109 @@ const Settings: React.FC = () => {
             </div>
           )}
 
-          <div className="space-y-6 max-w-2xl">
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold">{t("settings.languageSettings")}</h3>
-              </CardHeader>
-              <CardContent className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium">{t("settings.uiLanguage")}</label>
-                  <select
-                    value={uiLanguage}
-                    onChange={(e) => handleLanguageChange(e.target.value as UILanguage)}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                  >
-                    <option value="zh-CN">中文</option>
-                    <option value="en-US">English</option>
-                    <option value="ja-JP">日本語</option>
-                  </select>
-                  <p className="text-xs text-gray-500">{t("settings.uiLanguageHint")}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium">{t("settings.summaryLanguage")}</label>
-                  <select
-                    value={summaryLanguage}
-                    onChange={(e) => setSummaryLanguage(e.target.value as UILanguage)}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                  >
-                    <option value="zh-CN">中文</option>
-                    <option value="en-US">English</option>
-                    <option value="ja-JP">日本語</option>
-                  </select>
-                  <p className="text-xs text-gray-500">{t("settings.summaryLanguageHint")}</p>
-                </div>
-              </CardContent>
-            </Card>
+          <div className="max-w-6xl space-y-4">
+            <div className="grid gap-4">
+              <Card className="overflow-hidden">
+                <CardHeader className="bg-slate-50/70">
+                  <h3 className="font-semibold text-slate-900">{t("settings.languageSettings")}</h3>
+                </CardHeader>
+                <CardContent className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-medium text-slate-700">{t("settings.uiLanguage")}</label>
+                    <select
+                      value={uiLanguage}
+                      onChange={(e) => handleLanguageChange(e.target.value as UILanguage)}
+                      className="h-9 w-full rounded-md border border-gray-300 px-3 text-sm"
+                    >
+                      <option value="zh-CN">中文</option>
+                      <option value="en-US">English</option>
+                      <option value="ja-JP">日本語</option>
+                    </select>
+                    <p className="text-xs leading-5 text-gray-500">{t("settings.uiLanguageHint")}</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-medium text-slate-700">{t("settings.summaryLanguage")}</label>
+                    <select
+                      value={summaryLanguage}
+                      onChange={(e) => setSummaryLanguage(e.target.value as UILanguage)}
+                      className="h-9 w-full rounded-md border border-gray-300 px-3 text-sm"
+                    >
+                      <option value="zh-CN">中文</option>
+                      <option value="en-US">English</option>
+                      <option value="ja-JP">日本語</option>
+                    </select>
+                    <p className="text-xs leading-5 text-gray-500">{t("settings.summaryLanguageHint")}</p>
+                  </div>
+                </CardContent>
+              </Card>
 
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold">{t("settings.summaryReport")}</h3>
+              <Card className="overflow-hidden">
+                <CardHeader className="bg-slate-50/70">
+                  <h3 className="font-semibold text-slate-900">{t("settings.summaryReport")}</h3>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid gap-3 md:grid-cols-[180px_1fr]">
+                    <Input
+                      label={t("settings.summaryReportInterval")}
+                      type="number"
+                      min={0}
+                      max={10080}
+                      value={summaryReportInterval}
+                      onChange={(e) => setSummaryReportInterval(Number(e.target.value))}
+                    />
+                    <label className="flex flex-col gap-1">
+                      <span className="text-sm font-medium text-gray-700">
+                        {t("settings.summaryReportPrompt")}
+                      </span>
+                      <textarea
+                        value={summaryReportPrompt}
+                        onChange={(e) => setSummaryReportPrompt(e.target.value)}
+                        placeholder={t("settings.summaryReportPromptPlaceholder")}
+                        rows={4}
+                        className="min-h-24 w-full resize-y rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </label>
+                  </div>
+                  <p className="text-xs leading-5 text-gray-500">{t("settings.summaryReportHint")}</p>
+                  {fieldErrors.summary_report_interval_minutes && (
+                    <p className="text-xs text-red-600">{fieldErrors.summary_report_interval_minutes}</p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card className="overflow-hidden">
+              <CardHeader className="bg-slate-50/70">
+                <h3 className="font-semibold text-slate-900">{t("settings.watchdog")}</h3>
               </CardHeader>
               <CardContent className="space-y-3">
-                <Input
-                  label={t("settings.summaryReportInterval")}
-                  type="number"
-                  min={0}
-                  max={10080}
-                  value={summaryReportInterval}
-                  onChange={(e) => setSummaryReportInterval(Number(e.target.value))}
-                />
-                <Input
-                  label={t("settings.summaryReportPrompt")}
-                  value={summaryReportPrompt}
-                  onChange={(e) => setSummaryReportPrompt(e.target.value)}
-                  placeholder={t("settings.summaryReportPromptPlaceholder")}
-                />
-                <p className="text-xs text-gray-500">{t("settings.summaryReportHint")}</p>
-                {fieldErrors.summary_report_interval_minutes && (
-                  <p className="text-xs text-red-600">{fieldErrors.summary_report_interval_minutes}</p>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold">{t("settings.watchdog")}</h3>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Input
-                  label={t("settings.watchdogCheckInterval")}
-                  type="number"
-                  min={1}
-                  max={1440}
-                  value={watchdogCheckInterval}
-                  onChange={(e) => setWatchdogCheckInterval(Math.max(1, Number(e.target.value) || 10))}
-                />
-                <Input
-                  label={t("settings.watchdogGraceMinutes")}
-                  type="number"
-                  min={1}
-                  max={1440}
-                  value={watchdogGraceMinutes}
-                  onChange={(e) => setWatchdogGraceMinutes(Math.max(1, Number(e.target.value) || 60))}
-                />
-                <Input
-                  label={t("settings.watchdogMaxCatchupPerRun")}
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={watchdogMaxCatchupPerRun}
-                  onChange={(e) => setWatchdogMaxCatchupPerRun(Math.max(1, Number(e.target.value) || 3))}
-                />
-                <p className="text-xs text-gray-500">{t("settings.watchdogHint")}</p>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Input
+                    label={t("settings.watchdogCheckInterval")}
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={watchdogCheckInterval}
+                    onChange={(e) => setWatchdogCheckInterval(Math.max(1, Number(e.target.value) || 10))}
+                  />
+                  <Input
+                    label={t("settings.watchdogGraceMinutes")}
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={watchdogGraceMinutes}
+                    onChange={(e) => setWatchdogGraceMinutes(Math.max(1, Number(e.target.value) || 60))}
+                  />
+                  <Input
+                    label={t("settings.watchdogMaxCatchupPerRun")}
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={watchdogMaxCatchupPerRun}
+                    onChange={(e) => setWatchdogMaxCatchupPerRun(Math.max(1, Number(e.target.value) || 3))}
+                  />
+                </div>
+                <p className="text-xs leading-5 text-gray-500">{t("settings.watchdogHint")}</p>
                 {fieldErrors.watchdog_check_interval_minutes && (
                   <p className="text-xs text-red-600">{fieldErrors.watchdog_check_interval_minutes}</p>
                 )}
@@ -442,12 +453,12 @@ const Settings: React.FC = () => {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold">{t("settings.credentials")}</h3>
+            <Card className="overflow-hidden">
+              <CardHeader className="bg-slate-50/70">
+                <h3 className="font-semibold text-slate-900">{t("settings.credentials")}</h3>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
+                <div className="space-y-3">
                   <Input
                     label={t("settings.nexusApiKey")}
                     type="password"
@@ -456,15 +467,65 @@ const Settings: React.FC = () => {
                     placeholder="nexusmods.com personal API key"
                     help={{ titleKey: "settings.help.nexusKey.title", stepsKey: "settings.help.nexusKey.steps", stepCount: 4 }}
                   />
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Input
+                      label={t("settings.googleSearchApiKey")}
+                      type="password"
+                      value={googleSearchApiKey}
+                      onChange={(e) => setGoogleSearchApiKey(e.target.value)}
+                      placeholder="Google Custom Search JSON API key"
+                      help={{
+                        titleKey: "settings.help.googleSearch.title",
+                        stepsKey: "settings.help.googleSearch.steps",
+                        stepCount: 5,
+                      }}
+                    />
+                    <Input
+                      label={t("settings.googleSearchEngineId")}
+                      value={googleSearchEngineId}
+                      onChange={(e) => setGoogleSearchEngineId(e.target.value)}
+                      placeholder="Programmable Search Engine cx"
+                      help={{
+                        titleKey: "settings.help.googleSearch.title",
+                        stepsKey: "settings.help.googleSearch.steps",
+                        stepCount: 5,
+                      }}
+                    />
+                  </div>
+                  <p className="text-xs leading-5 text-gray-500">{t("settings.googleSearchHint")}</p>
+                  <div className="space-y-3 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
+                    <label className="flex cursor-pointer items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={loverslabSearchScrapeEnabled}
+                        onChange={(e) => setLoverslabSearchScrapeEnabled(e.target.checked)}
+                        className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-sm font-medium text-gray-700">{t("settings.loverslabSearchScrapeEnabled")}</span>
+                    </label>
+                    {loverslabSearchScrapeEnabled && (
+                      <div className="grid gap-2 md:grid-cols-[220px_1fr] md:items-center">
+                        <select
+                          value={loverslabSearchScrapeEngine}
+                          onChange={(e) => setLoverslabSearchScrapeEngine(e.target.value as "duckduckgo" | "google")}
+                          className="h-9 rounded-md border border-gray-300 px-3 text-sm"
+                        >
+                          <option value="duckduckgo">DuckDuckGo HTML</option>
+                          <option value="google">Google Search</option>
+                        </select>
+                        <p className="text-xs leading-5 text-gray-500">{t("settings.loverslabSearchScrapeHint")}</p>
+                      </div>
+                    )}
+                  </div>
                   <p className="text-xs text-amber-600">{t("settings.plaintextWarning")}</p>
                 </div>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
+            <Card className="overflow-hidden">
+              <CardHeader className="bg-slate-50/70">
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-semibold">{t("settings.llmProvider")}</h3>
+                  <h3 className="font-semibold text-slate-900">{t("settings.llmProvider")}</h3>
                   <Button size="sm" variant="outline" onClick={handleTestLlmProviders} disabled={testingLlm}>
                     {testingLlm ? t("common.loading") : t("settings.testLlmProviders")}
                   </Button>
@@ -480,7 +541,7 @@ const Settings: React.FC = () => {
                     const option = PROVIDER_OPTIONS.find((item) => item.provider === provider.provider);
                     const result = llmTestResults.find((item) => item.provider === provider.provider);
                     return (
-                      <div key={provider.provider} className="rounded-lg border border-gray-200 p-3">
+                      <div key={provider.provider} className="rounded-lg border border-gray-200 bg-white p-3">
                         <div className="mb-3 flex flex-wrap items-center gap-2">
                           <input
                             type="checkbox"
@@ -535,7 +596,7 @@ const Settings: React.FC = () => {
                         )}
                         {result && (
                           <p className={`mt-1 rounded-md px-2 py-1 text-xs ${result.success ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
-                            {result.success ? "测试成功" : "失败原因"}: {result.message}
+                            {result.success ? t("settings.testSuccessMessage") : t("settings.testFailureReason")}: {result.message}
                           </p>
                         )}
                       </div>
@@ -545,7 +606,7 @@ const Settings: React.FC = () => {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="overflow-hidden">
               <CardContent className="py-4">
                 <NotificationSettings
                   telegramEnabled={telegramEnabled}
@@ -563,10 +624,10 @@ const Settings: React.FC = () => {
                   onNotificationsEnabledChange={setNotificationsEnabled}
                   onSystemNotificationsEnabledChange={setSystemNotificationsEnabled}
                   onTestTelegram={async () => {
-                    try { const r = await testTelegram(); alert(r.message); } catch { alert("Test failed"); }
+                    try { const r = await testTelegram(); alert(r.message); } catch { alert(t("settings.testFailed")); }
                   }}
                   onTestDiscord={async () => {
-                    try { const r = await testDiscord(); alert(r.message); } catch { alert("Test failed"); }
+                    try { const r = await testDiscord(); alert(r.message); } catch { alert(t("settings.testFailed")); }
                   }}
                 />
                 {fieldErrors.discord_webhook_url && (
@@ -585,61 +646,63 @@ const Settings: React.FC = () => {
               </div>
             )}
 
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold">{t("settings.autoStart")}</h3>
-              </CardHeader>
-              <CardContent>
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={autoStart}
-                    onChange={(e) => setAutoStart(e.target.checked)}
-                    className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            <div className="grid gap-4 xl:grid-cols-2">
+              <Card className="overflow-hidden">
+                <CardHeader className="bg-slate-50/70">
+                  <h3 className="font-semibold text-slate-900">{t("settings.autoStart")}</h3>
+                </CardHeader>
+                <CardContent>
+                  <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={autoStart}
+                      onChange={(e) => setAutoStart(e.target.checked)}
+                      className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">{t("settings.autoStartLabel")}</p>
+                      <p className="text-xs leading-5 text-gray-500">{t("settings.autoStartHint")}</p>
+                    </div>
+                  </label>
+                </CardContent>
+              </Card>
+
+              <Card className="overflow-hidden">
+                <CardHeader className="bg-slate-50/70">
+                  <h3 className="font-semibold text-slate-900">{t("settings.databasePath")}</h3>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <Input
+                    value={databasePath}
+                    onChange={(e) => setDatabasePath(e.target.value)}
+                    placeholder="sqlite:///./mod_watcher.db"
                   />
-                  <div>
-                    <p className="text-sm font-medium text-gray-700">{t("settings.autoStartLabel")}</p>
-                    <p className="text-xs text-gray-500">{t("settings.autoStartHint")}</p>
-                  </div>
-                </label>
-              </CardContent>
-            </Card>
+                  <p className="text-xs text-amber-600">{t("settings.databasePathHint")}</p>
+                  <p className="text-xs leading-5 text-slate-500">{t("settings.databasePathResolveHint")}</p>
+                </CardContent>
+              </Card>
+            </div>
 
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold">{t("settings.databasePath")}</h3>
+            <Card className="overflow-hidden">
+              <CardHeader className="bg-slate-50/70">
+                <h3 className="font-semibold text-slate-900">{t("settings.proxy")}</h3>
               </CardHeader>
-              <CardContent className="space-y-2">
-                <Input
-                  value={databasePath}
-                  onChange={(e) => setDatabasePath(e.target.value)}
-                  placeholder="sqlite:///./mod_watcher.db"
-                />
-                <p className="text-xs text-amber-600">{t("settings.databasePathHint")}</p>
-                <p className="text-xs text-slate-500">{t("settings.databasePathResolveHint")}</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold">{t("settings.proxy")}</h3>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <label className="flex items-center gap-3 cursor-pointer">
+              <CardContent className="space-y-3">
+                <label className="flex cursor-pointer items-center gap-3">
                   <input
                     type="checkbox"
                     checked={proxyEnabled}
                     onChange={(e) => setProxyEnabled(e.target.checked)}
-                    className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
                   <span className="text-sm font-medium text-gray-700">{t("settings.proxyEnabled")}</span>
                 </label>
                 {proxyEnabled && (
-                  <div className="space-y-3 pl-8">
+                  <div className="space-y-3 rounded-lg border border-slate-100 bg-slate-50/50 p-3">
                     <select
                       value={proxyType}
                       onChange={(e) => setProxyType(e.target.value as "http" | "socks5")}
-                      className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+                      className="h-9 rounded-md border border-gray-300 px-3 text-sm"
                     >
                       <option value="http">HTTP</option>
                       <option value="socks5">SOCKS5</option>
@@ -647,11 +710,11 @@ const Settings: React.FC = () => {
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <Input label={`${t("settings.proxyHost")} *`} value={proxyHost} onChange={(e) => { setProxyHost(e.target.value); setProxyErrors((p) => ({ ...p, host: undefined })); }} placeholder="127.0.0.1" required error={proxyErrors.host} />
-                        {!proxyErrors.host && <p className="text-xs text-amber-600 mt-1">启用代理后必须填写</p>}
+                        {!proxyErrors.host && <p className="text-xs text-amber-600 mt-1">{t("settings.proxyRequiredWhenEnabled")}</p>}
                       </div>
                       <div>
                         <Input label={`${t("settings.proxyPort")} *`} value={proxyPort} onChange={(e) => { setProxyPort(e.target.value); setProxyErrors((p) => ({ ...p, port: undefined })); }} placeholder="7890" required error={proxyErrors.port} />
-                        {!proxyErrors.port && <p className="text-xs text-amber-600 mt-1">启用代理后必须填写</p>}
+                        {!proxyErrors.port && <p className="text-xs text-amber-600 mt-1">{t("settings.proxyRequiredWhenEnabled")}</p>}
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
@@ -664,9 +727,9 @@ const Settings: React.FC = () => {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold">{t("settings.securityProfile")}</h3>
+            <Card className="overflow-hidden">
+              <CardHeader className="bg-slate-50/70">
+                <h3 className="font-semibold text-slate-900">{t("settings.securityProfile")}</h3>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="space-y-2">
@@ -674,7 +737,7 @@ const Settings: React.FC = () => {
                   <select
                     value={accessProfile}
                     onChange={(e) => setAccessProfile(e.target.value as "local_relaxed" | "local_strict" | "shared_lan")}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                    className="h-9 w-full rounded-md border border-gray-300 px-3 text-sm"
                   >
                     <option value="local_relaxed">{t("settings.accessProfileOptions.localRelaxed")}</option>
                     <option value="local_strict">{t("settings.accessProfileOptions.localStrict")}</option>
@@ -702,9 +765,9 @@ const Settings: React.FC = () => {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold">{t("settings.data")}</h3>
+            <Card className="overflow-hidden">
+              <CardHeader className="bg-slate-50/70">
+                <h3 className="font-semibold text-slate-900">{t("settings.data")}</h3>
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-3">

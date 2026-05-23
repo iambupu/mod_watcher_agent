@@ -1,9 +1,11 @@
 """Tests for /api/jobs/stats week-boundary behavior."""
 
+from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
+from app.api import routes_jobs
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models.favorite import Favorite
@@ -116,3 +118,46 @@ def test_stats_counts_new_mods_by_week_start(monkeypatch):
         assert data["unseen_updates"] == 1
     finally:
         fastapi_app.dependency_overrides.clear()
+
+
+def test_scheduler_status_reports_paused_state(monkeypatch):
+    class FakeScheduler:
+        state = STATE_PAUSED
+
+        def get_jobs(self):
+            return []
+
+    monkeypatch.setattr(routes_jobs, "scheduler", FakeScheduler())
+    client = TestClient(fastapi_app)
+
+    response = client.get("/api/jobs/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["running"] is False
+    assert data["state"] == STATE_PAUSED
+
+
+def test_scheduler_pause_and_resume_return_actual_state(monkeypatch):
+    class FakeScheduler:
+        state = STATE_RUNNING
+
+        def pause(self):
+            self.state = STATE_PAUSED
+
+        def resume(self):
+            self.state = STATE_RUNNING
+
+    fake_scheduler = FakeScheduler()
+    monkeypatch.setattr(routes_jobs, "scheduler", fake_scheduler)
+    client = TestClient(fastapi_app)
+
+    pause_response = client.post("/api/jobs/pause")
+    resume_response = client.post("/api/jobs/resume")
+
+    assert pause_response.status_code == 200
+    assert pause_response.json()["running"] is False
+    assert pause_response.json()["state"] == STATE_PAUSED
+    assert resume_response.status_code == 200
+    assert resume_response.json()["running"] is True
+    assert resume_response.json()["state"] == STATE_RUNNING

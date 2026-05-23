@@ -22,6 +22,7 @@ from app.models.favorite import Favorite
 from app.models.mod import Mod
 from app.models.summary import ModSummary
 from app.models.update_event import ModUpdateEvent
+from app.services.favorite_service import FavoriteService
 
 
 @pytest.fixture(name="engine")
@@ -145,6 +146,44 @@ class TestFavoriteTranslatedSummary:
         assert len(items) == 1
         assert items[0]["translated_summary"] is None
 
+    def test_check_update_route_detects_update(self, client, session, monkeypatch):
+        class FakeAdapter:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def fetch_mod_detail(self, external_id, game_domain):
+                return {
+                    "version": "2.0.0",
+                    "updated_at_remote": "2025-02-01T00:00:00Z",
+                }
+
+        monkeypatch.setattr(FavoriteService, "_adapter_class", FakeAdapter)
+        mod = make_mod(
+            external_id="fav-check-update",
+            version="1.0.0",
+            updated_at_remote="2025-01-01T00:00:00Z",
+        )
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        fav = Favorite(
+            mod_id=mod.id,
+            last_known_version="1.0.0",
+            last_known_updated_at="2025-01-01T00:00:00Z",
+            created_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:00",
+        )
+        session.add(fav)
+        session.commit()
+        session.refresh(fav)
+
+        response = client.post(f"/api/favorites/{fav.id}/check-update")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["favorite_id"] == fav.id
+        assert data["update_detected"] is True
+        assert data["update_event"]["new_version"] == "2.0.0"
+
     def test_favorite_ja_jp_only_returns_none(self, client, session):
         """Only ja-JP summary → translated_summary is None (no zh-CN or en). (TDD: RED)"""
         mod = make_mod(external_id="fav-ja-1")
@@ -212,6 +251,8 @@ class TestUpdateTranslatedSummary:
         data = response.json()
         assert data["total"] == 1
         assert data["items"][0]["translated_summary"] == "中文更新摘要"
+        assert data["items"][0]["mod"]["id"] == mod.id
+        assert data["items"][0]["mod"]["translated_summary"] == "中文更新摘要"
 
     def test_update_fallback_to_en(self, client, session):
         """Only en summary → translated_summary falls back to en content. (TDD: RED)"""
@@ -248,6 +289,7 @@ class TestUpdateTranslatedSummary:
         data = response.json()
         assert data["total"] == 1
         assert data["items"][0]["translated_summary"] == "English update summary"
+        assert data["items"][0]["mod"]["translated_summary"] == "English update summary"
 
     def test_update_no_summary(self, client, session):
         """No summary at all → translated_summary is None. (TDD: RED)"""
@@ -275,6 +317,7 @@ class TestUpdateTranslatedSummary:
         data = response.json()
         assert data["total"] == 1
         assert data["items"][0]["translated_summary"] is None
+        assert data["items"][0]["mod"]["id"] == mod.id
 
     def test_update_ja_jp_only_returns_none(self, client, session):
         """Only ja-JP summary → translated_summary is None (no zh-CN or en). (TDD: RED)"""
@@ -311,3 +354,27 @@ class TestUpdateTranslatedSummary:
         data = response.json()
         assert data["total"] == 1
         assert data["items"][0]["translated_summary"] is None
+        assert data["items"][0]["mod"]["id"] == mod.id
+
+    def test_mark_all_updates_seen_endpoint(self, client, session):
+        mod = make_mod(external_id="upd-mark-all")
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        session.add(ModUpdateEvent(
+            mod_id=mod.id,
+            detected_at="2025-01-02T00:00:00",
+            seen=False,
+        ))
+        session.add(ModUpdateEvent(
+            mod_id=mod.id,
+            detected_at="2025-01-03T00:00:00",
+            seen=False,
+        ))
+        session.commit()
+
+        response = client.patch("/api/updates/seen")
+        assert response.status_code == 200
+        assert response.json() == {"updated": 2}
+        data = client.get("/api/updates").json()
+        assert all(item["seen"] for item in data["items"])

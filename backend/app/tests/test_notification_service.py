@@ -45,6 +45,19 @@ async def test_send_telegram_no_credentials(service, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_send_telegram_disabled_reports_skipped(service, session):
+    from app.services.settings_service import SettingsService
+
+    SettingsService(session).set("telegram_enabled", "false")
+
+    result = await service.send_telegram_message_result("test")
+
+    assert result.ok is False
+    assert result.skipped is True
+    assert result.reason == "Telegram notification is disabled"
+
+
+@pytest.mark.asyncio
 async def test_send_discord_success(service, monkeypatch):
     monkeypatch.setattr("app.config.settings.DISCORD_WEBHOOK_URL", "https://discord.example/webhook")
     mock_resp = AsyncMock()
@@ -65,6 +78,19 @@ def test_format_update_notification():
 def test_format_update_notification_missing_versions():
     text = NotificationService.format_update_notification("Mod X", None, None, "https://x.com")
     assert "? \u2192 ?" in text
+
+
+def test_format_update_notification_escapes_html():
+    text = NotificationService.format_update_notification(
+        "Bad <Mod>",
+        "1<0",
+        "2&0",
+        "https://example.com/?q=<script>",
+    )
+
+    assert "Bad &lt;Mod&gt;" in text
+    assert "1&lt;0 \u2192 2&amp;0" in text
+    assert "<script>" not in text
 
 
 def test_format_daily_digest():
@@ -131,6 +157,40 @@ async def test_notify_new_mods_respects_telegram_channel(service, session, monke
     telegram.assert_awaited_once()
     discord.assert_not_awaited()
     assert [record.channel for record in records] == ["telegram"]
+
+
+@pytest.mark.asyncio
+async def test_notify_new_mods_escapes_html_message(service, monkeypatch):
+    telegram = AsyncMock(return_value=True)
+    discord = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "send_telegram_message", telegram)
+    monkeypatch.setattr(service, "send_discord_webhook", discord)
+    nc = NotificationService.parse_notification_config(
+        FakeRule('{"enabled": true, "mode": "instant", "channels": ["telegram"]}')
+    )
+
+    await service.notify_new_mods(
+        [
+            {
+                "title": "Bad <Mod>",
+                "url": "https://example.com/a?x='y'",
+            },
+            {
+                "title": "No Link <Only>",
+                "url": "javascript:alert(1)",
+            },
+        ],
+        "Rule <A>",
+        nc,
+    )
+
+    message = telegram.await_args.args[0]
+    assert "Rule &lt;A&gt;" in message
+    assert "Bad &lt;Mod&gt;" in message
+    assert 'href="https://example.com/a?x=&#x27;y&#x27;"' in message
+    assert "No Link &lt;Only&gt;" in message
+    assert "javascript:alert" not in message
+    discord.assert_not_awaited()
 
 
 @pytest.mark.asyncio

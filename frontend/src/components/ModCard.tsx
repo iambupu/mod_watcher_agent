@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Download, ThumbsUp, Clock, ExternalLink, Heart, EyeOff, Gamepad2, Languages, Sparkles, ChevronDown, ChevronUp, X } from "lucide-react";
+import { ExternalLink, Heart, EyeOff, Languages, Sparkles, ChevronDown, ChevronUp, X } from "lucide-react";
+import { ModStatsLine } from "@/components/ModStatsLine";
 import { SourceBadge } from "@/components/SourceBadge";
 import { Button } from "@/components/ui/Button";
 import { useUIStore } from "@/stores/uiStore";
+import { formatModSummary } from "@/utils/modSummary";
 import type { ModItem } from "@/types";
 
 interface ModCardProps {
@@ -26,17 +28,6 @@ function parseTags(tagsJson: string): string[] {
   }
 }
 
-function truncate(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  return text.slice(0, maxLen).trimEnd() + "...";
-}
-
-function formatDate(dateStr?: string): string {
-  if (!dateStr) return "";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
 export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onToggleFavorite, onIgnore, onRegenerateSummary, regeneratingSummary = false, onGenerateIntroduction, generatingIntroduction = false, footerContent }) => {
   const { t } = useTranslation();
   const summaryMode = useUIStore((s) => s.summaryMode);
@@ -48,31 +39,19 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
   const summaryRef = useRef<HTMLParagraphElement | null>(null);
   const tags = parseTags(mod.tags_json || "[]");
 
-  const hasOriginal = !!mod.original_summary;
-  const hasTranslated = !!mod.translated_summary;
-  const originalSummary = hasOriginal ? truncate(mod.original_summary!, 200) : "";
-  const translatedSummary = hasTranslated ? truncate(mod.translated_summary!, 200) : "";
   const gameLabel = mod.game || mod.game_domain || "";
-
-  let summary: string;
-  if (summaryMode === "translated") {
-    summary = translatedSummary;
-  } else if (summaryMode === "bilingual") {
-    if (hasOriginal && hasTranslated) {
-      summary = `${translatedSummary}\n——\n${originalSummary}`;
-    } else if (hasOriginal) {
-      summary = originalSummary;
-    } else {
-      summary = t("mod.noSummary");
-    }
-  } else {
-    summary = originalSummary || t("mod.noSummary");
-  }
-  const fullSummary = summaryMode === "bilingual" && hasOriginal && hasTranslated
-    ? `${mod.translated_summary}\n——\n${mod.original_summary}`
-    : summaryMode === "translated"
-      ? mod.translated_summary || ""
-      : mod.original_summary || "";
+  const summary = formatModSummary({
+    original: mod.original_summary,
+    translated: mod.translated_summary,
+    mode: summaryMode,
+    maxLength: 200,
+    emptyText: t("mod.noSummary"),
+  });
+  const fullSummary = formatModSummary({
+    original: mod.original_summary,
+    translated: mod.translated_summary,
+    mode: summaryMode,
+  });
   useEffect(() => {
     const el = summaryRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -104,9 +83,9 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
   };
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow flex flex-col overflow-hidden">
+    <div className="flex overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md flex-col">
       <div
-        className={`relative bg-gradient-to-br from-gray-100 to-gray-200 flex-shrink-0 ${
+        className={`relative flex-shrink-0 bg-gradient-to-br from-slate-100 to-slate-200 ${
           mod.thumbnail_url ? "aspect-[300/169]" : "aspect-[300/85]"
         }`}
       >
@@ -124,23 +103,22 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
             </svg>
           </div>
         )}
-        <div className="absolute top-2 left-2">
-          <div className="flex max-w-[calc(100%-3rem)] flex-wrap gap-1.5">
-            <SourceBadge source={mod.source} />
+        <div className="absolute left-3 top-3">
+          <div className="flex max-w-[calc(100%-3rem)] flex-wrap gap-2">
+            <SourceBadge source={mod.source} className="bg-white/95 shadow-sm backdrop-blur-sm" />
             {mod.adult_content === true && (
               <span
-                className="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 shadow-sm"
+                className="inline-flex items-center rounded-md border border-red-200 bg-red-50/95 px-2 py-0.5 text-xs font-semibold text-red-700 shadow-sm backdrop-blur-sm"
                 title="Adult content"
               >
-                R18
+                NSFW
               </span>
             )}
             {gameLabel && (
               <span
-                className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white/90 px-2 py-0.5 text-xs font-medium text-gray-700 shadow-sm backdrop-blur-sm"
+                className="inline-flex items-center rounded-md border border-slate-200 bg-white/95 px-2 py-0.5 text-xs font-semibold text-slate-600 shadow-sm backdrop-blur-sm"
                 title={gameLabel}
               >
-                <Gamepad2 size={12} />
                 <span className="max-w-40 truncate">{gameLabel}</span>
               </span>
             )}
@@ -149,59 +127,34 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
         {onToggleFavorite && (
           <button
             onClick={(e) => { e.preventDefault(); onToggleFavorite(); }}
-            className="absolute top-2 right-2 p-1.5 rounded-full bg-white/80 backdrop-blur-sm shadow-sm hover:bg-white transition-colors"
-            aria-label={isFavorited ? "Remove from favorites" : "Add to favorites"}
+            className="absolute right-3 top-3 rounded-full bg-white/90 p-2 text-slate-400 shadow-sm backdrop-blur-sm transition hover:bg-white hover:text-red-500"
+            aria-label={isFavorited ? t("mod.unfavorite") : t("mod.favorite")}
           >
             <Heart
-              size={16}
-              className={isFavorited ? "fill-red-500 text-red-500" : "text-gray-400 hover:text-red-400"}
+              size={18}
+              className={isFavorited ? "fill-red-500 text-red-500" : ""}
             />
-          </button>
-        )}
-        {onIgnore && (
-          <button
-            onClick={(e) => { e.preventDefault(); onIgnore(); }}
-            className="absolute top-2 right-10 p-1.5 rounded-full bg-white/80 backdrop-blur-sm shadow-sm hover:bg-white transition-colors"
-            aria-label="Ignore this mod"
-          >
-            <EyeOff size={16} className="text-gray-400 hover:text-red-500" />
           </button>
         )}
       </div>
 
-      <div className="flex flex-col flex-1 p-4 gap-2">
+      <div className="flex flex-1 flex-col gap-2.5 p-4">
         <a
           href={mod.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-sm font-semibold text-gray-900 hover:text-blue-600 transition-colors line-clamp-2"
+          className="line-clamp-2 text-base font-bold leading-snug text-slate-950 transition-colors hover:text-blue-600"
           title={mod.title}
         >
           {mod.title}
         </a>
 
-        <span className="text-xs text-gray-500 truncate">{gameLabel}</span>
-
-        <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
-          {mod.downloads !== undefined && mod.downloads !== null && (
-            <span className="inline-flex items-center gap-1">
-              <Download size={12} />
-              {mod.downloads.toLocaleString()}
-            </span>
-          )}
-          {mod.endorsements !== undefined && mod.endorsements !== null && (
-            <span className="inline-flex items-center gap-1">
-              <ThumbsUp size={12} />
-              {mod.endorsements.toLocaleString()}
-            </span>
-          )}
-          {mod.updated_at_remote && (
-            <span className="inline-flex items-center gap-1">
-              <Clock size={12} />
-              {formatDate(mod.updated_at_remote)}
-            </span>
-          )}
-        </div>
+        <ModStatsLine
+          downloads={mod.downloads}
+          endorsements={mod.endorsements}
+          updatedAt={mod.updated_at_remote}
+          className="font-semibold text-slate-400"
+        />
 
         <div className="space-y-2">
           {summary ? (
@@ -212,20 +165,20 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
                 e.preventDefault();
                 setSummaryExpanded((v) => !v);
               }}
-              className={`text-sm text-gray-500 leading-relaxed whitespace-pre-line ${summaryExpanded ? "" : summaryMode === "bilingual" ? "line-clamp-4" : "line-clamp-3"} ${canToggleSummary ? "cursor-pointer" : ""}`}
+              className={`whitespace-pre-line text-sm font-medium leading-6 text-slate-500 ${summaryExpanded ? "" : summaryMode === "bilingual" ? "line-clamp-4" : "line-clamp-3"} ${canToggleSummary ? "cursor-pointer" : ""}`}
               title={canToggleSummary ? (summaryExpanded ? t("mod.collapseSummary") : t("mod.expandSummary")) : undefined}
             >
               {summaryExpanded ? fullSummary || summary : summary}
             </p>
           ) : (
-            <p className="text-sm text-gray-400">{t("mod.noSummary")}</p>
+            <p className="text-sm text-slate-400">{t("mod.noSummary")}</p>
           )}
           <div className="flex flex-wrap items-center gap-2 pt-1">
             {canToggleSummary && (
               <button
                 type="button"
                 onClick={(e) => { e.preventDefault(); setSummaryExpanded((v) => !v); }}
-                className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 hover:text-gray-900"
+                className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 hover:text-slate-900"
               >
                 {summaryExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                 {summaryExpanded ? t("mod.collapseSummary") : t("mod.expandSummary")}
@@ -236,21 +189,10 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
                 type="button"
                 onClick={(e) => { e.preventDefault(); onRegenerateSummary(); }}
                 disabled={regeneratingSummary}
-                className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-50"
               >
                 <Languages size={13} />
                 {regeneratingSummary ? t("common.loading") : t("mod.regenerateSummary")}
-              </button>
-            )}
-            {onGenerateIntroduction && (
-              <button
-                type="button"
-                onClick={(e) => { e.preventDefault(); handleOpenIntroduction(); }}
-                disabled={generatingIntroduction}
-                className="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 transition-colors hover:bg-purple-100 disabled:opacity-50"
-              >
-                <Sparkles size={13} />
-                {generatingIntroduction ? "生成介绍中" : mod.ai_introduction || introduction ? "查看 AI 介绍" : "AI 介绍"}
               </button>
             )}
           </div>
@@ -261,7 +203,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
             {tags.slice(0, 4).map((tag) => (
               <span
                 key={tag}
-                className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded"
+                className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600"
               >
                 {tag}
               </span>
@@ -269,13 +211,50 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
           </div>
         )}
 
-        <div className="mt-auto pt-3">
+        <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
           <a href={mod.url} target="_blank" rel="noopener noreferrer">
-            <Button size="sm" variant="outline" className="w-full">
+            <Button size="sm" variant="ghost" className="bg-blue-50 text-blue-700 hover:bg-blue-100">
               <ExternalLink size={14} />
               <span className="ml-1.5">{t("common.viewMod")}</span>
             </Button>
           </a>
+          {onToggleFavorite && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="bg-slate-50 text-slate-700 hover:bg-slate-100"
+              onClick={onToggleFavorite}
+            >
+              <Heart size={14} className={isFavorited ? "fill-red-500 text-red-500" : ""} />
+              <span className="ml-1.5">{t(isFavorited ? "mod.unfavorite" : "mod.favorite")}</span>
+            </Button>
+          )}
+          {onIgnore && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="bg-slate-50 text-slate-700 hover:bg-slate-100"
+              onClick={onIgnore}
+            >
+              <EyeOff size={14} />
+              <span className="ml-1.5">{t("mod.ignore")}</span>
+            </Button>
+          )}
+          {onGenerateIntroduction && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="bg-purple-50 text-purple-700 hover:bg-purple-100"
+              onClick={handleOpenIntroduction}
+              disabled={generatingIntroduction}
+            >
+              <Sparkles size={14} />
+              <span className="ml-1.5">{generatingIntroduction ? t("mod.generatingIntroduction") : t("mod.aiIntroduction")}</span>
+            </Button>
+          )}
         </div>
 
         {footerContent && (
@@ -289,7 +268,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
           <div className="max-h-[80vh] w-full max-w-2xl overflow-hidden rounded-lg bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
               <div>
-                <h3 className="text-base font-semibold text-gray-900">AI 介绍</h3>
+                <h3 className="text-base font-semibold text-gray-900">{t("mod.aiIntroduction")}</h3>
                 <p className="text-xs text-gray-500 line-clamp-1">{mod.title}</p>
               </div>
               <button type="button" className="rounded-md p-1 text-gray-500 hover:bg-gray-100" onClick={() => setIntroductionOpen(false)}>
@@ -298,11 +277,11 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
             </div>
             <div className="max-h-[62vh] overflow-y-auto px-5 py-4">
               {generatingIntroduction && !introduction ? (
-                <p className="text-sm text-gray-500">正在使用 LLM 生成更详细的 Mod 介绍...</p>
+                <p className="text-sm text-gray-500">{t("mod.aiIntroductionLoading")}</p>
               ) : introError ? (
                 <p className="text-sm text-red-600">{introError}</p>
               ) : (
-                <p className="whitespace-pre-wrap text-sm leading-6 text-gray-700">{introduction || mod.ai_introduction || "暂无 AI 介绍"}</p>
+                <p className="whitespace-pre-wrap text-sm leading-6 text-gray-700">{introduction || mod.ai_introduction || t("mod.noAiIntroduction")}</p>
               )}
             </div>
           </div>
