@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { KeywordFilterEditor } from "../KeywordFilterEditor";
 import { MetricFilterFields } from "../MetricFilterFields";
@@ -8,6 +8,12 @@ import { LlmFilterSection } from "../LlmFilterSection";
 import { CommonFilterSection } from "../CommonFilterSection";
 import { useRuleEditorStore } from "@/stores/ruleEditorStore";
 import type { CommonRuleFilters } from "@/types";
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+  }),
+}));
 
 beforeEach(() => {
   useRuleEditorStore.setState({
@@ -167,15 +173,8 @@ describe("MissingMetricsPolicyField", () => {
 });
 
 describe("LlmFilterSection", () => {
-  it("renders collapsed by default", () => {
+  it("renders all controls by default", () => {
     render(<LlmFilterSection onChange={() => {}} />);
-    expect(screen.getByText("rules.filters.llmFilter")).toBeInTheDocument();
-    expect(screen.queryByText("rules.filters.llmFilterEnabled")).toBeNull();
-  });
-
-  it("expands on header click showing all controls", () => {
-    render(<LlmFilterSection onChange={() => {}} />);
-    fireEvent.click(screen.getByText("rules.filters.llmFilter"));
     expect(screen.getByText("rules.filters.llmFilterEnabled")).toBeInTheDocument();
     expect(screen.getByText("rules.filters.llmPrompt")).toBeInTheDocument();
     expect(screen.getByText("rules.filters.llmMode")).toBeInTheDocument();
@@ -185,7 +184,6 @@ describe("LlmFilterSection", () => {
   it("toggles switch and updates llmFilter.enabled", () => {
     let changed: Partial<CommonRuleFilters> | null = null;
     render(<LlmFilterSection onChange={(p) => (changed = p)} />);
-    fireEvent.click(screen.getByText("rules.filters.llmFilter"));
     const toggle = screen.getByRole("switch");
     fireEvent.click(toggle);
     expect(changed).toMatchObject({ llmFilter: { enabled: true } });
@@ -198,7 +196,6 @@ describe("LlmFilterSection", () => {
         onChange={() => {}}
       />,
     );
-    fireEvent.click(screen.getByText("rules.filters.llmFilter"));
     const slider = screen.getByRole("slider");
     expect(slider).toHaveValue("0.7");
     expect(screen.getByText(/70%/)).toBeInTheDocument();

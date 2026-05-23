@@ -29,6 +29,7 @@ class LoversLabRuleConfig(BaseModel):
     accessMode: Literal["rss", "page", "both"] = Field(default="rss", description="Access mode: RSS feed, page scraping, or both")
     feedUrls: list[str] = Field(default_factory=list, description="RSS feed URLs (required for RSS mode)")
     pageUrls: list[str] = Field(default_factory=list, description="Page URLs (required for page mode)")
+    browserProfile: str = Field(default="loverslab", description="Persistent browser profile name for page mode")
     updatedSinceDays: int | None = Field(default=None, ge=1, le=365, description="Monitor within this many days")
     maxItemsPerRun: int = Field(default=50, ge=1, le=100, description="Max items per scraping run")
     updateDetection: Literal[
@@ -40,6 +41,7 @@ class LoversLabRuleConfig(BaseModel):
     @field_validator("feedUrls", "pageUrls")
     @classmethod
     def validate_loverslab_urls(cls, value: list[str]) -> list[str]:
+        """校验输入是否符合业务约束。"""
         validated: list[str] = []
         for raw_url in value:
             url = (raw_url or "").strip()
@@ -62,6 +64,7 @@ class LoversLabRuleConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_access_mode_requirements(self):
+        """校验输入是否符合业务约束。"""
         if self.accessMode == "rss" and not self.feedUrls:
             raise ValueError("feedUrls is required when accessMode is rss")
         if self.accessMode == "page" and not self.pageUrls:
@@ -113,6 +116,12 @@ class WatchRuleCreate(BaseModel):
     filters: CommonRuleFilters = Field(default_factory=CommonRuleFilters, description="Common filtering rules")
     notification: NotificationConfig = Field(default_factory=NotificationConfig, description="Notification settings")
 
+    @model_validator(mode="after")
+    def validate_source_config_matches_source(self):
+        """校验输入是否符合业务约束。"""
+        _validate_source_config_pair(self.source, self.sourceConfig)
+        return self
+
 
 class WatchRuleUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100, description="Rule name")
@@ -122,6 +131,24 @@ class WatchRuleUpdate(BaseModel):
     sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig | None = Field(default=None, description="Platform-specific config")
     filters: CommonRuleFilters | None = Field(default=None, description="Common filtering rules")
     notification: NotificationConfig | None = Field(default=None, description="Notification settings")
+
+    @model_validator(mode="after")
+    def validate_source_config_matches_source(self):
+        """校验输入是否符合业务约束。"""
+        if self.source is not None and self.sourceConfig is not None:
+            _validate_source_config_pair(self.source, self.sourceConfig)
+        return self
+
+
+def _validate_source_config_pair(
+    source: Literal["nexusmods", "loverslab"],
+    source_config: NexusModsRuleConfig | LoversLabRuleConfig,
+) -> None:
+    """校验内部输入是否符合业务约束。"""
+    if source == "nexusmods" and not isinstance(source_config, NexusModsRuleConfig):
+        raise ValueError("sourceConfig must be NexusModsRuleConfig when source is nexusmods")
+    if source == "loverslab" and not isinstance(source_config, LoversLabRuleConfig):
+        raise ValueError("sourceConfig must be LoversLabRuleConfig when source is loverslab")
 
 
 class WatchRuleRead(BaseModel):

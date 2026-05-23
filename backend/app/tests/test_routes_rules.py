@@ -6,8 +6,10 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.adapters.base import BaseAdapter
+from app.api import routes_rules
 from app.db import get_session
 from app.main import app as fastapi_app
+from app.models.mod import Mod
 from app.models.mod_item import ModItem
 
 
@@ -259,6 +261,20 @@ class TestPatchRule:
         response = client.patch(f"/api/rules/{rule_id}", json=patch_payload)
         assert response.status_code == 422
 
+    def test_patch_rule_rejects_mismatched_source_config(self, client):
+        create_resp = client.post("/api/rules", json=make_nexusmods_payload())
+        rule_id = create_resp.json()["id"]
+
+        patch_payload = {
+            "sourceConfig": {
+                "gameLabel": "Skyrim SE",
+                "accessMode": "rss",
+                "feedUrls": ["https://www.loverslab.com/files/rss/"],
+            }
+        }
+        response = client.patch(f"/api/rules/{rule_id}", json=patch_payload)
+        assert response.status_code == 422
+
 
 class TestGetRules:
     def test_get_rules_with_source_filter(self, client):
@@ -305,6 +321,43 @@ class TestImportExportRules:
         assert data["rules"][0]["name"] == "Exported Rule"
         assert data["rules"][0]["intervalMinutes"] == 360
 
+    def test_import_url_blocks_private_redirect_before_following(self, client, monkeypatch):
+        requested_urls: list[str] = []
+
+        class FakeResponse:
+            status_code = 302
+            headers = {"Location": "http://127.0.0.1/rules.json"}
+
+            def raise_for_status(self):
+                raise AssertionError("redirect response should not be treated as final")
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def get(self, url):
+                requested_urls.append(url)
+                return FakeResponse()
+
+        def fake_require_public_host(hostname):
+            if hostname == "127.0.0.1":
+                raise routes_rules.HTTPException(status_code=422, detail="Private or loopback hosts are not allowed")
+            return {"203.0.113.10"}
+
+        monkeypatch.setattr(routes_rules.httpx, "Client", FakeClient)
+        monkeypatch.setattr(routes_rules, "_require_public_host", fake_require_public_host)
+
+        response = client.post("/api/rules/import", json={"url": "https://example.com/rules.json"})
+
+        assert response.status_code == 422
+        assert requested_urls == ["https://example.com/rules.json"]
+
 
 class TestDryRun:
     def test_test_rule_nexusmods_dry_run(self, client, mock_nexus_adapter):
@@ -320,6 +373,32 @@ class TestDryRun:
         assert "items" in data
         assert isinstance(data["items"], list)
         assert data["scanned"] == 1
+        assert data["items"][0]["external_id"] == "1001"
+
+    def test_test_rule_preview_keeps_existing_matches_with_rejection_reason(self, client, session, mock_nexus_adapter):
+        session.add(
+            Mod(
+                source="nexusmods",
+                external_id="1001",
+                game="Skyrim Special Edition",
+                title="Existing Mod",
+                url="https://example.com/mod/1001",
+                first_seen_at="2025-01-01T00:00:00+00:00",
+                last_seen_at="2025-01-01T00:00:00+00:00",
+            )
+        )
+        session.commit()
+
+        payload = make_nexusmods_payload(name="DryRun Existing Preview")
+        request_body = {"rule": payload, "dryRun": True}
+
+        response = client.post("/api/rules/test", json=request_body)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["passedLlmFilters"] == 1
+        assert data["rejectedReasons"] == {"already_exists_or_ignored": 1}
+        assert data["rejectedItems"][0]["reason"] == "already_exists_or_ignored"
         assert data["items"][0]["external_id"] == "1001"
 
     @pytest.mark.parametrize(

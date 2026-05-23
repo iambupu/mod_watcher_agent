@@ -79,10 +79,10 @@ export const NexusModsRulePanel: React.FC = () => {
   );
 
   const selectClass =
-    "rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm bg-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+    "h-10 rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm bg-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="grid gap-5 lg:grid-cols-3">
       <div>
         <label className="text-sm font-medium text-gray-700">
           {t("rules.nexusmods.gameDomainName")}
@@ -95,6 +95,7 @@ export const NexusModsRulePanel: React.FC = () => {
           onBlur={(e) => handleBlur("gameDomainName", e.target.value)}
           placeholder={t("rules.nexusmods.gameDomainNamePlaceholder")}
           error={errors.gameDomainName}
+          className="h-10 rounded-lg border-slate-300"
         />
         <p className="mt-1 text-xs leading-5 text-gray-500">
           {t("rules.nexusmods.gameDomainNameHelp")}
@@ -113,6 +114,7 @@ export const NexusModsRulePanel: React.FC = () => {
           onBlur={(e) => handleBlur("updatedSinceDays", e.target.value)}
           placeholder={t("rules.nexusmods.updatedSinceDaysPlaceholder") || "7"}
           error={errors.updatedSinceDays}
+          className="h-10 rounded-lg border-slate-300"
         />
         <p className="mt-1 text-xs leading-5 text-gray-500">
           {t("rules.nexusmods.updatedSinceDaysHelp")}
