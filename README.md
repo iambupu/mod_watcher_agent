@@ -9,15 +9,7 @@
 核心原则：只保存公开元数据，不下载、不镜像、不绕过权限。
 
 <p align="center">
-  <img src="docs/ModWatcherAgent.png" alt="ModWatcherAgent" width="95%" />
-</p>
-
-<p align="center">
-  <img src="docs/ModWatcherAgentFavorites.png" alt="ModWatcherAgentFavorites" width="95%" />
-</p>
-
-<p align="center">
-  <img src="docs/ModWatcherAgentAgent.png" alt="ModWatcherAgentAgent" width="95%" />
+  <img src="docs/Mod%20Watcher%20Agent.png" alt="Mod Watcher Agent 界面截图" width="95%" />
 </p>
 
 ## 目录
