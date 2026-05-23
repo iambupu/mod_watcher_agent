@@ -8,6 +8,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models.mod import Mod
+from app.models.settings import Setting
 from app.models.summary import ModSummary
 
 
@@ -89,6 +90,103 @@ class TestListMods:
         data = response.json()
         assert data["total"] == 1
         assert data["items"][0]["title"] == "Awesome Sword"
+
+    def test_search_filter_matches_category_and_summary(self, client, session):
+        outfit = Mod(
+            source="nexusmods",
+            external_id="1",
+            game="Stellar Blade",
+            category="Outfits",
+            title="Ocean String",
+            url="https://a.com",
+            first_seen_at="2025-01-01T00:00:00",
+            last_seen_at="2025-01-01T00:00:00",
+        )
+        patch = Mod(
+            source="nexusmods",
+            external_id="2",
+            game="Stellar Blade",
+            category="Patches",
+            title="Patch Collection",
+            url="https://b.com",
+            first_seen_at="2025-01-02T00:00:00",
+            last_seen_at="2025-01-02T00:00:00",
+        )
+        session.add_all([outfit, patch])
+        session.commit()
+        session.refresh(patch)
+        session.add(
+            ModSummary(
+                mod_id=patch.id,
+                language="zh-CN",
+                summary_type="brief",
+                content="修复摄像机控制问题。",
+                model="test",
+                generated_at="2025-01-02T00:00:00",
+            )
+        )
+        session.commit()
+
+        category_response = client.get("/api/mods?search=女性服装")
+        summary_response = client.get("/api/mods?search=摄像机")
+
+        assert category_response.json()["items"][0]["category"] == "Outfits"
+        assert summary_response.json()["items"][0]["title"] == "Patch Collection"
+
+    def test_search_filter_matches_visible_fields_without_summaries(self, client, session):
+        mod = Mod(
+            source="loverslab",
+            external_id="48837",
+            game="X-Change Life",
+            game_domain="x-change-life",
+            category=None,
+            title="Valentina playable character",
+            url="https://www.loverslab.com/files/file/48837-valentina-playable-character/",
+            tags_json='["playable", "character"]',
+            original_summary=None,
+            first_seen_at="2025-01-01T00:00:00",
+            last_seen_at="2025-01-01T00:00:00",
+        )
+        session.add(mod)
+        session.commit()
+
+        id_response = client.get("/api/mods?search=48837")
+        url_response = client.get("/api/mods?search=valentina-playable")
+        tag_response = client.get("/api/mods?search=playable")
+
+        assert id_response.json()["items"][0]["title"] == "Valentina playable character"
+        assert url_response.json()["items"][0]["title"] == "Valentina playable character"
+        assert tag_response.json()["items"][0]["title"] == "Valentina playable character"
+
+    def test_search_filter_matches_translated_summary_when_original_summary_missing(self, client, session):
+        mod = Mod(
+            source="nexusmods",
+            external_id="camera",
+            game="Stellar Blade",
+            title="Improved Camera Control",
+            url="https://example.com/camera",
+            original_summary=None,
+            first_seen_at="2025-01-01T00:00:00",
+            last_seen_at="2025-01-01T00:00:00",
+        )
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        session.add(
+            ModSummary(
+                mod_id=mod.id,
+                language="zh-CN",
+                summary_type="brief",
+                content="改进摄像机控制和锁定目标。",
+                model="test",
+                generated_at="2025-01-01T00:00:00",
+            )
+        )
+        session.commit()
+
+        response = client.get("/api/mods?search=摄像机控制")
+
+        assert response.json()["items"][0]["title"] == "Improved Camera Control"
 
     def test_game_filter(self, client, session):
         mods = [
@@ -260,6 +358,37 @@ class TestListMods:
         response = client.get("/api/mods")
         assert response.status_code == 200
         assert response.json()["items"][0]["translated_summary"] is None
+
+    def test_list_queues_missing_summaries_when_provider_chain_enabled(self, client, session, monkeypatch):
+        queued: list[tuple[list[int], str]] = []
+
+        async def fake_run_missing_summaries_job(mod_ids, language):
+            queued.append((mod_ids, language))
+
+        monkeypatch.setattr("app.api.routes_mods.run_missing_summaries_job", fake_run_missing_summaries_job)
+        mod = make_mod(
+            external_id="provider-chain",
+            title="Provider Chain Mod",
+            original_summary="Summary to translate",
+        )
+        session.add(mod)
+        session.add(Setting(
+            key="llm_providers_json",
+            value='[{"provider":"deepseek","enabled":true,"priority":1,"model":"deepseek-v4-flash","api_key":"valid-key","base_url":"https://api.deepseek.com/v1"}]',
+            updated_at="2025-01-01T00:00:00",
+        ))
+        session.add(Setting(
+            key="summary_language",
+            value="zh-CN",
+            updated_at="2025-01-01T00:00:00",
+        ))
+        session.commit()
+        session.refresh(mod)
+
+        response = client.get("/api/mods")
+
+        assert response.status_code == 200
+        assert queued == [([mod.id], "zh-CN")]
 
     def test_combined_filters(self, client, session):
         mods = [

@@ -5,12 +5,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.db import get_session
-from app.schemas.mod import ModGameOption, ModList, ModRead
-from app.services.mod_service import ModService
-from app.services.summary_service import (
+from app.jobs.generate_summaries import (
     run_missing_summaries_job,
     run_single_summary_job,
 )
+from app.schemas.mod import ModGameOption, ModList, ModRead
+from app.services.mod_service import ModService
 
 router = APIRouter(prefix="/api/mods", tags=["mods"])
 SessionDep = Annotated[Session, Depends(get_session)]

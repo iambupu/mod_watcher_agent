@@ -43,18 +43,18 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
   const { t } = useTranslation();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <div>
-        <h3 className="text-lg font-semibold">{t("settings.notifications")}</h3>
+        <h3 className="text-base font-semibold text-slate-900">{t("settings.notifications")}</h3>
       </div>
 
-      <div className="border rounded-lg p-4">
-        <label className="flex items-center gap-3 cursor-pointer">
+      <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+        <label className="flex cursor-pointer items-center gap-3">
           <input
             type="checkbox"
             checked={notificationsEnabled}
             onChange={(e) => onNotificationsEnabledChange(e.target.checked)}
-            className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
           />
           <div>
             <p className="text-sm font-medium text-gray-700">{t("settings.notificationsToggleLabel")}</p>
@@ -63,14 +63,14 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
         </label>
       </div>
 
-      <div className="border rounded-lg p-4">
-        <label className="flex items-center gap-3 cursor-pointer">
+      <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+        <label className="flex cursor-pointer items-center gap-3">
           <input
             type="checkbox"
             checked={systemNotificationsEnabled}
             onChange={(e) => onSystemNotificationsEnabledChange(e.target.checked)}
             disabled={!notificationsEnabled}
-            className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+            className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
           />
           <div>
             <p className="text-sm font-medium text-gray-700">{t("settings.systemNotifications")}</p>
@@ -79,7 +79,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
         </label>
       </div>
 
-      <div className="border rounded-lg p-4 space-y-3">
+      <div className="space-y-3 rounded-lg border border-slate-200 p-3">
         <label className="flex items-center gap-2 font-medium text-gray-700">
           <input
             type="checkbox"
@@ -93,21 +93,23 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
 
         {telegramEnabled && (
           <>
-            <Input
-              label={t("settings.telegramBotToken")}
-              type="password"
-              value={telegramBotToken}
-              onChange={(e) => onTelegramBotTokenChange(e.target.value)}
-              placeholder="123456:ABC-DEF1234ghikl..."
-              help={{ titleKey: "settings.help.telegramToken.title", stepsKey: "settings.help.telegramToken.steps", stepCount: 4 }}
-            />
-            <Input
-              label={t("settings.telegramChatId")}
-              value={telegramChatId}
-              onChange={(e) => onTelegramChatIdChange(e.target.value)}
-              placeholder="123456789"
-              help={{ titleKey: "settings.help.telegramChatId.title", stepsKey: "settings.help.telegramChatId.steps", stepCount: 5 }}
-            />
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input
+                label={t("settings.telegramBotToken")}
+                type="password"
+                value={telegramBotToken}
+                onChange={(e) => onTelegramBotTokenChange(e.target.value)}
+                placeholder="123456:ABC-DEF1234ghikl..."
+                help={{ titleKey: "settings.help.telegramToken.title", stepsKey: "settings.help.telegramToken.steps", stepCount: 4 }}
+              />
+              <Input
+                label={t("settings.telegramChatId")}
+                value={telegramChatId}
+                onChange={(e) => onTelegramChatIdChange(e.target.value)}
+                placeholder="123456789"
+                help={{ titleKey: "settings.help.telegramChatId.title", stepsKey: "settings.help.telegramChatId.steps", stepCount: 5 }}
+              />
+            </div>
             {onTestTelegram && (
               <Button size="sm" variant="outline" onClick={onTestTelegram}>
                 {t("common.test")} Telegram
@@ -117,7 +119,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
         )}
       </div>
 
-      <div className="border rounded-lg p-4 space-y-3">
+      <div className="space-y-3 rounded-lg border border-slate-200 p-3">
         <label className="flex items-center gap-2 font-medium text-gray-700">
           <input
             type="checkbox"
