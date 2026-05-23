@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 async def discover_new_mods() -> dict:
+    """处理当前模块的业务逻辑并返回结果。"""
     with Session(engine) as session:
         rules = session.exec(select(WatchRule).where(WatchRule.enabled.is_(True))).all()
         notification_service = NotificationService(session)

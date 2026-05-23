@@ -1,4 +1,3 @@
-import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -9,17 +8,17 @@ from sqlmodel import Session
 
 from app.db import engine
 from app.jobs.scheduler import scheduler
-from app.logger import redact_sensitive_text
+from app.jobs.tracked_jobs import (
+    create_job_run_record,
+    mark_job_failed,
+    mark_job_running,
+    mark_job_succeeded,
+)
 from app.models.job_run import JobRun
-from app.services.system_notification_service import SystemNotificationService
 
 logger = logging.getLogger(__name__)
 
 JobHandler = Callable[[], Awaitable[dict[str, Any]]]
-
-
-def utc_now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def create_job_run(
@@ -27,19 +26,12 @@ def create_job_run(
     job_name: str,
     metadata: dict[str, Any] | None = None,
 ) -> JobRun:
-    job_run = JobRun(
-        job_name=job_name,
-        status="queued",
-        started_at=utc_now(),
-        metadata_json=json.dumps(metadata or {}, ensure_ascii=False),
-    )
-    session.add(job_run)
-    session.commit()
-    session.refresh(job_run)
-    return job_run
+    """创建并持久化对应的数据。"""
+    return create_job_run_record(session, job_name, metadata)
 
 
 def enqueue_job_run(job_run_id: int, handler: JobHandler) -> None:
+    """处理当前模块的业务逻辑并返回结果。"""
     scheduler.add_job(
         run_job,
         DateTrigger(run_date=datetime.now(UTC)),
@@ -52,15 +44,13 @@ def enqueue_job_run(job_run_id: int, handler: JobHandler) -> None:
 
 
 async def run_job(job_run_id: int, handler: JobHandler) -> None:
+    """执行任务流程并返回结果。"""
     with Session(engine) as session:
         job_run = session.get(JobRun, job_run_id)
         if job_run is None:
             logger.warning("Manual job %s no longer exists", job_run_id)
             return
-        job_run.status = "running"
-        job_run.started_at = utc_now()
-        session.add(job_run)
-        session.commit()
+        mark_job_running(session, job_run)
 
     try:
         result = await handler()
@@ -70,27 +60,11 @@ async def run_job(job_run_id: int, handler: JobHandler) -> None:
             job_run = session.get(JobRun, job_run_id)
             if job_run is None:
                 return
-            job_run.status = "failed"
-            job_run.finished_at = utc_now()
-            redacted_error = redact_sensitive_text(str(exc))
-            job_run.error_message = redacted_error
-            session.add(job_run)
-            SystemNotificationService(session).create_event(
-                "job_failed",
-                "任务执行失败",
-                f"{job_run.job_name}: {redacted_error}",
-            )
-            session.commit()
+            mark_job_failed(session, job_run, exc)
         return
 
     with Session(engine) as session:
         job_run = session.get(JobRun, job_run_id)
         if job_run is None:
             return
-        job_run.status = "succeeded"
-        job_run.finished_at = utc_now()
-        job_run.items_scanned = int(result.pop("items_scanned", 0) or 0)
-        job_run.items_matched = int(result.pop("items_matched", 0) or 0)
-        job_run.metadata_json = json.dumps(result, ensure_ascii=False)
-        session.add(job_run)
-        session.commit()
+        mark_job_succeeded(session, job_run, result)
