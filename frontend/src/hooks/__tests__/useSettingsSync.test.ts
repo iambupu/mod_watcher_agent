@@ -3,7 +3,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { useUIStore } from '@/stores/uiStore';
 
 vi.mock('@/api/settings', () => ({
-  getSettings: vi.fn(),
+  fetchSettings: vi.fn(),
 }));
 
 describe('useSettingsSync', () => {
@@ -13,8 +13,8 @@ describe('useSettingsSync', () => {
   });
 
   it('should fetch settings and update summaryMode in uiStore', async () => {
-    const { getSettings } = await import('@/api/settings');
-    (getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+    const { fetchSettings } = await import('@/api/settings');
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       summaryMode: 'bilingual',
     });
 
@@ -22,7 +22,7 @@ describe('useSettingsSync', () => {
     renderHook(() => useSettingsSync());
 
     await waitFor(() => {
-      expect(getSettings).toHaveBeenCalledTimes(1);
+      expect(fetchSettings).toHaveBeenCalledTimes(1);
     });
 
     const state = useUIStore.getState();
@@ -30,8 +30,8 @@ describe('useSettingsSync', () => {
   });
 
   it('should handle API failure gracefully without crashing', async () => {
-    const { getSettings } = await import('@/api/settings');
-    (getSettings as ReturnType<typeof vi.fn>).mockRejectedValue(
+    const { fetchSettings } = await import('@/api/settings');
+    (fetchSettings as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error('Network error')
     );
 
@@ -42,7 +42,7 @@ describe('useSettingsSync', () => {
     }).not.toThrow();
 
     await waitFor(() => {
-      expect(getSettings).toHaveBeenCalledTimes(1);
+      expect(fetchSettings).toHaveBeenCalledTimes(1);
     });
 
     const state = useUIStore.getState();
@@ -50,21 +50,21 @@ describe('useSettingsSync', () => {
   });
 
   it('should not fetch settings again within sync ttl', async () => {
-    const { getSettings } = await import('@/api/settings');
-    (getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+    const { fetchSettings } = await import('@/api/settings');
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       summaryMode: 'translated',
     });
 
     const { useSettingsSync } = await import('@/hooks/useSettingsSync');
     renderHook(() => useSettingsSync());
     await waitFor(() => {
-      expect(getSettings).toHaveBeenCalledTimes(1);
+      expect(fetchSettings).toHaveBeenCalledTimes(1);
     });
 
     renderHook(() => useSettingsSync());
     await waitFor(() => {
       expect(useUIStore.getState().settingsSyncedAt).toBeGreaterThan(0);
     });
-    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(fetchSettings).toHaveBeenCalledTimes(1);
   });
 });

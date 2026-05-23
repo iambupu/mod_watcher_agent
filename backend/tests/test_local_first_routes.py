@@ -69,11 +69,40 @@ def test_settings_import_reuses_settings_validation(client: TestClient) -> None:
     assert "watchdog_check_interval_minutes" in resp.json()["detail"]
 
 
+def test_google_search_engine_id_is_visible_and_exported(
+    client: TestClient,
+    session: Session,
+) -> None:
+    session.add(Setting(
+        key="google_search_api_key",
+        value="google-secret-key",
+        updated_at="2026-01-01T00:00:00+00:00",
+    ))
+    session.add(Setting(
+        key="google_search_engine_id",
+        value="public-cx-id",
+        updated_at="2026-01-01T00:00:00+00:00",
+    ))
+    session.commit()
+
+    get_resp = client.get("/api/settings")
+    export_resp = client.post("/api/settings/export")
+
+    assert get_resp.status_code == 200
+    settings_payload = get_resp.json()["settings"]
+    assert settings_payload["google_search_api_key"] == "********"
+    assert settings_payload["google_search_engine_id"] == "public-cx-id"
+    assert export_resp.status_code == 200
+    exported = export_resp.json()
+    assert "google_search_api_key" not in exported
+    assert exported["google_search_engine_id"] == "public-cx-id"
+
+
 def test_settings_rejects_token_profile_without_admin_token(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("app.api.routes_settings.settings.MW_ADMIN_TOKEN", "")
+    monkeypatch.setattr("app.services.settings_payload_service.settings.MW_ADMIN_TOKEN", "")
 
     resp = client.put("/api/settings", json={"settings": {"access_profile": "local_strict"}})
 
@@ -206,3 +235,46 @@ def test_conversation_state_isolation_and_stale_gate(client: TestClient, session
     stale_payload["client_updated_at"] = stale
     conflict = client.post("/api/agent/conversation-state", json=stale_payload)
     assert conflict.status_code == 409
+
+
+def test_conversation_state_orders_messages_by_session_then_message_order(
+    client: TestClient,
+    session: Session,
+) -> None:
+    session.add(
+        AgentMessage(
+            message_id="s1-a",
+            role="user",
+            text="s1 first",
+            session_id="s1",
+            created_at="2026-01-01T00:00:00+00:00",
+            sort_index=0,
+        )
+    )
+    session.add(
+        AgentMessage(
+            message_id="s1-b",
+            role="assistant",
+            text="s1 second",
+            session_id="s1",
+            created_at="2026-01-01T00:00:01+00:00",
+            sort_index=1,
+        )
+    )
+    session.commit()
+    session.add(
+        AgentMessage(
+            message_id="s2-a",
+            role="assistant",
+            text="s2 first",
+            session_id="s2",
+            created_at="2026-01-01T00:00:02+00:00",
+            sort_index=0,
+        )
+    )
+    session.commit()
+
+    response = client.get("/api/agent/conversation-state")
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["messages"]] == ["s1-a", "s1-b", "s2-a"]
