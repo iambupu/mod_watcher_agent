@@ -45,6 +45,7 @@ MOD_FIELDS = """
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
+    """解析原始内容并返回结构化结果。"""
     if not value:
         return None
     value = value.replace("Z", "+00:00")
@@ -52,6 +53,7 @@ def _parse_datetime(value: str | None) -> datetime | None:
 
 
 def _unix_timestamp_days_ago(days: int) -> str:
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     cutoff = datetime.now(UTC) - timedelta(days=days)
     return str(int(cutoff.timestamp()))
 
@@ -62,11 +64,13 @@ class NexusModsAdapter(BaseAdapter):
     source = "nexusmods"
 
     def __init__(self, api_key: str | None = None):
+        """初始化实例并保存运行所需的依赖。"""
         self.api_key = api_key or settings.NEXUS_API_KEY
 
     async def _graphql_query(
         self, query: str, variables: dict | None = None
     ) -> dict:
+        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         headers = {
             "Content-Type": "application/json",
             "Application-Name": "ModWatcherAgent",
@@ -93,6 +97,7 @@ class NexusModsAdapter(BaseAdapter):
             return data
 
     def _build_filter(self, config: NexusModsRuleConfig) -> dict:
+        """构建内部流程需要的数据结构。"""
         clauses: list[dict] = [
             {
                 "gameDomainName": [
@@ -125,6 +130,7 @@ class NexusModsAdapter(BaseAdapter):
         return {"op": "AND", "filter": clauses}
 
     def _build_sort(self, sort_by: str) -> list[dict]:
+        """构建内部流程需要的数据结构。"""
         field_map = {
             "updatedAt_desc": "updatedAt",
             "createdAt_desc": "createdAt",
@@ -135,6 +141,7 @@ class NexusModsAdapter(BaseAdapter):
         return [{field: {"direction": "DESC"}}]
 
     async def fetch(self, source_config_json: str) -> list[ModItem]:
+        """请求外部数据并返回标准化结果。"""
         try:
             config = NexusModsRuleConfig.model_validate_json(source_config_json)
         except Exception:
@@ -191,6 +198,7 @@ class NexusModsAdapter(BaseAdapter):
     async def fetch_mod_detail(
         self, external_id: str, game_domain: str | None = None
     ) -> ModItem | None:
+        """请求外部数据并返回标准化结果。"""
         mod_id = int(external_id)
 
         query = f"""
@@ -230,6 +238,7 @@ class NexusModsAdapter(BaseAdapter):
         return self.normalize(mod_node)
 
     def normalize(self, raw_item: dict) -> ModItem:
+        """规范化输入数据，供后续流程使用。"""
         game = raw_item.get("game") or {}
         game_domain = game.get("domainName", "")
         category = raw_item.get("category")

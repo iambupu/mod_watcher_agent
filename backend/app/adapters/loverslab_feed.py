@@ -21,6 +21,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from app.adapters.base import BaseAdapter
+from app.adapters.loverslab_common import loverslab_mod_item_from_raw
 from app.models.mod_item import ModItem
 from app.schemas.watch_rule import LoversLabRuleConfig
 
@@ -49,11 +50,13 @@ class LoversLabFeedAdapter(BaseAdapter):
     # and normalize, both provided below.
 
     def __init__(self, **kwargs: Any) -> None:
+        """初始化实例并保存运行所需的依赖。"""
         self._client: httpx.AsyncClient | None = None
 
     # ── HTTP helpers ────────────────────────────────────────────────────
 
     async def _get_client(self) -> httpx.AsyncClient:
+        """读取内部状态或派生结果。"""
         if self._client is None:
             proxy = self._detect_proxy()
             kwargs: dict[str, Any] = {
@@ -108,6 +111,7 @@ class LoversLabFeedAdapter(BaseAdapter):
         raise ValueError("Too many redirects while fetching LoversLab RSS")
 
     async def _read_checked_feed_response(self, response: httpx.Response) -> bytes:
+        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         response.raise_for_status()
 
         final_url = str(response.url)
@@ -132,6 +136,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @classmethod
     def _validate_loverslab_url(cls, url: str) -> str:
+        """校验内部输入是否符合业务约束。"""
         normalized = (url or "").strip()
         parsed = urlsplit(normalized)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -142,11 +147,13 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _is_allowed_loverslab_url(url: str) -> bool:
+        """判断内部条件是否成立。"""
         host = (urlsplit(url).hostname or "").lower()
         return host in ALLOWED_HOSTS
 
     @staticmethod
     def _is_cloudflare_body(text: str) -> bool:
+        """判断内部条件是否成立。"""
         return "cloudflare" in text.lower() and "challenge" in text.lower()
 
     # ── BaseAdapter interface ────────────────────────────────────────────
@@ -199,47 +206,17 @@ class LoversLabFeedAdapter(BaseAdapter):
     async def fetch_mod_detail(
         self, external_id: str, game_domain: str | None = None
     ) -> ModItem | None:
+        """请求外部数据并返回标准化结果。"""
         return None
 
     def normalize(self, raw_item: dict) -> ModItem:
         """Build ModItem with *updated_at* guaranteed as ``datetime | None``."""
-        updated_value: Any = raw_item.get("updated_at_remote")
-        updated_at: datetime | None = None
-        if isinstance(updated_value, datetime):
-            updated_at = updated_value
-        elif isinstance(updated_value, str):
-            try:
-                parsed = datetime.fromisoformat(updated_value.replace("Z", "+00:00"))
-                updated_at = (
-                    parsed
-                    if parsed.tzinfo is not None
-                    else parsed.replace(tzinfo=UTC)
-                )
-            except (ValueError, TypeError):
-                updated_at = None
-
-        return ModItem(
-            source_id=raw_item.get("external_id", ""),
-            source=raw_item.get("source", "loverslab"),
-            name=raw_item.get("title", ""),
-            game=raw_item.get("game", ""),
-            url=raw_item.get("url", ""),
-            summary=raw_item.get("original_summary") or "",
-            author=raw_item.get("author") or "",
-            downloads=raw_item.get("downloads") or 0,
-            endorsements=raw_item.get("endorsements") or 0,
-            likes=raw_item.get("likes") or 0,
-            categories=raw_item.get("categories", []),
-            tags=raw_item.get("tags", []),
-            thumbnail_url=raw_item.get("thumbnail_url") or "",
-            updated_at=updated_at,
-            is_adult=raw_item.get("adult_content", False),
-            raw=raw_item,
-        )
+        return loverslab_mod_item_from_raw(raw_item)
 
     # ── Entry normalisation ─────────────────────────────────────────────
 
     def _normalize_entry(self, entry, config: LoversLabRuleConfig) -> dict | None:
+        """规范化内部数据，供后续流程使用。"""
         link = (entry.get("link", "") or "").strip()
         if not link:
             return None
@@ -317,6 +294,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _extract_file_url_from_description(entry: Any) -> str | None:
+        """从原始内容中提取目标字段。"""
         html = LoversLabFeedAdapter._extract_summary_html(entry)
         if not html:
             return None
@@ -325,6 +303,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _canonicalize_url(url: str) -> str:
+        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         url = url.lower().strip()
         for prefix in ("https://", "http://"):
             if url.startswith(prefix):
@@ -335,6 +314,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _extract_tags(entry: Any) -> list[str]:
+        """从原始内容中提取目标字段。"""
         out: list[str] = []
         for t in entry.get("tags") or []:
             if isinstance(t, dict):
@@ -347,6 +327,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _extract_summary_html(entry: Any) -> str:
+        """从原始内容中提取目标字段。"""
         for key in ("summary", "description"):
             val = entry.get(key)
             if val:
@@ -361,6 +342,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _clean_summary(html: str) -> str:
+        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         if not html:
             return ""
         tree = HTMLParser(html)
@@ -375,6 +357,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _parse_feed_datetime(entry) -> datetime | None:
+        """解析原始内容并返回结构化结果。"""
         for key in ("updated_parsed", "published_parsed"):
             parsed = entry.get(key)
             if parsed:
@@ -395,6 +378,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _parse_published_iso(entry) -> str | None:
+        """解析原始内容并返回结构化结果。"""
         pp = entry.get("published_parsed")
         if pp:
             try:
