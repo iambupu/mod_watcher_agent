@@ -20,6 +20,7 @@ DESKTOP_DISPATCH_EVENT_TYPES = {
 class SystemNotificationService:
 
     def __init__(self, session: Session):
+        """初始化实例并保存运行所需的依赖。"""
         self.session = session
 
     def create_event(
@@ -30,6 +31,7 @@ class SystemNotificationService:
         mod_id: int | None = None,
         related_url: str | None = None,
     ) -> SystemNotificationEvent:
+        """创建并持久化对应的数据。"""
         now = datetime.now(UTC).isoformat()
         event = SystemNotificationEvent(
             event_type=event_type,
@@ -53,6 +55,7 @@ class SystemNotificationService:
         return event
 
     def _desktop_notifications_enabled(self) -> bool:
+        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         settings = SettingsService(self.session)
         return (
             settings.get("notifications_enabled") != "false"
@@ -62,6 +65,7 @@ class SystemNotificationService:
     def get_recent_events(
         self, since_id: int = 0, limit: int = 50
     ) -> list[SystemNotificationEvent]:
+        """读取并返回对应的数据。"""
         stmt = (
             select(SystemNotificationEvent)
             .where(SystemNotificationEvent.id > since_id)
@@ -71,6 +75,7 @@ class SystemNotificationService:
         return list(self.session.exec(stmt).all())
 
     def mark_seen(self, event_ids: list[int]) -> int:
+        """标记状态变更并返回结果。"""
         stmt = select(SystemNotificationEvent).where(
             SystemNotificationEvent.id.in_(event_ids)
         )
@@ -87,6 +92,7 @@ class SystemNotificationService:
         event_ids: list[int],
         limit: int = 50,
     ) -> list[SystemNotificationEvent]:
+        """读取并返回对应的数据。"""
         if not event_ids:
             return []
         deduped_ids = sorted({event_id for event_id in event_ids if event_id > 0})

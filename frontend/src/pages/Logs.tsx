@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   RefreshCw,
   ChevronDown,
@@ -10,6 +11,8 @@ import {
   Activity,
   Settings2,
   Link2,
+  Pause,
+  Play,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -17,7 +20,7 @@ import { Badge } from "@/components/ui/Badge";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { MarkdownText } from "@/components/MarkdownText";
 import { fetchLogs, openLogDirectory } from "@/api/logging";
-import { fetchJobRuns, fetchSchedulerStatus, type JobRun, type SchedulerJob } from "@/api/jobs";
+import { fetchJobRuns, fetchSchedulerStatus, pauseScheduler, resumeScheduler, type JobRun, type SchedulerJob } from "@/api/jobs";
 
 const levelBadge: Record<string, "default" | "info" | "warning" | "danger"> = {
   DEBUG: "default",
@@ -43,11 +46,15 @@ function LogSkeleton() {
 
 const Logs: React.FC = () => {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [level, setLevel] = useState<string>("ALL");
   const [search, setSearch] = useState("");
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"logs" | "finished" | "running">("logs");
-  const listEndRef = useRef<HTMLDivElement>(null);
+  const [activeTab, setActiveTab] = useState<"logs" | "finished" | "running">(() => {
+    const tab = searchParams.get("tab");
+    return tab === "finished" || tab === "running" ? tab : "logs";
+  });
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["logs", level, search],
@@ -82,10 +89,23 @@ const Logs: React.FC = () => {
     refetchJobs();
     refetchSchedulerStatus();
   };
+  const schedulerMutation = useMutation({
+    mutationFn: (nextRunning: boolean) => (nextRunning ? resumeScheduler() : pauseScheduler()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["scheduler-status"] });
+      queryClient.invalidateQueries({ queryKey: ["job-runs"] });
+    },
+  });
+
+  const switchTab = (tab: "logs" | "finished" | "running") => {
+    setActiveTab(tab);
+    setSearchParams(tab === "logs" ? {} : { tab });
+  };
 
   useEffect(() => {
-    listEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [entries]);
+    const tab = searchParams.get("tab");
+    setActiveTab(tab === "finished" || tab === "running" ? tab : "logs");
+  }, [searchParams]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -100,7 +120,7 @@ const Logs: React.FC = () => {
                   <h2 className="text-2xl font-bold text-gray-900">{t("logs.title")}</h2>
                   <button
                     type="button"
-                    title="打开日志目录"
+                    title={t("logs.openDirectory")}
                     onClick={async () => {
                       try {
                         await openLogDirectory();
@@ -115,7 +135,7 @@ const Logs: React.FC = () => {
                 </div>
                 <p className="text-sm text-gray-500 mt-1">
                   {t("common.total", { total: entries.length })}
-                  <span className="ml-2 text-xs text-gray-400">本地时区显示</span>
+                  <span className="ml-2 text-xs text-gray-400">{t("logs.localTimezone")}</span>
                   {isFetching && (
                     <span className="ml-2 text-blue-500 text-xs">
                       {t("logs.autoRefresh")}
@@ -128,24 +148,24 @@ const Logs: React.FC = () => {
             <div className="mb-4 flex gap-2 items-center">
               <button
                 type="button"
-                onClick={() => setActiveTab("logs")}
+                onClick={() => switchTab("logs")}
                 className={`rounded-md px-3 py-1.5 text-sm font-medium ${activeTab === "logs" ? "bg-blue-600 text-white" : "border border-gray-300 bg-white text-gray-700"}`}
               >
-                运行日志
+                {t("logs.tab.logs")}
               </button>
               <button
                 type="button"
-                onClick={() => setActiveTab("finished")}
+                onClick={() => switchTab("finished")}
                 className={`rounded-md px-3 py-1.5 text-sm font-medium ${activeTab === "finished" ? "bg-blue-600 text-white" : "border border-gray-300 bg-white text-gray-700"}`}
               >
-                已结束任务
+                {t("logs.tab.finished")}
               </button>
               <button
                 type="button"
-                onClick={() => setActiveTab("running")}
+                onClick={() => switchTab("running")}
                 className={`rounded-md px-3 py-1.5 text-sm font-medium ${activeTab === "running" ? "bg-blue-600 text-white" : "border border-gray-300 bg-white text-gray-700"}`}
               >
-                运行中任务
+                {t("logs.tab.running")}
               </button>
             </div>
 
@@ -190,18 +210,36 @@ const Logs: React.FC = () => {
                   <div className="border-b border-gray-100 px-4 py-3 flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
                       <Activity size={16} />
-                      <span>{activeTab === "finished" ? "已结束任务" : "运行中任务"}</span>
-                      {jobsFetching && <span className="text-xs text-blue-500">刷新中</span>}
+                      <span>{activeTab === "finished" ? t("logs.tab.finished") : t("logs.tab.running")}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${schedulerStatus?.running ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                        {schedulerStatus?.running ? t("logs.schedulerRunning") : t("logs.schedulerPaused")}
+                      </span>
+                      {jobsFetching && <span className="text-xs text-blue-500">{t("logs.refreshing")}</span>}
                     </div>
-                    <Button variant="outline" size="sm" onClick={refreshTasks}>
-                      <RefreshCw size={14} />
-                      <span className="ml-1.5">{t("common.refresh")}</span>
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => schedulerMutation.mutate(!(schedulerStatus?.running ?? false))}
+                        disabled={schedulerMutation.isPending}
+                      >
+                        {schedulerStatus?.running ? <Pause size={14} /> : <Play size={14} />}
+                        <span className="ml-1.5">
+                          {schedulerStatus?.running ? t("logs.pauseScheduler") : t("logs.resumeScheduler")}
+                        </span>
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={refreshTasks}>
+                        <RefreshCw size={14} />
+                        <span className="ml-1.5">{t("common.refresh")}</span>
+                      </Button>
+                    </div>
                   </div>
                   {(activeTab === "finished" ? finishedTasks : runningTasks).length === 0 ? (
                     <div className="flex flex-col items-center gap-3 py-12">
                       <Inbox size={40} className="text-gray-300" />
-                      <p className="text-sm text-gray-500">{activeTab === "finished" ? "暂无已结束任务" : "当前没有运行中任务"}</p>
+                      <p className="text-sm text-gray-500">
+                        {activeTab === "finished" ? t("logs.noFinishedTasks") : t("logs.noRunningTasks")}
+                      </p>
                     </div>
                   ) : (
                     <div className="divide-y divide-gray-100">
@@ -284,7 +322,6 @@ const Logs: React.FC = () => {
                       );
                     })}
                   </div>
-                  <div ref={listEndRef} />
                 </CardContent>
               </Card>
             )}
@@ -349,6 +386,7 @@ function TaskRow({
   schedulerJob?: SchedulerJob;
   showNextRun: boolean;
 }) {
+  const { t } = useTranslation();
   const metadata = parseTaskMetadata(task.metadata_json);
   const ruleId = Number(metadata.rule_id || 0);
   const ruleName = String(metadata.rule_name || "");
@@ -368,30 +406,34 @@ function TaskRow({
       {isRuleRun && ruleName && (
         <div className="mt-2 flex items-center gap-2 text-xs text-gray-700">
           {ruleId > 0 && (
-            <a
-              href={`/rules/${ruleId}/edit`}
+            <Link
+              to={`/rules/${ruleId}/edit`}
               className="inline-flex items-center justify-center rounded-md border border-gray-300 px-2 py-1 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               <Settings2 size={12} />
-              <span className="ml-1">规则设置</span>
-            </a>
+              <span className="ml-1">{t("logs.ruleSettings")}</span>
+            </Link>
           )}
-          <span>规则：<span className="font-medium">{ruleName}</span></span>
+          <span>{t("logs.ruleName")}: <span className="font-medium">{ruleName}</span></span>
         </div>
       )}
       {isLlmTask && llmModel && (
         <div className="mt-2 text-xs text-gray-700">
-          模型：<span className="font-medium">{llmModel}</span>
+          {t("agent.model")}: <span className="font-medium">{llmModel}</span>
         </div>
       )}
       <div className="mt-2 grid grid-cols-2 gap-3 text-xs text-gray-500 md:grid-cols-4">
-        <span>扫描 {task.items_scanned}</span>
-        <span>匹配 {task.items_matched}</span>
-        <span>{task.finished_at ? `完成 ${formatLogTime(task.finished_at)}` : "执行中"}</span>
+        <span>{t("logs.itemsScanned", { count: task.items_scanned })}</span>
+        <span>{t("logs.itemsMatched", { count: task.items_matched })}</span>
+        <span>
+          {task.finished_at
+            ? t("logs.finishedAt", { time: formatLogTime(task.finished_at) })
+            : t("logs.taskRunning")}
+        </span>
         {showNextRun && schedulerJob ? (
-          <span>下次执行 {formatLogTime(schedulerJob.next_run_time || undefined)}</span>
+          <span>{t("logs.nextRunAt", { time: formatLogTime(schedulerJob.next_run_time || undefined) })}</span>
         ) : showNextRun ? (
-          <span>非定时任务</span>
+          <span>{t("logs.notScheduledTask")}</span>
         ) : null}
       </div>
       {task.error_message && (
