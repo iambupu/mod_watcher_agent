@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.db import engine
 from app.models.settings import Setting
+from app.services.llm_provider_config import provider_default_base_url
 
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 CONTROL_ENDPOINTS_SHARED_LAN = {
@@ -23,6 +24,7 @@ _policy_cache: dict[str, object] = {"expires_at": 0.0, "value": None}
 
 
 def _normalize_host(value: str) -> str:
+    """规范化内部数据，供后续流程使用。"""
     host = (value or "").strip().lower()
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1]
@@ -30,6 +32,7 @@ def _normalize_host(value: str) -> str:
 
 
 def _host_to_ip(host: str):
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     try:
         return ip_address(host)
     except ValueError:
@@ -37,16 +40,19 @@ def _host_to_ip(host: str):
 
 
 def _is_truthy(value: str | bool | None) -> bool:
+    """判断内部条件是否成立。"""
     if isinstance(value, bool):
         return value
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _is_ip_literal(host: str) -> bool:
+    """判断内部条件是否成立。"""
     return _host_to_ip(_normalize_host(host)) is not None
 
 
 def is_loopback_host(host: str) -> bool:
+    """判断条件是否成立。"""
     normalized = _normalize_host(host)
     if normalized in LOCAL_HOSTS:
         return True
@@ -55,6 +61,7 @@ def is_loopback_host(host: str) -> bool:
 
 
 def is_private_or_loopback_host(host: str) -> bool:
+    """判断条件是否成立。"""
     normalized = _normalize_host(host)
     if normalized == "localhost":
         return True
@@ -65,11 +72,13 @@ def is_private_or_loopback_host(host: str) -> bool:
 
 
 def is_local_request(request: Request) -> bool:
+    """判断条件是否成立。"""
     host = request.client.host if request.client else ""
     return is_loopback_host(host)
 
 
 def is_lan_request(request: Request) -> bool:
+    """判断条件是否成立。"""
     host = request.client.host if request.client else ""
     normalized = _normalize_host(host)
     if normalized in LOCAL_HOSTS:
@@ -81,6 +90,7 @@ def is_lan_request(request: Request) -> bool:
 
 
 def require_safe_bind_host() -> None:
+    """校验必需条件，不满足时抛出异常。"""
     profile = (settings.MW_ACCESS_PROFILE or "local_relaxed").strip().lower()
     bind_host = settings.MW_BIND_HOST
     if profile == "local_relaxed" and not is_loopback_host(bind_host):
@@ -98,6 +108,7 @@ class RuntimePolicy:
 
 
 def _load_runtime_policy(force_refresh: bool = False) -> RuntimePolicy:
+    """加载内部流程需要的配置或数据。"""
     now = time.monotonic()
     cached = _policy_cache.get("value")
     expires_at = float(_policy_cache.get("expires_at") or 0.0)
@@ -139,12 +150,14 @@ class AccessDecision:
 
 class AccessPolicy:
     def __init__(self) -> None:
+        """初始化实例并保存运行所需的依赖。"""
         policy = _load_runtime_policy()
         self.profile = policy.profile
         self.allow_lan = policy.allow_lan
         self.admin_token = policy.admin_token
 
     def _allow_source(self, request: Request) -> bool:
+        """判断内部访问策略是否允许继续。"""
         if self.profile in {"local_relaxed", "local_strict"}:
             return is_local_request(request)
         if self.profile == "shared_lan":
@@ -155,6 +168,7 @@ class AccessPolicy:
     _TOKEN_EXEMPT_PREFIXES = ("/api/auth/",)
 
     def _token_required(self, path: str) -> bool:
+        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         if not path.startswith("/api/"):
             return False
         for prefix in self._TOKEN_EXEMPT_PREFIXES:
@@ -163,6 +177,7 @@ class AccessPolicy:
         return self.profile in {"local_strict", "shared_lan"}
 
     def evaluate(self, request: Request) -> AccessDecision:
+        """处理当前模块的业务逻辑并返回结果。"""
         path = request.url.path or ""
         if not path.startswith("/api/"):
             return AccessDecision(allow=True)
@@ -215,31 +230,12 @@ class AccessPolicy:
 
 
 def _provider_default_base_url(provider: str) -> str:
-    name = (provider or "").strip().lower()
-    if name == "ollama":
-        return "http://localhost:11434/v1"
-    if name == "openai":
-        return "https://api.openai.com/v1"
-    if name == "groq":
-        return "https://api.groq.com/openai/v1"
-    if name == "deepseek":
-        return "https://api.deepseek.com/v1"
-    if name == "openrouter":
-        return "https://openrouter.ai/api/v1"
-    if name == "siliconflow":
-        return "https://api.siliconflow.cn/v1"
-    if name == "xai":
-        return "https://api.x.ai/v1"
-    if name == "kimi":
-        return "https://api.moonshot.cn/v1"
-    if name == "qwen":
-        return "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    if name == "minimax":
-        return "https://api.minimax.io/v1"
-    return "https://api.openai.com/v1"
+    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    return provider_default_base_url(provider)
 
 
 def validate_outbound_url(provider: str, base_url: str) -> str:
+    """校验输入是否符合业务约束。"""
     resolved = (base_url or "").strip() or _provider_default_base_url(provider)
     parsed = urlparse(resolved)
     scheme = (parsed.scheme or "").lower()
@@ -257,21 +253,11 @@ def validate_outbound_url(provider: str, base_url: str) -> str:
         raise HTTPException(status_code=422, detail="Outbound URL port is invalid") from exc
 
     provider_name = (provider or "").strip().lower()
-    policy = _load_runtime_policy()
     if provider_name == "ollama":
         if not settings.MW_ALLOW_LOCAL_LLM:
             raise HTTPException(status_code=422, detail="Local LLM access is disabled by MW_ALLOW_LOCAL_LLM")
         if host not in {"localhost", "127.0.0.1"}:
             raise HTTPException(status_code=422, detail="Ollama outbound URL must use localhost or 127.0.0.1")
-        return resolved
-
-    if (
-        policy.profile == "shared_lan"
-        and not _is_ip_literal(host)
-        and host not in {"localhost", "testclient"}
-    ):
-        if scheme not in {"http", "https"}:
-            raise HTTPException(status_code=422, detail="Outbound URL scheme must be http/https")
         return resolved
 
     if scheme != "https":
