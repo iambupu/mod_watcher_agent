@@ -54,18 +54,15 @@ describe("RuleBasicSection", () => {
     expect(screen.getByText("rules.validation.nameRequired")).toBeInTheDocument();
   });
 
-  it("enabled_toggle", async () => {
+  it("interval_minutes_updates_store", async () => {
     const user = userEvent.setup();
     render(<RuleBasicSection />);
 
-    const switchEl = screen.getByRole("switch");
-    expect(switchEl).toBeInTheDocument();
-    expect(switchEl).toHaveAttribute("aria-checked", "true");
+    const intervalInput = screen.getByRole("spinbutton", { name: "rules.basic.intervalMinutesLabel" });
+    await user.clear(intervalInput);
+    await user.type(intervalInput, "15");
 
-    await user.click(switchEl);
-
-    const state = useRuleEditorStore.getState();
-    expect(state.draft.enabled).toBe(false);
+    expect(useRuleEditorStore.getState().draft.intervalMinutes).toBe(15);
   });
 
   it("reads_from_store", () => {
@@ -81,8 +78,5 @@ describe("RuleBasicSection", () => {
 
     const input = screen.getByPlaceholderText("rules.name");
     expect(input).toHaveValue("My Test Rule");
-
-    const switchEl = screen.getByRole("switch");
-    expect(switchEl).toHaveAttribute("aria-checked", "false");
   });
 });

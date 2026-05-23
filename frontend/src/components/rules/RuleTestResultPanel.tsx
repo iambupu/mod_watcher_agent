@@ -8,6 +8,8 @@ interface RuleTestResultPanelProps {
   result?: RuleTestResponse | null;
 }
 
+const PREVIEW_ITEM_LIMIT = 5;
+
 export const RuleTestResultPanel: React.FC<RuleTestResultPanelProps> = ({ result }) => {
   const { t } = useTranslation();
 
@@ -68,7 +70,7 @@ export const RuleTestResultPanel: React.FC<RuleTestResultPanelProps> = ({ result
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {result.rejectedItems.map((item, idx) => (
+              {result.rejectedItems.slice(0, PREVIEW_ITEM_LIMIT).map((item, idx) => (
                 <div
                   key={`${item.source}-${item.externalId}-${idx}`}
                   className="rounded-md border border-gray-100 px-3 py-2 text-sm"
@@ -118,7 +120,7 @@ export const RuleTestResultPanel: React.FC<RuleTestResultPanelProps> = ({ result
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {result.items.map((item) => (
+              {result.items.slice(0, PREVIEW_ITEM_LIMIT).map((item) => (
                 <div
                   key={item.id}
                   className="flex items-center justify-between rounded-md border border-gray-100 px-3 py-2 text-sm"

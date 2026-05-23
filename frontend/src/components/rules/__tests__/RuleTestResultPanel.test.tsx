@@ -99,6 +99,32 @@ describe("RuleTestResult", () => {
     expect(screen.getByText("LLM Feedback: not relevant")).toBeInTheDocument();
   });
 
+  it("limits_rejected_item_details_to_five", () => {
+    const rejectedItems = Array.from({ length: 7 }, (_, idx) => ({
+      source: "loverslab" as const,
+      externalId: `rejected-${idx + 1}`,
+      title: `Rejected Mod ${idx + 1}`,
+      game: "X-Change Life",
+      url: `https://example.com/rejected/${idx + 1}`,
+      reason: "already_exists_or_ignored",
+      stage: "deduplicate",
+    }));
+
+    render(
+      <RuleTestResultPanel
+        result={makeResult({
+          rejectedReasons: { already_exists_or_ignored: 7 },
+          rejectedItems,
+        })}
+      />
+    );
+
+    expect(screen.getByText("Rejected Items 7")).toBeInTheDocument();
+    expect(screen.getAllByText(/Rejected Mod \d/)).toHaveLength(5);
+    expect(screen.getByText("Rejected Mod 5")).toBeInTheDocument();
+    expect(screen.queryByText("Rejected Mod 6")).not.toBeInTheDocument();
+  });
+
   it("renders_item_list", () => {
     render(
       <RuleTestResultPanel
@@ -141,6 +167,29 @@ describe("RuleTestResult", () => {
     expect(screen.getByText("Cool Armor")).toBeInTheDocument();
     expect(screen.getByText("Fallout 4")).toBeInTheDocument();
     expect(screen.getAllByText("Passed")).toHaveLength(2);
+  });
+
+  it("limits_matched_item_list_to_five", () => {
+    const items = Array.from({ length: 7 }, (_, idx) => ({
+      id: idx + 1,
+      source: "loverslab" as const,
+      external_id: `mod-${idx + 1}`,
+      game: "X-Change Life",
+      title: `Matched Mod ${idx + 1}`,
+      url: `https://example.com/mod/${idx + 1}`,
+      tags_json: "[]",
+      ignored: false,
+      first_seen_at: "2024-01-01T00:00:00Z",
+      last_seen_at: "2024-01-01T00:00:00Z",
+    }));
+
+    render(<RuleTestResultPanel result={makeResult({ items })} />);
+
+    expect(screen.getByText("Matched 7 items")).toBeInTheDocument();
+    expect(screen.getAllByText(/Matched Mod \d/)).toHaveLength(5);
+    expect(screen.getByText("Matched Mod 5")).toBeInTheDocument();
+    expect(screen.queryByText("Matched Mod 6")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Passed")).toHaveLength(5);
   });
 
   it("renders_empty_state", () => {
