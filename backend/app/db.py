@@ -17,6 +17,7 @@ engine = create_engine(
 
 
 def init_db() -> None:
+    """处理当前模块的业务逻辑并返回结果。"""
     SQLModel.metadata.create_all(engine)
 
     # ── Alembic managed migrations ──────────────────────────────────
@@ -95,5 +96,6 @@ def _apply_lightweight_migrations() -> None:
 
 
 def get_session() -> Generator[Session, None, None]:
+    """读取并返回对应的数据。"""
     with Session(engine) as session:
         yield session
