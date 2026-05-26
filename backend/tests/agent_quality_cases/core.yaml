@@ -1,0 +1,450 @@
+- id: zh_alias_adult_outfit
+  query: "帮我找最近比较火的剑星成人服装 Mod"
+  expect:
+    intent: "recent"
+    adult_content: true
+    sort_field: "updated_at_remote"
+    required_terms: ["剑星", "成人", "服装"]
+- id: recommendation_not_comparison
+  query: "recommend Skyrim Special Edition body mods"
+  expect:
+    intent: "preference_summary"
+    required_terms: ["body"]
+- id: safer_recommendation_not_alternative
+  query: "推荐更安全的 Skyrim Special Edition body mod"
+  expect:
+    intent: "preference_summary"
+    required_terms: ["body"]
+- id: no_nsfw_keeps_search_terms
+  query: "Skyrim Special Edition no NSFW CBBE body preset"
+  expect:
+    intent: "search"
+    adult_content: false
+    excluded_keywords: []
+    required_terms: ["CBBE", "body", "preset"]
+- id: sfw_keeps_search_terms
+  query: "Skyrim Special Edition SFW CBBE body preset"
+  expect:
+    intent: "search"
+    adult_content: false
+    required_terms: ["CBBE", "body", "preset"]
+- id: contextual_followup
+  query: "继续找类似的"
+  context:
+    game: "Stellar Blade"
+  expect:
+    should_use_context: true
+- id: local_first_tool_plan
+  query: "Stellar Blade 服装"
+  expect:
+    tools: ["structured_sql", "sqlite_fts"]
+- id: explicit_recent_window
+  query: "最近7天的 Skyrim Special Edition bimbo mod"
+  expect:
+    sort_field: "updated_at_remote"
+    updated_since_days: 7
+    required_terms: ["bimbo"]
+- id: explicit_absolute_updated_after
+  query: "2024年以后更新的 Skyrim Special Edition body mod"
+  expect:
+    updated_after: "2024-01-01T00:00:00+00:00"
+    required_terms: ["body"]
+- id: latest_preset_without_mod_word
+  query: "Skyrim Special Edition latest CBBE preset with preview image"
+  expect:
+    intent: "recent"
+    sort_field: "updated_at_remote"
+    has_thumbnail: true
+    required_terms: ["CBBE", "preset"]
+- id: most_endorsed_sort
+  query: "Skyrim Special Edition most endorsed body preset"
+  expect:
+    intent: "search"
+    sort_field: "endorsements"
+    required_terms: ["body", "preset"]
+- id: explicit_published_year_range
+  query: "2024年发布的 Skyrim Special Edition body mod"
+  expect:
+    published_after: "2024-01-01T00:00:00+00:00"
+    published_before: "2024-12-31T23:59:59+00:00"
+    required_terms: ["body"]
+- id: explicit_tag_filter
+  query: "Skyrim Special Edition body mod with CBBE tag"
+  expect:
+    tags: ["CBBE"]
+    required_terms: ["CBBE", "body"]
+- id: negative_tag_exclusion
+  query: "Skyrim Special Edition body mod 不带 CBBE 标签"
+  expect:
+    tags: []
+    excluded_keywords: ["cbbe"]
+    required_terms: ["CBBE", "body"]
+- id: mixed_positive_and_negative_tag
+  query: "Skyrim Special Edition body mod with BodySlide but not CBBE tag"
+  expect:
+    tags: ["BodySlide"]
+    excluded_keywords: ["cbbe"]
+    required_terms: ["BodySlide", "CBBE", "body"]
+- id: author_with_following_tag_constraint
+  query: "Skyrim Special Edition body preset by Ousnius with BodySlide tag"
+  expect:
+    author: "Ousnius"
+    tags: ["BodySlide"]
+    required_terms: ["Ousnius", "BodySlide", "body"]
+- id: exact_title_filter
+  query: 'Skyrim Special Edition mod named "Bimbo Body Morph"'
+  expect:
+    exact_title: "Bimbo Body Morph"
+    required_terms: ["Bimbo", "Morph"]
+- id: unquoted_title_with_following_constraint
+  query: "Skyrim Special Edition mod named Visual Body Preset with preview image"
+  expect:
+    exact_title: "Visual Body Preset"
+    has_thumbnail: true
+- id: explicit_version_filter
+  query: "Skyrim Special Edition bimbo preset version 1.2.0"
+  expect:
+    version: "1.2.0"
+    required_terms: ["bimbo", "1.2.0"]
+- id: source_url_identity
+  query: "https://www.nexusmods.com/skyrimspecialedition/mods/1001"
+  expect:
+    sources: ["nexusmods"]
+    external_id: "skyrimspecialedition:1001"
+    source_url: "https://www.nexusmods.com/skyrimspecialedition/mods/1001"
+- id: nexus_numeric_id_with_game
+  query: "Nexus Skyrim Special Edition mod id 1001"
+  slot_options:
+    games: ["Skyrim Special Edition"]
+    game_domains: ["skyrimspecialedition"]
+    categories: []
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    sources: ["nexusmods"]
+    external_id: "skyrimspecialedition:1001"
+- id: except_source_exclusion
+  query: "除了 LoversLab 的 Skyrim bimbo mod"
+  slot_options:
+    games: ["Skyrim Special Edition"]
+    game_domains: ["skyrimspecialedition"]
+    categories: []
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    sources: ["nexusmods"]
+- id: not_from_source_exclusion
+  query: "Skyrim bimbo mod not from LoversLab"
+  slot_options:
+    games: ["Skyrim Special Edition"]
+    game_domains: ["skyrimspecialedition"]
+    categories: []
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    sources: ["nexusmods"]
+- id: loverslab_short_alias
+  query: "LL Skyrim Special Edition CBBE preset"
+  slot_options:
+    games: ["Skyrim Special Edition"]
+    game_domains: ["skyrimspecialedition"]
+    categories: []
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    sources: ["loverslab"]
+    required_terms: ["CBBE", "preset"]
+- id: not_from_loverslab_short_alias
+  query: "Skyrim bimbo mod not from LL"
+  slot_options:
+    games: ["Skyrim Special Edition"]
+    game_domains: ["skyrimspecialedition"]
+    categories: []
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    sources: ["nexusmods"]
+    excluded_sources: ["loverslab"]
+    required_terms: ["bimbo"]
+- id: explicit_requirement_terms
+  query: "需要 SKSE 前置的 Skyrim Special Edition utility mod"
+  expect:
+    intent: "search"
+    requirement_terms: ["SKSE"]
+    required_terms: ["SKSE", "utility"]
+- id: script_extender_requirement_alias
+  query: "Skyrim Special Edition utility mod requiring script extender"
+  expect:
+    intent: "search"
+    requirement_terms: ["SKSE"]
+    required_terms: ["script extender", "utility"]
+- id: negative_script_extender_requirement_alias
+  query: "Skyrim Special Edition utility mod no script extender requirement"
+  expect:
+    intent: "search"
+    requirement_terms: []
+    excluded_keywords: ["skse"]
+    required_terms: ["script extender", "utility"]
+- id: explicit_compatibility_terms
+  query: "支持 AE 的 Skyrim Special Edition body mod"
+  expect:
+    intent: "search"
+    compatibility_terms: ["AE"]
+    required_terms: ["body"]
+- id: compatibility_runtime_terms_are_split
+  query: "Skyrim Special Edition body mod for AE 1.6.640"
+  expect:
+    intent: "search"
+    compatibility_terms: ["AE", "1.6.640"]
+    version: null
+    required_terms: ["AE", "1.6.640", "body"]
+- id: runtime_version_is_not_mod_version
+  query: "Skyrim Special Edition body mod compatible with runtime 1.6.640"
+  expect:
+    intent: "search"
+    compatibility_terms: ["1.6.640"]
+    version: null
+    required_terms: ["1.6.640", "body"]
+- id: compatibility_with_generic_negative_keyword
+  query: "Skyrim Special Edition body preset for 3BA but not BHUNP"
+  expect:
+    intent: "search"
+    compatibility_terms: ["3BA"]
+    excluded_keywords: ["bhunp"]
+    required_terms: ["3BA", "BHUNP", "body"]
+- id: compatibility_with_except_negative_keyword
+  query: "Skyrim Special Edition body preset for 3BA except BHUNP"
+  expect:
+    intent: "search"
+    compatibility_terms: ["3BA"]
+    excluded_keywords: ["bhunp"]
+    required_terms: ["3BA", "BHUNP", "body"]
+- id: compatibility_with_negative_requirement
+  query: "Skyrim Special Edition body mod compatible with AE but without SKSE requirement"
+  expect:
+    intent: "search"
+    compatibility_terms: ["AE"]
+    requirement_terms: []
+    excluded_keywords: ["skse"]
+    required_terms: ["AE", "SKSE", "body"]
+- id: negative_compatibility_with_positive_requirement
+  query: "Skyrim Special Edition body mod not compatible with AE but requires SKSE"
+  expect:
+    intent: "search"
+    requirement_terms: ["SKSE"]
+    compatibility_terms: []
+    excluded_keywords: ["ae"]
+    required_terms: ["AE", "SKSE", "body"]
+- id: positive_requirement_with_trailing_negative_compatibility
+  query: "Skyrim Special Edition body mod requires SKSE but not AE compatible"
+  expect:
+    intent: "search"
+    requirement_terms: ["SKSE"]
+    compatibility_terms: []
+    excluded_keywords: ["ae"]
+    required_terms: ["AE", "SKSE", "body"]
+- id: negative_compatibility_with_depends_on_requirement
+  query: "Skyrim Special Edition body mod does not support AE but depends on SKSE"
+  expect:
+    intent: "search"
+    requirement_terms: ["SKSE"]
+    compatibility_terms: []
+    excluded_keywords: ["ae"]
+    required_terms: ["AE", "SKSE", "body"]
+- id: explicit_risk_question_not_constraint_search
+  query: "这个安装风险高吗，会不会有前置依赖冲突？"
+  expect:
+    intent: "install_risk"
+- id: negative_requirement_exclusion
+  query: "不需要 SKSE 前置的 Skyrim Special Edition utility mod"
+  expect:
+    intent: "search"
+    excluded_keywords: ["skse"]
+    required_terms: ["SKSE", "utility"]
+- id: negative_compatibility_exclusion
+  query: "不支持 AE 的 Skyrim Special Edition body mod"
+  expect:
+    intent: "search"
+    excluded_keywords: ["ae"]
+    required_terms: ["AE", "body"]
+- id: negative_not_phrase_exclusion
+  query: "Skyrim Special Edition body mod 不是 replacer"
+  expect:
+    intent: "search"
+    excluded_keywords: ["replacer"]
+    required_terms: ["body", "replacer"]
+- id: explicit_summary_language
+  query: "有中文摘要的 Skyrim Special Edition body mod"
+  expect:
+    summary_languages: ["zh-CN"]
+    required_terms: ["body"]
+- id: tag_with_following_summary_language
+  query: "Skyrim Special Edition body mod with BodySlide tag and Chinese summary"
+  expect:
+    tags: ["BodySlide"]
+    summary_languages: ["zh-CN"]
+    required_terms: ["BodySlide", "Chinese", "body"]
+- id: thumbnail_with_negative_summary_language
+  query: "Skyrim Special Edition body mod with preview image but no Chinese summary"
+  expect:
+    has_thumbnail: true
+    summary_languages: []
+    excluded_summary_languages: ["zh-CN"]
+    required_terms: ["Chinese", "summary", "body"]
+- id: explicit_thumbnail_filter
+  query: "有预览图的 Skyrim Special Edition body mod"
+  expect:
+    has_thumbnail: true
+    required_terms: ["body"]
+- id: semantic_weapon_category
+  query: "Skyrim Special Edition 武器类 mod"
+  slot_options:
+    games: ["Skyrim Special Edition"]
+    game_domains: ["skyrimspecialedition"]
+    categories: ["Weapons", "Armor", "Gameplay"]
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    categories: ["Weapons"]
+- id: target_bimbo_roleplay_semantics
+  query: "有什么在玩法上可以扮演bimbo的MOD"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+- id: target_bimbo_progression_system_semantics
+  query: "找能让角色走 bimbo 路线的系统 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+- id: target_prostitute_outfit_semantics
+  query: "有什么妓女风格的服装MOD"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "content_type"
+- id: target_pregnancy_gameplay_semantics
+  query: "有什么mod支持怀孕玩法"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "mechanics"
+- id: target_birth_system_gameplay_semantics
+  query: "有什么生育系统玩法 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "mechanics"
+- id: target_loverslab_framework_semantics
+  query: "爱的实验室有什么体系mod"
+  slot_options:
+    games: ["Skyrim Special Edition"]
+    game_domains: ["skyrimspecialedition"]
+    categories: ["Framework", "Gameplay", "Outfit"]
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "source_scope"
+- id: skyrim_vr_specific_game_alias
+  query: "Skyrim VR CBBE body preset"
+  slot_options:
+    games: ["Skyrim Special Edition", "Skyrim VR", "Skyrim"]
+    game_domains: ["skyrimspecialedition", "skyrimvr", "skyrim"]
+    categories: ["Body, Face, and Hair", "Armor"]
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    games: ["Skyrim VR"]
+    required_terms: ["CBBE", "body", "preset"]
+- id: skyrim_le_specific_game_alias
+  query: "Skyrim LE CBBE body preset"
+  slot_options:
+    games: ["Skyrim Special Edition", "Skyrim Legendary Edition", "Skyrim"]
+    game_domains: ["skyrimspecialedition", "skyrimlegendaryedition", "skyrim"]
+    categories: ["Body, Face, and Hair", "Armor"]
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    games: ["Skyrim Legendary Edition"]
+    required_terms: ["CBBE", "body", "preset"]
+- id: oldrim_specific_game_alias
+  query: "Oldrim CBBE body preset"
+  slot_options:
+    games: ["Skyrim Special Edition", "Skyrim Legendary Edition", "Skyrim"]
+    game_domains: ["skyrimspecialedition", "skyrimlegendaryedition", "skyrim"]
+    categories: ["Body, Face, and Hair", "Armor"]
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    games: ["Skyrim Legendary Edition"]
+    required_terms: ["CBBE", "body", "preset"]
+- id: explicit_views_likes_thresholds
+  query: "浏览量至少 1000、喜欢数至少 20 的 Skyrim Special Edition body mod"
+  expect:
+    min_views: 1000
+    min_likes: 20
+    required_terms: ["body"]
+- id: diagnosis_followup_context_inherit
+  query: "有什么相关风格的mod"
+  context:
+    game: "Skyrim Special Edition"
+  context_keywords: ["bimbo", "body"]
+  expect:
+    diagnosis_intent: "search"
+    diagnosis_should_clarify: false
+    topic_shift_detected: false
+    context_inherit_score_min: 0.45
+- id: diagnosis_topic_shift_blocks_context_carryover
+  query: "有什么 cyberpunk 2077 载具改装 mod"
+  context:
+    game: "Skyrim Special Edition"
+  context_keywords: ["bimbo", "body"]
+  context_slots:
+    game: "Skyrim Special Edition"
+  expect:
+    diagnosis_intent: "search"
+    topic_shift_detected: true
+    context_inherit_score_max: 0.2
+- id: diagnosis_stale_preference_memory_not_applied
+  query: "找最近更新的服装 Mod"
+  preferences:
+    favorite_summary:
+      top_games: ["Stellar Blade"]
+      top_sources: ["nexusmods"]
+      adult_content_allowed: true
+    memory_meta:
+      preference_stale: true
+  expect:
+    diagnosis_intent: "recent"
+    diagnosis_preference_memory_applied: false
+    diagnosis_preference_memory_stale: true
+    diagnosis_preference_memory_reason: "stale_preference_memory"
+- id: diagnosis_bimbo_followup_low_signal_uses_context
+  query: "有什么相关风格的mod"
+  context:
+    game: "Skyrim Special Edition"
+  context_keywords: ["bimbo", "body"]
+  context_slots:
+    game: "Skyrim Special Edition"
+    source_name: "nexusmods"
+  expect:
+    diagnosis_intent: "search"
+    diagnosis_should_clarify: false
+    topic_shift_detected: false
+    context_inherit_score_min: 0.5
+- id: diagnosis_preference_memory_age_is_reported
+  query: "找一些 body mod"
+  preferences:
+    favorite_summary:
+      top_games: ["Skyrim Special Edition"]
+      top_sources: ["nexusmods"]
+      adult_content_allowed: false
+    memory_meta:
+      preference_stale: false
+      preferences_age_days: 14
+  expect:
+    diagnosis_intent: "search"
+    diagnosis_preference_memory_applied: false
+    diagnosis_preference_memory_stale: false
+    diagnosis_preference_memory_reason: "strong_current_signal"
+    diagnosis_preference_memory_age_days: 14

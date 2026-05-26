@@ -12,6 +12,113 @@ def build_fallback_answer(matches: list[AgentModMatch]) -> str:
     return "找到以下相关 Mod：\n" + "\n".join([f"- {item.title} ({item.source})" for item in matches])
 
 
+def build_recommendation_fallback(matches: list[AgentModMatch]) -> str:
+    lines = ["优先推荐这些 Mod："]
+    for item in matches[:5]:
+        notes = []
+        if item.downloads is not None:
+            notes.append(f"下载量 {item.downloads}")
+        if item.endorsements is not None:
+            notes.append(f"背书 {item.endorsements}")
+        if item.likes is not None:
+            notes.append(f"喜欢数 {item.likes}")
+        if item.category:
+            notes.append(item.category)
+        if not notes:
+            notes.append("与本次需求相关")
+        lines.append(f"- {item.title}：{'；'.join(notes)}。")
+    return "\n".join(lines)
+
+
+def build_alternative_fallback(matches: list[AgentModMatch]) -> str:
+    lines = ["可以考虑这些替代 Mod："]
+    for item in matches[:5]:
+        notes = []
+        if item.version:
+            notes.append(f"版本 {item.version}")
+        if item.adult_content is False:
+            notes.append("SFW 记录")
+        if item.rank_reason:
+            notes.append(item.rank_reason)
+        if not notes:
+            notes.append("和当前需求相关，可作为候选替代")
+        lines.append(f"- {item.title}：{'；'.join(notes)}。")
+    return "\n".join(lines)
+
+
+def build_comparison_fallback(matches: list[AgentModMatch]) -> str:
+    if not matches:
+        return "当前没有足够候选可以比较。"
+    ranked = sorted(matches, key=_comparison_score, reverse=True)
+    recommended = ranked[0]
+    lines = [
+        f"如果优先考虑新手友好和低风险，我更推荐：{recommended.title}。",
+        "比较依据：",
+    ]
+    for item in ranked[:5]:
+        notes = []
+        if item.version:
+            notes.append(f"有版本信息（{item.version}）")
+        else:
+            notes.append("版本信息缺失")
+        if item.adult_content is False:
+            notes.append("SFW 记录")
+        elif item.adult_content is True:
+            notes.append("包含成人内容")
+        summary = " ".join([item.original_summary or "", item.translated_summary or ""]).lower()
+        if any(marker in summary for marker in ["stable", "conservative", "safe", "compat", "稳定", "保守", "兼容"]):
+            notes.append("摘要包含稳定/兼容信号")
+        lines.append(f"- {item.title}：{'；'.join(notes)}。")
+    return "\n".join(lines)
+
+
+def build_install_risk_fallback(matches: list[AgentModMatch]) -> str:
+    lines = ["基于当前已收录信息，安装风险初步判断如下："]
+    for item in matches[:5]:
+        risk_notes = []
+        if item.adult_content is True:
+            risk_notes.append("包含成人内容，安装前确认来源和本地内容设置")
+        if not item.version:
+            risk_notes.append("版本信息缺失，建议到源站确认支持的游戏版本")
+        if not item.original_summary and not item.translated_summary:
+            risk_notes.append("摘要信息不足，建议先查看源站说明和前置依赖")
+        requirement_terms = _requirement_terms_from_match(item)
+        if requirement_terms:
+            risk_notes.append(f"摘要/源站信息提到前置或依赖：{', '.join(requirement_terms[:4])}")
+        if not risk_notes:
+            risk_notes.append("当前记录没有明显风险信号，仍建议检查前置依赖、加载顺序和评论区反馈")
+        lines.append(f"- {item.title}：{'；'.join(risk_notes)}。")
+    return "\n".join(lines)
+
+
+def _comparison_score(item: AgentModMatch) -> int:
+    score = 0
+    if item.version:
+        score += 3
+    if item.adult_content is False:
+        score += 2
+    if item.adult_content is True:
+        score -= 2
+    summary = " ".join([item.original_summary or "", item.translated_summary or ""]).lower()
+    for marker in ["stable", "conservative", "safe", "compat", "稳定", "保守", "兼容"]:
+        if marker in summary:
+            score += 2
+    return score
+
+
+def _requirement_terms_from_match(item: AgentModMatch) -> list[str]:
+    text = " ".join([item.original_summary or "", item.translated_summary or ""])
+    candidates = []
+    for token in re.findall(r"\b[A-Z][A-Z0-9_+-]{2,}\b", text):
+        if token.lower() not in {"mod", "mods"}:
+            candidates.append(token)
+    lowered = text.lower()
+    for marker in ["skse", "cbbe", "bodyslide", "nemesis", "fnis", "3ba", "xpmsse"]:
+        if marker in lowered:
+            candidates.append(marker.upper())
+    return list(dict.fromkeys(candidates))
+
+
 def build_detail_fallback(mod: Mod, match: AgentModMatch) -> str:
     return (
         f"Mod：{mod.title}\n"

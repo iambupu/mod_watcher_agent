@@ -1,5 +1,6 @@
 import logging
 
+import app.logger as logger_module
 from app.config import settings
 from app.logger import ThirdPartyNoiseFilter, get_log_entries, redact_sensitive_text
 
@@ -74,6 +75,7 @@ def test_get_log_entries_reads_backend_service_file_when_ring_buffer_is_empty(tm
         encoding="utf-8",
     )
     monkeypatch.setattr(settings, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(logger_module, "_ring_buffer", None)
 
     entries = get_log_entries(limit=10)
 

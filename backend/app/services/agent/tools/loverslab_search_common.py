@@ -6,11 +6,12 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.models.mod import Mod
 from app.services.agent.semantic_search import text_score
 from app.services.loverslab.constants import LOVERSLAB_HOSTS
+from app.services.source_identity import canonical_external_id, find_existing_mod_by_identity
 
 REQUEST_TIMEOUT = 20.0
 
@@ -38,9 +39,14 @@ def is_loverslab_url(url: str) -> bool:
     return parsed.scheme in {"http", "https"} and (parsed.hostname or "").lower() in LOVERSLAB_HOSTS
 
 
-def loverslab_external_id(url: str) -> str:
+def loverslab_external_id(url: str, *, game: str | None = None) -> str:
     """处理当前模块的业务逻辑并返回结果。"""
-    return hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
+    return canonical_external_id(
+        "loverslab",
+        hashlib.sha256(url.encode("utf-8")).hexdigest()[:32],
+        url,
+        game=game,
+    )
 
 
 def clean_loverslab_title(title: str) -> str:
@@ -73,13 +79,11 @@ def upsert_loverslab_search_records(
         if not title:
             continue
 
-        external_id = loverslab_external_id(record.url)
-        existing = session.exec(
-            select(Mod).where(Mod.source == "loverslab", Mod.external_id == external_id)
-        ).first()
+        external_id = loverslab_external_id(record.url, game=game)
+        existing = find_existing_mod_by_identity(session, "loverslab", external_id, record.url, game=game)
         fields: dict[str, Any] = {
-            "game": game or "LoversLab",
-            "game_domain": "loverslab",
+            "game": game,
+            "game_domain": None,
             "title": title,
             "url": record.url,
             "author": None,
@@ -101,7 +105,9 @@ def upsert_loverslab_search_records(
         }
         if existing:
             for key, value in fields.items():
-                setattr(existing, key, value)
+                if value is not None:
+                    setattr(existing, key, value)
+            existing.external_id = external_id
             existing.last_seen_at = now
             session.add(existing)
             mods.append(existing)

@@ -1,1 +1,1 @@
-"""External search tools available to the Agent service."""
+"""Tools available to the Agent service."""

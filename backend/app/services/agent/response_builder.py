@@ -56,15 +56,120 @@ def build_response_cards(
     results = [f"找到 {len(matches)} 个候选，优先推荐前 {min(3, len(matches))} 个。"] if matches else ["当前没有命中结果。"]
     if matches:
         for idx, item in enumerate(matches[:3], start=1):
-            results.append(f"{idx}. {item.title}（{item.source} / {item.game}）")
+            reason = f"；{item.rank_reason}" if item.rank_reason else ""
+            results.append(f"{idx}. {item.title}（{item.source} / {item.game}）{reason}")
     next_step_items = next_steps or (
         ["你可以继续指定：游戏、来源、时间范围、下载量阈值，或让我展开某个 Mod 的详细解析。"]
         if matches
         else ["请补充游戏名、来源或分类后再试，例如：最近更新的 Stellar Blade 画面 Mod。"]
     )
+    analysis = _build_analysis_cards(visible_query=visible_query or query, plan=plan, filters=filters)
+    evidence = _build_evidence_cards(matches=matches)
+    conclusion = _build_conclusion_cards(matches=matches, next_steps=next_step_items)
     return {
+        "analysis": analysis,
+        "evidence": evidence,
+        "conclusion": conclusion,
         "understanding": understanding,
         "filters": filters,
         "results": results,
         "next_steps": next_step_items,
+    }
+
+
+def build_status_response_cards(
+    *,
+    analysis: str,
+    evidence: str,
+    conclusion: str,
+    understanding: str,
+    result: str,
+    next_step: str,
+) -> dict[str, list[str]]:
+    return _standard_cards(
+        analysis=[analysis],
+        evidence=[evidence],
+        conclusion=[conclusion, next_step],
+        understanding=[understanding],
+        filters=[],
+        results=[result],
+        next_steps=[next_step],
+    )
+
+
+def build_detail_response_cards(
+    *,
+    title: str,
+    source: str,
+    game: str,
+    generated: bool,
+) -> dict[str, list[str]]:
+    result = f"已{'生成' if generated else '提供'}该 Mod 的{'详细解析' if generated else '详细信息'}（{title}）。"
+    next_step = (
+        "你可以继续问：安装步骤、前置依赖、同类替代 Mod。"
+        if generated
+        else "你可以继续问：兼容性、安装风险、适合人群。"
+    )
+    filters = [f"来源：{source}", f"游戏：{game}"]
+    return _standard_cards(
+        analysis=[f"任务分析：详细解析 {title}", f"已应用约束：{'；'.join(filters)}"],
+        evidence=[f"证据：已定位到 Mod：{title}。", f"来源覆盖：{source}", f"游戏覆盖：{game}"],
+        conclusion=[f"结论：可以继续查看 {title} 的详情。", next_step],
+        understanding=[f"你希望我详细解析：{title}"],
+        filters=filters,
+        results=[result],
+        next_steps=[next_step],
+    )
+
+
+def _build_analysis_cards(*, visible_query: str, plan: dict[str, Any], filters: list[str]) -> list[str]:
+    intent = str(plan.get("intent") or "search").strip()
+    lines = [f"任务分析：{visible_query}"]
+    if intent:
+        lines.append(f"识别意图：{intent}")
+    if filters:
+        lines.append(f"已应用约束：{'；'.join(filters)}")
+    return lines
+
+
+def _build_evidence_cards(*, matches: list[AgentModMatch]) -> list[str]:
+    if not matches:
+        return ["证据：当前检索没有返回候选 Mod。"]
+    sources = sorted({str(item.source).strip() for item in matches if str(item.source).strip()})
+    games = sorted({str(item.game).strip() for item in matches if str(item.game).strip()})
+    lines = [f"证据：检索返回 {len(matches)} 个候选。"]
+    if sources:
+        lines.append(f"来源覆盖：{', '.join(sources[:3])}")
+    if games:
+        lines.append(f"游戏覆盖：{', '.join(games[:3])}")
+    top_reasons = [str(item.rank_reason).strip() for item in matches[:3] if str(item.rank_reason or "").strip()]
+    if top_reasons:
+        lines.append(f"排序依据：{'；'.join(top_reasons)}")
+    return lines
+
+
+def _build_conclusion_cards(*, matches: list[AgentModMatch], next_steps: list[str]) -> list[str]:
+    if matches:
+        return [f"结论：优先查看前 {min(3, len(matches))} 个候选。", *next_steps[:2]]
+    return ["结论：当前证据不足以给出可靠候选。", *next_steps[:2]]
+
+
+def _standard_cards(
+    *,
+    analysis: list[str],
+    evidence: list[str],
+    conclusion: list[str],
+    understanding: list[str],
+    filters: list[str],
+    results: list[str],
+    next_steps: list[str],
+) -> dict[str, list[str]]:
+    return {
+        "analysis": analysis,
+        "evidence": evidence,
+        "conclusion": conclusion,
+        "understanding": understanding,
+        "filters": filters,
+        "results": results,
+        "next_steps": next_steps,
     }

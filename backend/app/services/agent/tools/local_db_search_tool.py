@@ -10,6 +10,7 @@ from app.services.agent.search_types import SearchPlan, SearchResult
 class LocalDbSearchInput:
     query: str
     plan: SearchPlan
+    evidence_id: str = ""
 
 
 class LocalDbSearchTool:
@@ -23,10 +24,17 @@ class LocalDbSearchTool:
 
     async def run(self, tool_input: LocalDbSearchInput) -> list[SearchResult]:
         """执行任务流程并返回结果。"""
-        scored = query_mods_with_plan(self.session, tool_input.query, tool_input.plan.to_query_plan())
+        plan = tool_input.plan.to_query_plan()
+        if tool_input.evidence_id:
+            plan["evidence_id"] = tool_input.evidence_id
+        scored = query_mods_with_plan(self.session, tool_input.query, plan)
         return [SearchResult(score=score, mod=mod, tool_name=self.name) for score, mod in scored]
 
 
 def local_db_input_from_plan(query: str, plan: dict) -> LocalDbSearchInput:
     """处理当前模块的业务逻辑并返回结果。"""
-    return LocalDbSearchInput(query=query, plan=SearchPlan.from_query_plan(plan))
+    return LocalDbSearchInput(
+        query=query,
+        plan=SearchPlan.from_query_plan(plan),
+        evidence_id=str(plan.get("evidence_id") or "").strip(),
+    )

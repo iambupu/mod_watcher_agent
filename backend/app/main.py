@@ -25,6 +25,7 @@ from app.api import (
 from app.config import settings
 from app.db import engine, init_db
 from app.jobs.scheduler import setup_scheduler
+from app.jobs.tracked_jobs import mark_interrupted_jobs_failed
 from app.logger import setup_logging
 from app.security import AccessPolicy, require_safe_bind_host
 from app.services.settings_service import SettingsService
@@ -40,6 +41,9 @@ async def lifespan(app: FastAPI):
     init_db()
     with Session(engine) as session:
         SettingsService(session).init_defaults()
+        interrupted_count = mark_interrupted_jobs_failed(session)
+        if interrupted_count:
+            logger.warning("Marked %s interrupted job runs as failed", interrupted_count)
         try:
             await setup_scheduler(session)
             logger.info("Scheduler started successfully")
@@ -60,6 +64,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.MW_ALLOWED_ORIGINS or settings.CORS_ORIGINS,
+    allow_origin_regex=settings.MW_ALLOWED_ORIGIN_REGEX or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

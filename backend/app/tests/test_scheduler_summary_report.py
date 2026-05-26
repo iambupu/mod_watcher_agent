@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.jobs.scheduler import _should_catch_up_summary_report
+from app.jobs.scheduler import _should_catch_up_summary_report, register_jobs
 from app.models.job_run import JobRun
 
 
@@ -73,3 +73,38 @@ def test_summary_report_does_not_catch_up_when_job_is_running():
         )
 
         assert not _should_catch_up_summary_report(session, 60, now=now)
+
+
+def test_register_jobs_adds_agent_profile_refresh_every_15_minutes(monkeypatch):
+    class FakeScheduler:
+        def __init__(self):
+            self.jobs = {}
+
+        def add_job(self, func, trigger, *, id, name, replace_existing=False, **kwargs):
+            self.jobs[id] = {
+                "func": func,
+                "trigger": trigger,
+                "name": name,
+                "replace_existing": replace_existing,
+                **kwargs,
+            }
+
+        def get_jobs(self):
+            return []
+
+        def get_job(self, job_id):
+            return self.jobs.get(job_id)
+
+        def remove_job(self, job_id):
+            self.jobs.pop(job_id, None)
+
+    fake_scheduler = FakeScheduler()
+    monkeypatch.setattr("app.jobs.scheduler.scheduler", fake_scheduler)
+
+    with _session() as session:
+        register_jobs(session)
+
+    job = fake_scheduler.jobs["agent_profile_refresh"]
+    assert job["name"] == "Agent Profile Refresh"
+    assert job["trigger"].interval.total_seconds() == 15 * 60
+    assert job["max_instances"] == 1

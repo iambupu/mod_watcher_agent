@@ -1,0 +1,88 @@
+from app.services.agent.planning.context_memory_selection import (
+    backfill_query_context_for_planning,
+    diagnosis_context_from_last_query,
+    history_context_for_diagnosis,
+    select_effective_last_query_context,
+)
+
+
+class _HistoryItem:
+    def __init__(self, role: str, text: str):
+        self.role = role
+        self.text = text
+
+
+def test_select_effective_context_prefers_good_short_context():
+    selected = select_effective_last_query_context(
+        "继续找相关的",
+        {"source": "current", "keywords": ["pregnancy"], "quality_score": 0.4},
+        {
+            "long_term": {
+                "last_query_context": {
+                    "keywords": ["bimbo"],
+                    "semantic_anchors": ["roleplay"],
+                    "quality_score": 0.9,
+                }
+            }
+        },
+    )
+
+    assert selected["keywords"] == ["pregnancy"]
+    assert selected["source"] == "current"
+
+
+def test_select_effective_context_uses_long_term_when_short_context_is_weak_followup():
+    selected = select_effective_last_query_context(
+        "有什么相关风格的mod",
+        {"source": "current", "keywords": [], "quality_score": 0.0},
+        {
+            "long_term": {
+                "last_query_context": {
+                    "keywords": ["bimbo"],
+                    "semantic_anchors": ["roleplay"],
+                    "quality_score": 0.82,
+                }
+            }
+        },
+    )
+
+    assert selected["keywords"] == ["bimbo"]
+    assert selected["source"] == "long_term_writeback"
+
+
+def test_backfill_query_context_uses_recent_user_history_for_followup():
+    backfill = backfill_query_context_for_planning(
+        query="继续找相关的",
+        last_query_context={"source": "current", "keywords": [], "quality_score": 0.0},
+        history=[
+            _HistoryItem("user", "Skyrim Special Edition bimbo roleplay mod"),
+            _HistoryItem("assistant", "ok"),
+        ],
+    )
+
+    assert backfill.context["source"] == "history_backfill"
+    assert "bimbo" in backfill.keywords
+    assert backfill.context["game"] == "Skyrim Special Edition"
+
+
+def test_diagnosis_context_replaces_current_low_value_context_with_recent_user():
+    keywords, slots = diagnosis_context_from_last_query(
+        {"source": "current", "keywords": []},
+        [_HistoryItem("user", "Skyrim bimbo mod")],
+    )
+
+    assert "bimbo" in keywords
+    assert slots["source"] == "recent_user"
+    assert slots["game"] == "Skyrim"
+
+
+def test_history_context_skips_low_signal_followup_turns():
+    context = history_context_for_diagnosis(
+        [
+            _HistoryItem("user", "Skyrim bimbo mod"),
+            _HistoryItem("assistant", "ok"),
+            _HistoryItem("user", "继续找相关的"),
+        ]
+    )
+
+    assert context["keywords"] == ["skyrim", "bimbo"]
