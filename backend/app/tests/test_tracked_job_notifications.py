@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.jobs.tracked_jobs import run_tracked_job
+from app.jobs.tracked_jobs import mark_interrupted_jobs_failed, run_tracked_job
 from app.models.job_run import JobRun
 
 
@@ -12,6 +12,33 @@ def _make_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+
+def test_mark_interrupted_jobs_failed_only_updates_active_statuses():
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add(JobRun(job_name="queued_job", status="queued", started_at="2026-05-24T00:00:00+00:00"))
+        session.add(JobRun(job_name="running_job", status="running", started_at="2026-05-24T00:01:00+00:00"))
+        session.add(
+            JobRun(
+                job_name="done_job",
+                status="succeeded",
+                started_at="2026-05-24T00:02:00+00:00",
+                finished_at="2026-05-24T00:03:00+00:00",
+            )
+        )
+        session.commit()
+
+        assert mark_interrupted_jobs_failed(session) == 2
+
+        rows = {row.job_name: row for row in session.exec(select(JobRun)).all()}
+        assert rows["queued_job"].status == "failed"
+        assert rows["running_job"].status == "failed"
+        assert rows["queued_job"].finished_at is not None
+        assert rows["running_job"].error_message == "服务重启或进程退出，任务未完成。"
+        assert rows["done_job"].status == "succeeded"
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,15 @@ _PLAIN_LOG_PATTERN = re.compile(
 _LOG_FILE_NAMES = ("mod_watcher.log", "backend_service.log")
 
 
+def _resolve_log_dir() -> Path:
+    configured = Path(str(settings.LOG_DIR or "log"))
+    if configured.is_absolute():
+        return configured
+    # Resolve relative log dir from backend dir, not process cwd.
+    backend_root = Path(__file__).resolve().parents[1]
+    return (backend_root / configured).resolve()
+
+
 def redact_sensitive_text(text: str) -> str:
     """处理当前模块的业务逻辑并返回结果。"""
     redacted = text
@@ -117,8 +126,12 @@ def setup_logging() -> None:
     if _logging_initialized:
         return
 
-    log_dir = settings.LOG_DIR
-    os.makedirs(log_dir, exist_ok=True)
+    log_dir = _resolve_log_dir()
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except OSError:
+        log_dir = (Path.cwd() / "log").resolve()
+        os.makedirs(log_dir, exist_ok=True)
 
     formatter = logging.Formatter(
         "[%(asctime)s] %(levelname)-7s %(name)s:%(lineno)d - %(message)s",
@@ -138,13 +151,13 @@ def setup_logging() -> None:
     console.setFormatter(formatter)
     root_logger.addHandler(console)
 
-    log_file = os.path.join(log_dir, "mod_watcher.log")
+    log_file = os.path.join(str(log_dir), "mod_watcher.log")
     try:
         file_handler = logging.handlers.RotatingFileHandler(
             log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
         )
     except OSError:
-        fallback_file = os.path.join(log_dir, f"mod_watcher_{os.getpid()}.log")
+        fallback_file = os.path.join(str(log_dir), f"mod_watcher_{os.getpid()}.log")
         file_handler = logging.handlers.RotatingFileHandler(
             fallback_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
         )
@@ -186,7 +199,7 @@ def get_log_entries(
 
 def _read_file_log_entries(limit: int) -> list[dict]:
     """内部辅助函数，用于拆分上层流程中的局部规则。"""
-    log_dir = Path(settings.LOG_DIR).resolve()
+    log_dir = _resolve_log_dir()
     entries: list[dict] = []
     for file_name in _LOG_FILE_NAMES:
         log_file = log_dir / file_name

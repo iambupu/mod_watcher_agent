@@ -13,6 +13,7 @@ from app.services.settings_service import SettingsService
 from app.services.summary_service import SUMMARY_GENERATION_LOCK, SummaryService
 
 logger = logging.getLogger(__name__)
+SUMMARY_BATCH_SIZE = 20
 
 
 def _primary_llm_for_display(session: Session) -> tuple[str, str]:
@@ -28,7 +29,10 @@ def _primary_llm_for_display(session: Session) -> tuple[str, str]:
     )
 
 
-async def generate_summaries(record_job: bool = True) -> dict:
+async def generate_summaries(
+    record_job: bool = True,
+    max_items: int | None = SUMMARY_BATCH_SIZE,
+) -> dict:
     """Generate summaries for mods that don't have them yet.
 
     Returns:
@@ -42,7 +46,7 @@ async def generate_summaries(record_job: bool = True) -> dict:
         async def handler(session: Session) -> dict:
             """处理当前模块的业务逻辑并返回结果。"""
             service = SummaryService(session)
-            count = await service.generate_missing_summaries()
+            count = await service.generate_missing_summaries(max_items=max_items)
             provider, model = _primary_llm_for_display(session)
             logger.info("Generated %s missing summaries", count)
             return {
@@ -52,6 +56,7 @@ async def generate_summaries(record_job: bool = True) -> dict:
                 "llm_model": model,
                 "items_scanned": count,
                 "items_matched": count,
+                "batch_limit": max_items,
             }
 
         if record_job:
@@ -93,30 +98,31 @@ async def run_single_summary_job(
     summary_type: str,
 ) -> None:
     """执行任务流程并返回结果。"""
-    async def handler(session: Session) -> dict:
-        """处理当前模块的业务逻辑并返回结果。"""
-        service = SummaryService(session)
-        result = await service.generate_summary(
-            mod_id,
-            language=language,
-            summary_type=summary_type,
-        )
-        generated = 1 if result.get("model") not in ("error", "none") else 0
-        return {
-            "items_scanned": 1,
-            "items_matched": generated,
-            "mod_id": mod_id,
-            "language": language,
-            "summary_type": summary_type,
-            "model": result.get("model"),
-        }
+    async with SUMMARY_GENERATION_LOCK:
+        async def handler(session: Session) -> dict:
+            """处理当前模块的业务逻辑并返回结果。"""
+            service = SummaryService(session)
+            result = await service.generate_summary(
+                mod_id,
+                language=language,
+                summary_type=summary_type,
+            )
+            generated = 1 if result.get("model") not in ("error", "none") else 0
+            return {
+                "items_scanned": 1,
+                "items_matched": generated,
+                "mod_id": mod_id,
+                "language": language,
+                "summary_type": summary_type,
+                "model": result.get("model"),
+            }
 
-    await run_tracked_job(
-        f"llm_{'regenerate_summary' if summary_type == 'brief' else 'generate_introduction'}",
-        handler,
-        metadata={
-            "mod_id": mod_id,
-            "language": language,
-            "summary_type": summary_type,
-        },
-    )
+        await run_tracked_job(
+            f"llm_{'regenerate_summary' if summary_type == 'brief' else 'generate_introduction'}",
+            handler,
+            metadata={
+                "mod_id": mod_id,
+                "language": language,
+                "summary_type": summary_type,
+            },
+        )

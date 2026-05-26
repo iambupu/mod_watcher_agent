@@ -86,7 +86,9 @@ async def test_nexusmods_search_tool_builds_graphql_filter_and_persists_results(
             )
         )
 
-        persisted = session.exec(select(Mod).where(Mod.source == "nexusmods", Mod.external_id == "9001")).first()
+        persisted = session.exec(
+            select(Mod).where(Mod.source == "nexusmods", Mod.external_id == "skyrimspecialedition:9001")
+        ).first()
 
     assert len(results) == 1
     assert results[0].tool_name == "nexusmods_search"
@@ -127,7 +129,12 @@ def test_nexus_tool_input_respects_source_and_game_domain_plan():
             "sources": ["nexusmods"],
             "game_domains": ["skyrimspecialedition"],
             "categories": ["Armour"],
+            "tags": ["CBBE"],
             "adult_content": True,
+            "author": "Ousnius",
+            "min_downloads": 1000,
+            "min_endorsements": 50,
+            "updated_since_days": 7,
             "sort_field": "endorsements",
             "sort_order": "desc",
             "limit": 5,
@@ -138,7 +145,12 @@ def test_nexus_tool_input_respects_source_and_game_domain_plan():
     assert tool_input is not None
     assert tool_input.game_domain == "skyrimspecialedition"
     assert tool_input.categories == ["Armour"]
+    assert tool_input.tags == ["CBBE"]
     assert tool_input.adult_content is True
+    assert tool_input.author == "Ousnius"
+    assert tool_input.min_downloads == 1000
+    assert tool_input.min_endorsements == 50
+    assert tool_input.updated_since_days == 7
     assert tool_input.sort_field == "endorsements"
     assert tool_input.limit == 5
 

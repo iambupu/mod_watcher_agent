@@ -13,6 +13,7 @@ from app.db import engine
 from app.jobs.check_favorite_updates import check_favorite_updates
 from app.jobs.generate_summaries import generate_summaries
 from app.jobs.generate_summary_report import generate_summary_report
+from app.jobs.refresh_agent_preferences import refresh_agent_preferences
 from app.jobs.send_digest import run_digest_catchup, send_daily_digest, send_weekly_digest
 from app.jobs.tracked_jobs import run_tracked_job
 from app.models.job_run import JobRun
@@ -251,6 +252,14 @@ def register_jobs(session: Session | None = None) -> None:
         id="generate_summaries",
         name="Generate AI Summaries",
         replace_existing=True,
+    )
+    scheduler.add_job(
+        refresh_agent_preferences,
+        IntervalTrigger(minutes=15),
+        id="agent_profile_refresh",
+        name="Agent Profile Refresh",
+        replace_existing=True,
+        max_instances=1,
     )
     summary_report_interval = 0
     summary_report_prompt = ""

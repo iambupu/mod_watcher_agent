@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.db import engine
 from app.logger import redact_sensitive_text
@@ -61,6 +61,25 @@ def mark_job_failed(session: Session, job_run: JobRun, exc: Exception) -> str:
     )
     session.commit()
     return redacted_error
+
+
+def mark_interrupted_jobs_failed(session: Session) -> int:
+    """Mark queued/running jobs from a previous process as failed on startup."""
+    interrupted = session.exec(
+        select(JobRun).where(JobRun.status.in_(["queued", "running"]))
+    ).all()
+    if not interrupted:
+        return 0
+
+    finished_at = utc_now()
+    message = "服务重启或进程退出，任务未完成。"
+    for job_run in interrupted:
+        job_run.status = "failed"
+        job_run.finished_at = finished_at
+        job_run.error_message = message
+        session.add(job_run)
+    session.commit()
+    return len(interrupted)
 
 
 def mark_job_succeeded(session: Session, job_run: JobRun, result: dict[str, Any]) -> None:

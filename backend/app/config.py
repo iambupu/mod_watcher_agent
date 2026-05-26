@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -22,9 +23,25 @@ def _env_list(name: str, default: str) -> list[str]:
     ]
 
 
+def _normalize_database_url(raw_url: str) -> str:
+    url = (raw_url or "").strip()
+    if not url.startswith("sqlite:///"):
+        return url
+    sqlite_path = url[len("sqlite:///"):]
+    if not sqlite_path:
+        return url
+    path_obj = Path(sqlite_path)
+    if path_obj.is_absolute():
+        return url
+    repo_root = Path(__file__).resolve().parents[2]
+    resolved = (repo_root / path_obj).resolve()
+    normalized = resolved.as_posix()
+    return f"sqlite:///{normalized}"
+
+
 class Settings:
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "sqlite:///./mod_watcher.db"
+    DATABASE_URL: str = _normalize_database_url(
+        os.getenv("DATABASE_URL", "sqlite:///./backend/mod_watcher.db")
     )
     NEXUS_API_KEY: str = os.getenv("NEXUS_API_KEY", "")
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -54,6 +71,10 @@ class Settings:
     MW_ALLOWED_ORIGINS: list[str] = _env_list(
         "MW_ALLOWED_ORIGINS",
         "http://localhost:17501,http://127.0.0.1:17501",
+    )
+    MW_ALLOWED_ORIGIN_REGEX: str | None = os.getenv(
+        "MW_ALLOWED_ORIGIN_REGEX",
+        r"^chrome-extension://[a-z]{32}$",
     )
     # Legacy compatibility knobs (lower priority than MW_* keys)
     CORS_ORIGINS: list[str] = _env_list(

@@ -17,6 +17,7 @@ from app.services.agent.semantic_search import (
     unique_terms,
 )
 from app.services.settings_service import SettingsService
+from app.services.source_identity import canonical_external_id, find_existing_mod_by_identity
 
 MAX_AGENT_NEXUS_RESULTS = 100
 DEFAULT_UPDATED_WINDOW_DAYS = 30
@@ -35,6 +36,8 @@ class NexusModsSearchInput:
     author: str | None = None
     min_downloads: int | None = None
     min_endorsements: int | None = None
+    min_views: int | None = None
+    min_likes: int | None = None
     updated_since_days: int | None = None
     sort_field: str = "updated_at_remote"
     sort_order: str = "desc"
@@ -50,22 +53,36 @@ class NexusModsSearchTool:
         """初始化实例并保存运行所需的依赖。"""
         self.session = session
         self.settings = SettingsService(session)
+        self.last_status = "not_started"
+        self.last_reason: str | None = None
 
     async def run(self, tool_input: NexusModsSearchInput) -> list[SearchResult]:
         """执行任务流程并返回结果。"""
+        self.last_status = "succeeded"
+        self.last_reason = None
         api_key = (self.settings.get("nexus_api_key") or "").strip()
         if not api_key:
+            self.last_status = "skipped"
+            self.last_reason = "missing_credentials"
             return []
 
         search_input = self._with_default_game(tool_input)
         graphql_filter = self._build_filter(search_input)
         if not graphql_filter:
+            self.last_status = "skipped"
+            self.last_reason = "empty_filter"
             return []
 
         adapter = NexusModsAdapter(api_key=api_key)
         try:
             items = await self._fetch(adapter, search_input, graphql_filter)
-        except (RateLimitError, ValueError):
+        except RateLimitError:
+            self.last_status = "degraded"
+            self.last_reason = "rate_limited"
+            return []
+        except ValueError:
+            self.last_status = "degraded"
+            self.last_reason = "invalid_response"
             return []
 
         mods = self._upsert(items[:MAX_AGENT_NEXUS_RESULTS])
@@ -109,6 +126,10 @@ class NexusModsSearchTool:
             clauses.append({"downloads": [{"op": "GTE", "value": int(tool_input.min_downloads)}]})
         if tool_input.min_endorsements is not None:
             clauses.append({"endorsements": [{"op": "GTE", "value": int(tool_input.min_endorsements)}]})
+        if tool_input.min_views is not None:
+            clauses.append({"views": [{"op": "GTE", "value": int(tool_input.min_views)}]})
+        if tool_input.min_likes is not None:
+            clauses.append({"likes": [{"op": "GTE", "value": int(tool_input.min_likes)}]})
 
         window_days = tool_input.updated_since_days
         if window_days is None:
@@ -161,12 +182,17 @@ class NexusModsSearchTool:
             fields = _mod_item_fields(item)
             if not fields["source"] or not fields["external_id"] or not fields["title"]:
                 continue
-            existing = self.session.exec(
-                select(Mod).where(
-                    Mod.source == fields["source"],
-                    Mod.external_id == fields["external_id"],
-                )
-            ).first()
+            fields["external_id"] = canonical_external_id(
+                fields["source"],
+                fields["external_id"],
+                fields.get("url") or "",
+            )
+            existing = find_existing_mod_by_identity(
+                self.session,
+                fields["source"],
+                fields["external_id"],
+                fields.get("url") or "",
+            )
             if existing:
                 for key, value in fields.items():
                     if key not in {"source", "external_id"}:
@@ -231,7 +257,14 @@ def nexus_tool_input_from_plan(session: Session, query: str, plan: dict[str, Any
         game_domain=game_domain,
         game_name=None if game_domain else games[0] if games else None,
         categories=_category_hints(query, [str(value) for value in (plan.get("categories") or [])]),
+        tags=[str(value).strip() for value in (plan.get("tags") or []) if str(value).strip()] or None,
         adult_content=plan.get("adult_content") if isinstance(plan.get("adult_content"), bool) else None,
+        author=str(plan.get("author") or "").strip() or None,
+        min_downloads=_optional_min_metric(plan.get("min_downloads")),
+        min_endorsements=_optional_min_metric(plan.get("min_endorsements")),
+        min_views=_optional_min_metric(plan.get("min_views")),
+        min_likes=_optional_min_metric(plan.get("min_likes")),
+        updated_since_days=_optional_time_window(plan.get("updated_since_days")),
         sort_field=str(plan.get("sort_field") or "updated_at_remote"),
         sort_order="asc" if str(plan.get("sort_order") or "").lower() == "asc" else "desc",
         limit=int(plan.get("limit") or 8),
@@ -245,6 +278,22 @@ def _domain_for_game(session: Session, game: str) -> str | None:
         .where(Mod.source == "nexusmods", Mod.game == game, Mod.game_domain.is_not(None), Mod.game_domain != "")
         .limit(1)
     ).first()
+
+
+def _optional_min_metric(value: Any) -> int | None:
+    try:
+        parsed = int(str(value or "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+    return max(0, parsed)
+
+
+def _optional_time_window(value: Any) -> int | None:
+    try:
+        parsed = int(str(value or "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+    return max(1, min(365, parsed))
 
 
 def _clause(field: str, op: str, value: str) -> dict[str, Any]:

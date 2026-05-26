@@ -13,6 +13,7 @@ class AgentMessage(SQLModel, table=True):
     created_at: str
     matches_json: str | None = Field(default=None)
     response_cards_json: str | None = Field(default=None)
+    audit_json: str | None = Field(default=None)
     llm_provider: str | None = Field(default=None, max_length=64)
     llm_model: str | None = Field(default=None, max_length=128)
     sort_index: int = Field(default=0, index=True)

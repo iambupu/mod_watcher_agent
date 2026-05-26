@@ -5,7 +5,7 @@ import httpx
 from sqlmodel import Session
 
 from app.models.mod import Mod
-from app.services.agent.query_planner import detect_adult_constraint
+from app.services.agent.planning.query_intent import detect_adult_constraint
 from app.services.agent.search_types import SearchResult
 from app.services.agent.semantic_search import semantic_query
 from app.services.agent.tools.loverslab_search_common import (
@@ -41,18 +41,30 @@ class LoversLabGoogleSearchTool:
         """初始化实例并保存运行所需的依赖。"""
         self.session = session
         self.settings = SettingsService(session)
+        self.last_status = "not_started"
+        self.last_reason: str | None = None
 
     async def run(self, tool_input: LoversLabGoogleSearchInput) -> list[SearchResult]:
         """执行任务流程并返回结果。"""
+        self.last_status = "succeeded"
+        self.last_reason = None
         api_key = (self.settings.get("google_search_api_key") or "").strip()
         engine_id = (self.settings.get("google_search_engine_id") or "").strip()
         if not api_key or not engine_id:
+            self.last_status = "skipped"
+            self.last_reason = "missing_credentials"
             return []
 
         params = self._build_params(tool_input, api_key, engine_id)
         try:
             data = await self._fetch(params)
-        except (httpx.HTTPError, ValueError):
+        except httpx.HTTPError:
+            self.last_status = "degraded"
+            self.last_reason = "http_error"
+            return []
+        except ValueError:
+            self.last_status = "degraded"
+            self.last_reason = "invalid_response"
             return []
 
         mods = self._upsert(data.get("items") or [], tool_input)
@@ -130,7 +142,9 @@ def loverslab_google_input_from_plan(query: str, plan: dict[str, Any]) -> Lovers
         return None
     games = [str(value).strip() for value in (plan.get("games") or []) if str(value).strip()]
     game_domains = [str(value).strip() for value in (plan.get("game_domains") or []) if str(value).strip()]
-    days = 30 if str(plan.get("sort_field") or "") in {"updated_at_remote", "first_seen_at"} else None
+    days = _optional_time_window(plan.get("updated_since_days"))
+    if days is None and str(plan.get("sort_field") or "") in {"updated_at_remote", "first_seen_at"}:
+        days = 30
     return LoversLabGoogleSearchInput(
         query=query.split("[scope]", 1)[0].strip(),
         game=games[0] if games else game_domains[0] if game_domains else None,
@@ -139,6 +153,14 @@ def loverslab_google_input_from_plan(query: str, plan: dict[str, Any]) -> Lovers
         sort_field=str(plan.get("sort_field") or "relevance"),
         limit=int(plan.get("limit") or 8),
     )
+
+
+def _optional_time_window(value: Any) -> int | None:
+    try:
+        parsed = int(str(value or "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+    return max(1, min(365, parsed))
 
 
 def _thumbnail_url(item: dict[str, Any]) -> str | None:

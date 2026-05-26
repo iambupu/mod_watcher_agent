@@ -1,6 +1,7 @@
 from app.models.mod import Mod
 from app.services.agent.result_merger import (
     filter_by_distinctive_terms,
+    filter_excluded_titles,
     merge_results,
     sort_results,
 )
@@ -30,12 +31,72 @@ def test_merge_results_keeps_highest_score_per_source_external_id():
     assert merged[0].mod.title == "XXTB high"
 
 
+def test_merge_results_adds_explainable_fusion_score_breakdown():
+    local = _result("Ocean String", "1", 12)
+    local = SearchResult(score=12, mod=local.mod, tool_name="sqlite_fts")
+    online = _result("Ocean String", "1", 4)
+    online = SearchResult(score=4, mod=online.mod, tool_name="nexusmods_search")
+
+    merged = merge_results([local], [online])
+
+    assert merged[0].score >= 12
+    assert merged[0].score_breakdown["keyword_score"] > 0
+    assert merged[0].score_breakdown["source_confidence"] > 0
+    assert "sqlite_fts" in merged[0].rank_reason
+    assert "nexusmods_search" in merged[0].rank_reason
+
+
 def test_filter_by_distinctive_terms_removes_unrelated_results():
     results = [_result("XXTB Suit", "1", 5), _result("Kawaii Dress", "2", 9)]
 
     filtered = filter_by_distinctive_terms(results, "XXTB的mod")
 
     assert [item.mod.title for item in filtered] == ["XXTB Suit"]
+
+
+def test_filter_by_distinctive_terms_uses_fallback_terms_for_contextual_followup():
+    results = [_result("Bimbo Body Morph", "1", 5), _result("Kawaii Dress", "2", 9)]
+
+    filtered = filter_by_distinctive_terms(results, "还有其他类似的mod", fallback_terms=["bimbo"])
+
+    assert [item.mod.title for item in filtered] == ["Bimbo Body Morph"]
+
+
+def test_filter_by_distinctive_terms_treats_fallback_expansions_as_alternatives():
+    results = [_result("Stellar Lace Combat Suit", "1", 5), _result("Realistic Armor", "2", 9)]
+    results[0].mod.category = "Outfits"
+    results[0].mod.original_summary = "An adult outfit mod for Stellar Blade."
+    results[1].mod.category = "Armor"
+    results[1].mod.original_summary = "A protective armor overhaul."
+
+    filtered = filter_by_distinctive_terms(
+        results,
+        "帮我找最近比较火的剑星成人服装 Mod",
+        fallback_terms=["outfit", "clothing", "dress", "robe", "bikini", "lingerie", "costume", "suit"],
+    )
+
+    assert [item.mod.title for item in filtered] == ["Stellar Lace Combat Suit"]
+
+
+def test_filter_by_distinctive_terms_allows_partial_match_for_long_term_sets():
+    results = [_result("Script Extender Utility Patch", "1", 5), _result("Casual Armor Pack", "2", 9)]
+    results[0].mod.original_summary = "Requires SKSE and Address Library before installation."
+    results[1].mod.original_summary = "No dependency and no utility tooling."
+
+    filtered = filter_by_distinctive_terms(
+        results,
+        "utility framework fix patch performance bugfix",
+    )
+
+    assert [item.mod.title for item in filtered] == ["Script Extender Utility Patch"]
+
+
+def test_filter_excluded_titles_removes_previously_shown_results():
+    results = [_result("Bimbo Body Morph", "1", 5), _result("Bimbo Body Preset", "2", 9)]
+
+    filtered = filter_excluded_titles(results, ["Bimbo Body Morph"])
+
+    assert [item.mod.title for item in filtered] == ["Bimbo Body Preset"]
 
 
 def test_sort_results_uses_plan_sort_field():

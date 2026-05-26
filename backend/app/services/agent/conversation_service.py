@@ -6,7 +6,9 @@ from fastapi import HTTPException
 from sqlmodel import Session, delete, select
 
 from app.models.agent_message import AgentMessage
+from app.services.agent.memory.preference_service import AgentPreferenceService
 from app.services.agent.schemas import (
+    AgentAudit,
     AgentConversationMessage,
     AgentConversationState,
     AgentConversationStateSaveRequest,
@@ -54,6 +56,7 @@ def load_conversation_state(session: Session, settings: SettingsService) -> Agen
     for row in rows:
         matches: list[AgentModMatch] | None = None
         response_cards: dict[str, list[str]] | None = None
+        audit: AgentAudit | None = None
         if row.matches_json:
             try:
                 raw_matches = json.loads(row.matches_json)
@@ -65,14 +68,16 @@ def load_conversation_state(session: Session, settings: SettingsService) -> Agen
             try:
                 raw_cards = json.loads(row.response_cards_json)
                 if isinstance(raw_cards, dict):
-                    response_cards = {
-                        "understanding": [str(x) for x in (raw_cards.get("understanding") or []) if str(x).strip()],
-                        "filters": [str(x) for x in (raw_cards.get("filters") or []) if str(x).strip()],
-                        "results": [str(x) for x in (raw_cards.get("results") or []) if str(x).strip()],
-                        "next_steps": [str(x) for x in (raw_cards.get("next_steps") or []) if str(x).strip()],
-                    }
+                    response_cards = _normalize_response_cards(raw_cards)
             except Exception:
                 response_cards = None
+        if row.audit_json:
+            try:
+                raw_audit = json.loads(row.audit_json)
+                if isinstance(raw_audit, dict):
+                    audit = AgentAudit.model_validate(raw_audit)
+            except Exception:
+                audit = None
         parsed_messages.append(
             AgentConversationMessage(
                 id=row.message_id,
@@ -82,6 +87,7 @@ def load_conversation_state(session: Session, settings: SettingsService) -> Agen
                 created_at=row.created_at,
                 matches=matches,
                 response_cards=response_cards,
+                audit=audit,
                 llm_provider=row.llm_provider,
                 llm_model=row.llm_model,
             )
@@ -122,6 +128,7 @@ def save_conversation_state(
             created_at=message.created_at or now,
             matches=message.matches or None,
             response_cards=message.response_cards or None,
+            audit=message.audit,
             llm_provider=message.llm_provider,
             llm_model=message.llm_model,
         )
@@ -161,6 +168,7 @@ def save_conversation_state(
         created_at = str(item.get("created_at") or now)
         matches_json = json.dumps(item.get("matches"), ensure_ascii=False) if item.get("matches") else None
         response_cards_json = json.dumps(item.get("response_cards"), ensure_ascii=False) if item.get("response_cards") else None
+        audit_json = json.dumps(item.get("audit"), ensure_ascii=False) if item.get("audit") else None
         llm_provider = str(item.get("llm_provider") or "") or None
         llm_model = str(item.get("llm_model") or "") or None
         existing = existing_by_message_id.get(message_id)
@@ -171,6 +179,7 @@ def save_conversation_state(
             existing.created_at = created_at
             existing.matches_json = matches_json
             existing.response_cards_json = response_cards_json
+            existing.audit_json = audit_json
             existing.llm_provider = llm_provider
             existing.llm_model = llm_model
             existing.sort_index = idx
@@ -185,6 +194,7 @@ def save_conversation_state(
                 created_at=created_at,
                 matches_json=matches_json,
                 response_cards_json=response_cards_json,
+                audit_json=audit_json,
                 llm_provider=llm_provider,
                 llm_model=llm_model,
                 sort_index=idx,
@@ -202,9 +212,24 @@ def save_conversation_state(
     else:
         session.exec(delete(AgentMessage).where(AgentMessage.session_id == active_session))
     session.commit()
+    AgentPreferenceService(session).mark_dirty()
     settings.set(AGENT_CHAT_ACTIVE_SESSION_KEY, active_session)
     settings.set(last_update_key, now)
     return load_conversation_state(session, settings)
+
+
+def _normalize_response_cards(raw_cards: dict) -> dict[str, list[str]]:
+    normalized: dict[str, list[str]] = {}
+    for key, values in raw_cards.items():
+        card_key = str(key or "").strip()
+        if not card_key:
+            continue
+        if not isinstance(values, list):
+            continue
+        normalized_values = [str(item).strip() for item in values if str(item).strip()]
+        if normalized_values:
+            normalized[card_key] = normalized_values
+    return normalized
 
 
 def start_new_conversation(settings: SettingsService) -> str:
