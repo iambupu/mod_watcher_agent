@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Mod Watcher Collector",
+  "version": "0.1.0",
+  "description": "Save the current Nexus Mods or LoversLab mod page into Mod Watcher favorites.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Save to Mod Watcher"
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "https://www.nexusmods.com/*",
+    "https://nexusmods.com/*",
+    "https://www.loverslab.com/*",
+    "https://loverslab.com/*",
+    "http://127.0.0.1:17500/*",
+    "http://localhost:17500/*"
+  ]
+}
