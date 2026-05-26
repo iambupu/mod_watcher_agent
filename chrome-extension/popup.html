@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mod Watcher Collector</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Mod Watcher</h1>
+        <p id="page-status">读取当前页面...</p>
+      </header>
+
+      <section class="mod-preview" id="mod-preview" hidden>
+        <div class="source" id="mod-source"></div>
+        <h2 id="mod-title"></h2>
+        <p id="mod-meta"></p>
+      </section>
+
+      <label>
+        后端地址
+        <input id="backend-url" type="url" spellcheck="false" />
+      </label>
+
+      <label>
+        游戏名
+        <input id="game-name" type="text" spellcheck="false" placeholder="未识别时可手动填写" />
+      </label>
+
+      <label class="checkbox-row">
+        <input id="adult-content" type="checkbox" />
+        成人内容
+      </label>
+
+      <label>
+        访问令牌
+        <input id="access-token" type="password" spellcheck="false" placeholder="local_strict/shared_lan 时填写" />
+      </label>
+
+      <label>
+        备注
+        <textarea id="user-note" rows="3" placeholder="可选"></textarea>
+      </label>
+
+      <div class="actions">
+        <button id="save-button" type="button">收藏当前 Mod</button>
+      </div>
+
+      <p class="message" id="message" role="status"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

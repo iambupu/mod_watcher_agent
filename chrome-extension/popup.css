@@ -1,0 +1,145 @@
+:root {
+  color-scheme: light;
+  font-family:
+    "Microsoft YaHei",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  color: #17202a;
+  background: #f6f8fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 360px;
+  margin: 0;
+  background: #f6f8fb;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+p,
+label,
+input,
+textarea,
+button {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #34495e;
+  font-weight: 600;
+}
+
+.checkbox-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #ccd6e0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #17202a;
+  background: #fff;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-weight: 700;
+  color: #fff;
+  background: #2764c5;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #93a4b8;
+  cursor: default;
+}
+
+.mod-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+
+.source {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #1e3a5f;
+  background: #e8f1ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.actions {
+  padding-top: 2px;
+}
+
+.message {
+  min-height: 20px;
+  color: #516170;
+}
+
+.message.error {
+  color: #b42318;
+}
+
+.message.success {
+  color: #067647;
+}
