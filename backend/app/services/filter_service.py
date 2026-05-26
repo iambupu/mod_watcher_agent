@@ -176,19 +176,46 @@ class FilterService:
         pairs = list({(m["source"], m["external_id"]) for m in mods})
 
         existing = db_session.exec(
-            select(Mod.source, Mod.external_id, Mod.ignored).where(
+            select(
+                Mod.source,
+                Mod.external_id,
+                Mod.ignored,
+                Mod.version,
+                Mod.updated_at_remote,
+                Mod.published_at_remote,
+            ).where(
                 or_(*[and_(Mod.source == s, Mod.external_id == eid) for s, eid in pairs])
             )
         ).all()
 
-        existing_ids = {f"{row[0]}:{row[1]}" for row in existing}
+        existing_by_id = {f"{row[0]}:{row[1]}": row for row in existing}
         ignored_ids = {f"{row[0]}:{row[1]}" for row in existing if row[2]}
 
-        return [
-            m for m in mods
-            if f"{m['source']}:{m['external_id']}" not in existing_ids
-            and f"{m['source']}:{m['external_id']}" not in ignored_ids
-        ]
+        def _normalize(value: Any) -> str:
+            return str(value or "").strip()
+
+        def _has_remote_update(mod: dict, existing_row: Any) -> bool:
+            incoming_version = _normalize(mod.get("version"))
+            stored_version = _normalize(existing_row[3])
+            if incoming_version and stored_version and incoming_version != stored_version:
+                return True
+
+            incoming_updated = _normalize(mod.get("updated_at_remote") or mod.get("published_at_remote"))
+            stored_updated = _normalize(existing_row[4] or existing_row[5])
+            return bool(incoming_updated and stored_updated and incoming_updated != stored_updated)
+
+        deduplicated: list[dict] = []
+        for mod in mods:
+            mod_id = f"{mod['source']}:{mod['external_id']}"
+            existing_row = existing_by_id.get(mod_id)
+            if existing_row is None:
+                deduplicated.append(mod)
+                continue
+            if mod_id in ignored_ids:
+                continue
+            if _has_remote_update(mod, existing_row):
+                deduplicated.append(mod)
+        return deduplicated
 
     def _record_rejection(
         self,

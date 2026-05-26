@@ -9,6 +9,7 @@ class ModRead(BaseModel):
     game: str
     game_domain: str | None = None
     title: str
+    translated_title_zh: str | None = None
     url: str
     author: str | None = None
     category: str | None = None

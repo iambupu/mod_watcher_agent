@@ -1,4 +1,6 @@
 import logging
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -14,7 +16,16 @@ logger = logging.getLogger(__name__)
 class RateLimitError(Exception):
     pass
 
+
+@dataclass(frozen=True)
+class NexusModsBatch:
+    items: list[ModItem]
+    total_count: int
+    offset: int
+
+
 GRAPHQL_ENDPOINT = "https://api.nexusmods.com/v2/graphql"
+REST_MOD_DETAIL_ENDPOINT = "https://api.nexusmods.com/v1/games/{game_domain}/mods/{mod_id}.json"
 MAX_PAGES = 5
 PAGE_SIZE = 100
 REQUEST_TIMEOUT = 30.0
@@ -50,6 +61,16 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return None
     value = value.replace("Z", "+00:00")
     return datetime.fromisoformat(value)
+
+
+def _parse_unix_timestamp(value: int | float | str | None) -> datetime | None:
+    """解析 Unix 时间戳并返回 UTC 时间。"""
+    if value is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(str(value)), tz=UTC)
+    except (TypeError, ValueError, OSError):
+        return None
 
 
 def _unix_timestamp_days_ago(days: int) -> str:
@@ -195,11 +216,84 @@ class NexusModsAdapter(BaseAdapter):
 
         return results
 
+    async def iter_game_mod_batches(
+        self,
+        game_domain_name: str,
+        *,
+        batch_size: int = PAGE_SIZE,
+        max_batches: int | None = None,
+    ) -> AsyncIterator[NexusModsBatch]:
+        """Yield NexusMods game mods in API-sized batches."""
+        query = f"""
+        query($filter: ModsFilter, $sort: [ModsSort!], $offset: Int, $count: Int) {{
+            mods(
+                filter: $filter
+                sort: $sort
+                offset: $offset
+                count: $count
+            ) {{
+                nodes {{
+                    {MOD_FIELDS}
+                }}
+                totalCount
+            }}
+        }}
+        """
+        filter_value = {
+            "op": "AND",
+            "gameDomainName": [{"op": "EQUALS", "value": game_domain_name}],
+        }
+        sort_value = self._build_sort("updatedAt_desc")
+        page_count = 0
+        offset = 0
+        while max_batches is None or page_count < max_batches:
+            variables = {
+                "filter": filter_value,
+                "sort": sort_value,
+                "offset": offset,
+                "count": batch_size,
+            }
+            data = await self._graphql_query(query, variables)
+            connection = data.get("data", {}).get("mods") or {}
+            nodes = connection.get("nodes") or []
+            total_count = connection.get("totalCount")
+            if total_count is None:
+                raise ValueError("NexusMods response missing totalCount")
+            if not nodes:
+                return
+            batch_offset = offset
+            offset += len(nodes)
+            yield NexusModsBatch(
+                items=[self.normalize(node) for node in nodes],
+                total_count=int(total_count),
+                offset=batch_offset,
+            )
+            page_count += 1
+            if offset >= int(total_count):
+                return
+
     async def fetch_mod_detail(
         self, external_id: str, game_domain: str | None = None
     ) -> ModItem | None:
         """请求外部数据并返回标准化结果。"""
-        mod_id = int(external_id)
+        embedded_game_domain, mod_id = _parse_external_id(external_id)
+        resolved_game_domain = (game_domain or embedded_game_domain or "").strip().lower() or None
+
+        if resolved_game_domain:
+            try:
+                rest_detail = await self._fetch_mod_detail_rest(resolved_game_domain, mod_id)
+            except RateLimitError:
+                return None
+            except Exception as exc:
+                logger.warning(
+                    "NexusMods REST detail failed for %s:%s; fallback to GraphQL. error=%s",
+                    resolved_game_domain,
+                    mod_id,
+                    exc,
+                )
+            else:
+                if rest_detail is not None:
+                    return rest_detail
 
         query = f"""
         query($filter: ModsFilter, $offset: Int, $count: Int) {{
@@ -214,9 +308,9 @@ class NexusModsAdapter(BaseAdapter):
         filter_clauses: list[dict] = [
             {"modId": [{"op": "EQUALS", "value": str(mod_id)}]}
         ]
-        if game_domain:
+        if resolved_game_domain:
             filter_clauses.append(
-                {"gameDomainName": [{"op": "EQUALS", "value": game_domain}]}
+                {"gameDomainName": [{"op": "EQUALS", "value": resolved_game_domain}]}
             )
         variables = {
             "filter": {"op": "AND", "filter": filter_clauses},
@@ -227,15 +321,117 @@ class NexusModsAdapter(BaseAdapter):
             data = await self._graphql_query(query, variables)
         except RateLimitError:
             return None
+        except ValueError as exc:
+            if not resolved_game_domain:
+                logger.warning("NexusMods detail lookup failed for modId=%s: %s", mod_id, exc)
+                return None
+            logger.warning(
+                "NexusMods detail GraphQL failed for %s:%s; fallback to REST detail endpoint. error=%s",
+                resolved_game_domain,
+                mod_id,
+                exc,
+            )
+            return await self._fetch_mod_detail_rest(resolved_game_domain, mod_id)
         if not data:
-            return None
+            if not resolved_game_domain:
+                return None
+            return await self._fetch_mod_detail_rest(resolved_game_domain, mod_id)
 
         nodes = data.get("data", {}).get("mods", {}).get("nodes") or []
         mod_node = nodes[0] if nodes else None
         if mod_node is None:
-            return None
+            if not resolved_game_domain:
+                return None
+            return await self._fetch_mod_detail_rest(resolved_game_domain, mod_id)
 
         return self.normalize(mod_node)
+
+    async def _fetch_mod_detail_rest(self, game_domain: str, mod_id: int) -> ModItem | None:
+        """Fallback REST detail fetch for APIs that require gameId in GraphQL filters."""
+        headers = {
+            "Application-Name": "ModWatcherAgent",
+            "Application-Version": "0.2.0",
+        }
+        if self.api_key:
+            headers["apikey"] = self.api_key
+        url = REST_MOD_DETAIL_ENDPOINT.format(game_domain=game_domain, mod_id=mod_id)
+
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            response = await client.get(url, headers=headers)
+        if response.status_code == 404:
+            return None
+        if response.status_code == 429:
+            raise RateLimitError("NexusMods API rate limit exceeded")
+        response.raise_for_status()
+        payload = response.json() or {}
+        return self._normalize_rest_detail(payload, game_domain=game_domain, mod_id=mod_id)
+
+    def _normalize_rest_detail(self, payload: dict, *, game_domain: str, mod_id: int) -> ModItem:
+        """Normalize Nexus v1 REST mod detail shape into ModItem."""
+        rest_mod_id = payload.get("mod_id") or payload.get("modId") or mod_id
+        game_name = (
+            payload.get("game_name")
+            or (payload.get("game") or {}).get("name")
+            or game_domain
+        )
+        category_name = (
+            payload.get("category_name")
+            or payload.get("category")
+            or ""
+        )
+        updated_at = _parse_datetime(payload.get("updatedAt")) or _parse_datetime(payload.get("updated_time"))
+        if updated_at is None:
+            updated_at = _parse_unix_timestamp(payload.get("updated_timestamp") or payload.get("updated_time"))
+        summary = (payload.get("summary") or payload.get("description") or "").strip()
+        author = payload.get("author") or payload.get("uploaded_by") or ""
+        thumbnail_url = payload.get("picture_url") or payload.get("thumbnail_url") or ""
+        downloads = payload.get("mod_downloads") or payload.get("downloads") or 0
+        endorsements = payload.get("endorsement_count") or payload.get("endorsements") or 0
+
+        raw_payload = {
+            "uid": payload.get("uid"),
+            "modId": rest_mod_id,
+            "name": payload.get("name", ""),
+            "summary": summary,
+            "author": author,
+            "category": category_name,
+            "game": {"domainName": game_domain, "name": game_name},
+            "gameId": payload.get("game_id") or payload.get("gameId"),
+            "version": payload.get("version"),
+            "createdAt": payload.get("createdAt"),
+            "updatedAt": payload.get("updatedAt"),
+            "downloads": downloads,
+            "endorsements": endorsements,
+            "adultContent": payload.get("contains_adult_content")
+            if payload.get("contains_adult_content") is not None
+            else payload.get("adultContent"),
+            "thumbnailUrl": thumbnail_url,
+            "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
+            "raw_detail_payload": payload,
+        }
+
+        return ModItem(
+            source_id=f"{game_domain}:{rest_mod_id}",
+            source="nexusmods",
+            name=payload.get("name", ""),
+            game=game_name,
+            url=f"https://www.nexusmods.com/{game_domain}/mods/{rest_mod_id}",
+            summary=summary,
+            author=author,
+            downloads=int(downloads or 0),
+            endorsements=int(endorsements or 0),
+            likes=int(payload.get("likes") or 0),
+            categories=[category_name] if category_name else [],
+            tags=[],
+            thumbnail_url=thumbnail_url,
+            updated_at=updated_at,
+            is_adult=bool(
+                payload.get("contains_adult_content")
+                if payload.get("contains_adult_content") is not None
+                else payload.get("adultContent")
+            ),
+            raw=raw_payload,
+        )
 
     def normalize(self, raw_item: dict) -> ModItem:
         """规范化输入数据，供后续流程使用。"""
@@ -249,7 +445,7 @@ class NexusModsAdapter(BaseAdapter):
         ]
 
         return ModItem(
-            source_id=str(raw_item.get("modId", "")),
+            source_id=f"{game_domain}:{raw_item.get('modId')}" if game_domain else str(raw_item.get("modId", "")),
             source="nexusmods",
             name=raw_item.get("name", ""),
             game=game.get("name", ""),
@@ -266,3 +462,11 @@ class NexusModsAdapter(BaseAdapter):
             is_adult=raw_item.get("adultContent", False),
             raw=raw_item,
         )
+
+
+def _parse_external_id(external_id: str) -> tuple[str | None, int]:
+    value = str(external_id or "").strip()
+    if ":" in value:
+        game_domain, mod_id = value.split(":", 1)
+        return game_domain.strip().lower() or None, int(mod_id)
+    return None, int(value)

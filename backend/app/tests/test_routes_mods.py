@@ -7,6 +7,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.db import get_session
 from app.main import app as fastapi_app
+from app.models.favorite import Favorite
 from app.models.mod import Mod
 from app.models.settings import Setting
 from app.models.summary import ModSummary
@@ -293,6 +294,12 @@ class TestListMods:
             Mod(source="nexusmods", external_id="3", game="Fallout 4",
                 game_domain="fallout4", title="Mod3",
                 url="https://c.com", first_seen_at="2025-01-01T00:00:00", last_seen_at="2025-01-01T00:00:00"),
+            Mod(source="loverslab", external_id="4", game="X-Change Life",
+                game_domain=None, title="LL Mod1",
+                url="https://d.com", first_seen_at="2025-01-01T00:00:00", last_seen_at="2025-01-01T00:00:00"),
+            Mod(source="loverslab", external_id="5", game="X-Change Life",
+                game_domain="loverslab", title="LL Mod2",
+                url="https://e.com", first_seen_at="2025-01-01T00:00:00", last_seen_at="2025-01-01T00:00:00"),
         ]
         session.add_all(mods)
         session.commit()
@@ -306,6 +313,7 @@ class TestListMods:
                 "label": "Skyrim Special Edition",
                 "count": 2,
             },
+            {"value": "X-Change Life", "label": "X-Change Life", "count": 2},
             {"value": "fallout4", "label": "Fallout 4", "count": 1},
         ]
 
@@ -433,6 +441,60 @@ class TestListMods:
         restored_response = client.get("/api/mods")
         assert restored_response.status_code == 200
         assert restored_response.json()["total"] == 2
+
+    def test_recommendations_use_favorite_preference_profile(self, client, session):
+        favorite_mod = make_mod(
+            external_id="fav",
+            game="Stellar Blade",
+            category="Outfits",
+            title="Favorited Outfit",
+            downloads=10,
+        )
+        profile_match = make_mod(
+            external_id="match",
+            game="Stellar Blade",
+            category="Outfits",
+            title="Profile Matched Outfit",
+            downloads=50,
+        )
+        popular_unrelated = make_mod(
+            external_id="popular",
+            game="Fallout 4",
+            category="Weapons",
+            title="Popular Unrelated Weapon",
+            downloads=999999,
+        )
+        session.add_all([favorite_mod, profile_match, popular_unrelated])
+        session.commit()
+        session.refresh(favorite_mod)
+        session.add(Favorite(
+            mod_id=favorite_mod.id,
+            created_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:00",
+        ))
+        session.add(Setting(
+            key="agent_preferences_dirty",
+            value="true",
+            updated_at="2025-01-01T00:00:00",
+        ))
+        session.commit()
+
+        response = client.get("/api/mods/recommendations?limit=1")
+
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert [item["title"] for item in items] == ["Profile Matched Outfit"]
+
+    def test_recommendations_fall_back_to_downloads_without_profile(self, client, session):
+        low = make_mod(external_id="low", title="Low Downloads", downloads=10)
+        high = make_mod(external_id="high", title="High Downloads", downloads=1000)
+        session.add_all([low, high])
+        session.commit()
+
+        response = client.get("/api/mods/recommendations?limit=1")
+
+        assert response.status_code == 200
+        assert response.json()["items"][0]["title"] == "High Downloads"
 
 
 class TestGetMod:
