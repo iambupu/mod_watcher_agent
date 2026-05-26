@@ -156,33 +156,34 @@ class LoversLabPageAdapter(BaseAdapter):
         Returns:
             A ModItem, or None if the page is unrecoverable.
         """
-        url = BASE_URL.format(ext_id=external_id)
+        file_id = self._extract_file_id_from_external_id(external_id)
+        url = BASE_URL.format(ext_id=file_id)
 
         try:
             response = await self._get_allowed_url(url)
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
-                logger.info("LoversLab mod %s not found (404)", external_id)
+                logger.info("LoversLab mod %s not found (404)", file_id)
                 return None
             logger.warning(
                 "HTTP %s fetching LoversLab mod %s: %s",
                 exc.response.status_code,
-                external_id,
+                file_id,
                 exc,
             )
             return None
         except httpx.TimeoutException:
             logger.warning(
                 "Timeout fetching LoversLab mod %s (%.0fs)",
-                external_id,
+                file_id,
                 REQUEST_TIMEOUT,
             )
             return None
         except httpx.RequestError as exc:
             logger.warning(
                 "Request error fetching LoversLab mod %s: %s",
-                external_id,
+                file_id,
                 exc,
             )
             return None
@@ -201,7 +202,7 @@ class LoversLabPageAdapter(BaseAdapter):
                 f"Cloudflare challenge detected when fetching LoversLab mod detail page: {url}"
             )
 
-        return self._parse_page(html, external_id, url, game_domain or "")
+        return self._parse_page(html, file_id, url, game_domain or "")
 
     def normalize(self, raw_item: dict) -> ModItem:
         """规范化输入数据，供后续流程使用。"""
@@ -586,6 +587,14 @@ class LoversLabPageAdapter(BaseAdapter):
         if not matched:
             return None
         return matched.group(1)
+
+    @staticmethod
+    def _extract_file_id_from_external_id(external_id: str) -> str:
+        value = str(external_id or "").strip()
+        matched = re.fullmatch(r"[a-z0-9][a-z0-9_-]*:(\d+)", value, flags=re.IGNORECASE)
+        if matched:
+            return matched.group(1)
+        return value
 
     @classmethod
     def _validate_loverslab_url(cls, url: str) -> str:

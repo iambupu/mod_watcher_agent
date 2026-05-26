@@ -327,3 +327,43 @@ class TestDeduplicate:
         mods = [_make_mod(external_id="2001"), _make_mod(external_id="2002")]
         result = service._deduplicate(mods, session)
         assert len(result) == 2
+
+    def test_existing_mod_with_new_version_is_kept(self, service, session):
+        existing = Mod(
+            source="nexusmods",
+            external_id="3001",
+            game="skyrim",
+            title="Existing Mod",
+            url="https://example.com/3001",
+            version="1.0.0",
+            updated_at_remote="2025-01-01T00:00:00+00:00",
+            first_seen_at="2025-01-01T00:00:00",
+            last_seen_at="2025-01-01T00:00:00",
+        )
+        session.add(existing)
+        session.commit()
+
+        mods = [_make_mod(external_id="3001", version="1.1.0", updated_at_remote="2025-01-01T00:00:00+00:00")]
+        result = service._deduplicate(mods, session)
+        assert len(result) == 1
+        assert result[0]["external_id"] == "3001"
+
+    def test_existing_mod_with_new_updated_at_is_kept(self, service, session):
+        existing = Mod(
+            source="nexusmods",
+            external_id="3002",
+            game="skyrim",
+            title="Existing Mod",
+            url="https://example.com/3002",
+            version="1.0.0",
+            updated_at_remote="2025-01-01T00:00:00+00:00",
+            first_seen_at="2025-01-01T00:00:00",
+            last_seen_at="2025-01-01T00:00:00",
+        )
+        session.add(existing)
+        session.commit()
+
+        mods = [_make_mod(external_id="3002", version="1.0.0", updated_at_remote="2025-01-02T00:00:00+00:00")]
+        result = service._deduplicate(mods, session)
+        assert len(result) == 1
+        assert result[0]["external_id"] == "3002"

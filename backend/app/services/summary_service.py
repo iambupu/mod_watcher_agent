@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime
 
@@ -16,6 +17,7 @@ from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
 SUMMARY_GENERATION_LOCK = asyncio.Lock()
+SUMMARY_LLM_TIMEOUT_SECONDS = 90.0
 
 
 def load_summary_map(
@@ -69,6 +71,48 @@ def load_preferred_brief_summary_map(
     )
 
 
+def _is_chinese_language(language: str) -> bool:
+    return language.strip().lower().replace("_", "-").startswith("zh")
+
+
+def _strip_json_fence(content: str) -> str:
+    value = content.strip()
+    if value.startswith("```"):
+        lines = value.splitlines()
+        if lines:
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        value = "\n".join(lines).strip()
+    return value
+
+
+def _parse_brief_translation_response(content: str) -> tuple[str | None, str]:
+    """Return translated title and summary from the LLM brief translation response."""
+    value = _strip_json_fence(content)
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None, content.strip()
+    if not isinstance(parsed, dict):
+        return None, content.strip()
+
+    raw_title = (
+        parsed.get("translated_title_zh")
+        or parsed.get("translated_title")
+        or parsed.get("title_zh")
+        or parsed.get("title")
+    )
+    raw_summary = (
+        parsed.get("translated_summary")
+        or parsed.get("summary")
+        or parsed.get("content")
+    )
+    translated_title = str(raw_title).strip() if raw_title is not None else None
+    translated_summary = str(raw_summary).strip() if raw_summary is not None else ""
+    return translated_title or None, translated_summary or content.strip()
+
+
 class SummaryService:
     """Service for generating AI-powered mod summaries."""
 
@@ -101,14 +145,23 @@ class SummaryService:
             if mod is None:
                 raise ValueError(f"Mod with id {mod_id} not found")
 
+            chinese_brief = summary_type == "brief" and _is_chinese_language(language)
+            brief_prompt = (
+                "Translate this mod title and summary into Simplified Chinese. "
+                "Keep the meaning, do not add facts. Keep the summary under 200 Chinese characters. "
+                "Return only compact JSON with exactly these keys: "
+                '{"translated_title_zh":"...","translated_summary":"..."}.\n'
+                f"Title: {mod.title}\n"
+                f"Summary: {mod.original_summary or mod.title}"
+            ) if chinese_brief else (
+                f"Translate this mod summary into {language}. "
+                f"Title: {mod.title}. "
+                f"Summary: {mod.original_summary or mod.title}. "
+                "Keep the meaning, do not add facts, and keep under 200 chars. "
+                "Return only the translated summary, with no explanation."
+            )
             prompts = {
-                "brief": (
-                    f"Translate this mod summary into {language}. "
-                    f"Title: {mod.title}. "
-                    f"Summary: {mod.original_summary or mod.title}. "
-                    "Keep the meaning, do not add facts, and keep under 200 chars. "
-                    "Return only the translated summary, with no explanation."
-                ),
+                "brief": brief_prompt,
                 "changelog": (
                     f"Summarize this mod's changelog in {language}. Be concise. "
                     f"{extra_context or ''}"
@@ -147,7 +200,14 @@ class SummaryService:
                     continue
 
                 client = create_llm_client(llm_provider, llm_api_key, llm_base_url)
-                content = await client.chat(prompt, llm_model, max_tokens=1024)
+                try:
+                    content = await asyncio.wait_for(
+                        client.chat(prompt, llm_model, max_tokens=1024),
+                        timeout=SUMMARY_LLM_TIMEOUT_SECONDS,
+                    )
+                except TimeoutError:
+                    logger.warning("LLM provider %s timed out while generating summary", llm_provider)
+                    content = ""
                 if content:
                     break
                 logger.warning("LLM provider %s returned empty content; trying next provider", llm_provider)
@@ -155,6 +215,10 @@ class SummaryService:
             if not content:
                 fallback = mod_original_summary
                 return {"content": fallback, "model": llm_model}
+
+            translated_title_zh: str | None = None
+            if chinese_brief:
+                translated_title_zh, content = _parse_brief_translation_response(content)
 
             existing = self.session.exec(
                 select(ModSummary).where(
@@ -179,8 +243,14 @@ class SummaryService:
                 )
                 self.session.add(summary)
 
+            if chinese_brief and translated_title_zh:
+                current_mod = self.session.get(Mod, mod_id)
+                if current_mod is not None:
+                    current_mod.translated_title_zh = translated_title_zh[:512]
+                    self.session.add(current_mod)
+
             self.session.commit()
-            return {"content": content, "model": llm_model}
+            return {"content": content, "model": llm_model, "translated_title_zh": translated_title_zh}
 
         except Exception as e:
             logger.error(f"Failed to generate summary for mod {mod_id}: {e}")
@@ -214,6 +284,7 @@ class SummaryService:
         self,
         mod_ids: list[int] | None = None,
         language: str | None = None,
+        max_items: int | None = None,
     ) -> int:
         """Batch-generate summaries for mods that don't have them yet.
 
@@ -231,6 +302,11 @@ class SummaryService:
             if not mod_ids:
                 return 0
             stmt = stmt.where(Mod.id.in_(mod_ids))
+        stmt = stmt.order_by(Mod.id)
+        if max_items is not None:
+            if max_items <= 0:
+                return 0
+            stmt = stmt.limit(max_items)
         mods_missing = self.session.exec(stmt).all()
         mod_ids_missing = [mod.id for mod in mods_missing if mod.id is not None]
         self.session.rollback()

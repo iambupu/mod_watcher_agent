@@ -183,6 +183,8 @@ class TestFavoriteTranslatedSummary:
         assert data["favorite_id"] == fav.id
         assert data["update_detected"] is True
         assert data["update_event"]["new_version"] == "2.0.0"
+        assert data["last_checked_at"] is not None
+        assert data["notification_sent"] is True
 
     def test_favorite_ja_jp_only_returns_none(self, client, session):
         """Only ja-JP summary → translated_summary is None (no zh-CN or en). (TDD: RED)"""

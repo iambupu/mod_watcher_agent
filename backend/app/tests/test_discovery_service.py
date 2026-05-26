@@ -1,5 +1,6 @@
 """Tests for DiscoveryService single-source dispatch."""
 
+import hashlib
 import json
 from unittest.mock import patch
 
@@ -193,7 +194,7 @@ class TestDiscoverNexusmodsRule:
             results = await service.discover_from_rule(rule.id)
 
         assert len(results) == 1
-        assert results[0]["external_id"] == "3001"
+        assert results[0]["external_id"] == "skyrim-special-edition:3001"
         assert results[0]["source"] == "loverslab"
 
     @pytest.mark.asyncio
@@ -286,3 +287,245 @@ class TestDiscoverNexusmodsRule:
         assert existing is not None
         assert existing.title == "Sword Mod"
         assert existing.last_seen_at != "2025-01-01T00:00:00+00:00"
+
+    def test_nexusmods_same_numeric_id_different_games_create_separate_rows(self, session):
+        service = DiscoveryService(session)
+
+        result = service.upsert_mod_dicts([
+            {
+                "source": "nexusmods",
+                "external_id": "1001",
+                "title": "Skyrim Mod",
+                "game": "Skyrim Special Edition",
+                "game_domain": "skyrimspecialedition",
+                "url": "https://www.nexusmods.com/skyrimspecialedition/mods/1001",
+                "author": "Author",
+                "category": None,
+                "version": None,
+                "created_at_remote": None,
+                "updated_at_remote": None,
+                "published_at_remote": None,
+                "downloads": 0,
+                "unique_downloads": None,
+                "endorsements": 0,
+                "views": None,
+                "likes": 0,
+                "adult_content": False,
+                "thumbnail_url": "",
+                "original_summary": "Skyrim summary",
+            },
+            {
+                "source": "nexusmods",
+                "external_id": "1001",
+                "title": "Stellar Blade Mod",
+                "game": "Stellar Blade",
+                "game_domain": "stellarblade",
+                "url": "https://www.nexusmods.com/stellarblade/mods/1001",
+                "author": "Author",
+                "category": None,
+                "version": None,
+                "created_at_remote": None,
+                "updated_at_remote": None,
+                "published_at_remote": None,
+                "downloads": 0,
+                "unique_downloads": None,
+                "endorsements": 0,
+                "views": None,
+                "likes": 0,
+                "adult_content": False,
+                "thumbnail_url": "",
+                "original_summary": "Stellar summary",
+            },
+        ])
+
+        mods = session.exec(select(Mod).where(Mod.source == "nexusmods")).all()
+
+        assert result["created"] == 2
+        assert {mod.external_id for mod in mods} == {"skyrimspecialedition:1001", "stellarblade:1001"}
+        assert {mod.title for mod in mods} == {"Skyrim Mod", "Stellar Blade Mod"}
+
+    def test_loverslab_same_file_id_different_games_create_separate_rows(self, session):
+        service = DiscoveryService(session)
+
+        result = service.upsert_mod_dicts([
+            {
+                "source": "loverslab",
+                "external_id": "48837",
+                "title": "Skyrim LL Mod",
+                "game": "Skyrim Special Edition",
+                "game_domain": None,
+                "url": "https://www.loverslab.com/files/file/48837-skyrim/",
+                "author": "Author",
+                "category": None,
+                "version": None,
+                "created_at_remote": None,
+                "updated_at_remote": None,
+                "published_at_remote": None,
+                "downloads": 0,
+                "unique_downloads": None,
+                "endorsements": 0,
+                "views": None,
+                "likes": 0,
+                "adult_content": True,
+                "thumbnail_url": "",
+                "original_summary": "Skyrim summary",
+            },
+            {
+                "source": "loverslab",
+                "external_id": "48837",
+                "title": "Stellar LL Mod",
+                "game": "Stellar Blade",
+                "game_domain": None,
+                "url": "https://www.loverslab.com/files/file/48837-stellar/",
+                "author": "Author",
+                "category": None,
+                "version": None,
+                "created_at_remote": None,
+                "updated_at_remote": None,
+                "published_at_remote": None,
+                "downloads": 0,
+                "unique_downloads": None,
+                "endorsements": 0,
+                "views": None,
+                "likes": 0,
+                "adult_content": True,
+                "thumbnail_url": "",
+                "original_summary": "Stellar summary",
+            },
+        ])
+
+        mods = session.exec(select(Mod).where(Mod.source == "loverslab")).all()
+
+        assert result["created"] == 2
+        assert {mod.external_id for mod in mods} == {
+            "skyrim-special-edition:48837",
+            "stellar-blade:48837",
+        }
+        assert {mod.title for mod in mods} == {"Skyrim LL Mod", "Stellar LL Mod"}
+
+    @pytest.mark.asyncio
+    async def test_discover_loverslab_reuses_legacy_search_hash_record(self, session):
+        """LoversLab discovery should dedupe records previously saved by search."""
+        url = "https://www.loverslab.com/files/file/48837-valentina-playable-character/"
+        legacy_external_id = hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
+        BaseAdapter.adapters["loverslab"] = _make_mock_adapter(
+            "loverslab",
+            [_make_mod_item(source_id="48837", source="loverslab", name="Valentina", url=url)],
+        )
+        session.add(
+            Mod(
+                source="loverslab",
+                external_id=legacy_external_id,
+                game="LoversLab",
+                game_domain="loverslab",
+                title="Search Result Title",
+                url=url,
+                first_seen_at="2026-01-01T00:00:00+00:00",
+                last_seen_at="2026-01-01T00:00:00+00:00",
+            )
+        )
+        session.commit()
+        rule = _create_rule(session, "ll-rule", source="loverslab")
+
+        with patch(
+            "app.services.discovery_service.FilterService.apply_filters",
+            return_value=[
+                {
+                    "source": "loverslab",
+                    "external_id": "48837",
+                    "title": "Valentina playable character",
+                    "game": "LoversLab",
+                    "game_domain": None,
+                    "url": url,
+                    "author": "TestAuthor",
+                    "category": None,
+                    "version": None,
+                    "created_at_remote": None,
+                    "updated_at_remote": None,
+                    "published_at_remote": None,
+                    "downloads": 0,
+                    "unique_downloads": None,
+                    "endorsements": 0,
+                    "views": None,
+                    "likes": 0,
+                    "adult_content": True,
+                    "thumbnail_url": "",
+                    "original_summary": "A test mod.",
+                }
+            ],
+        ):
+            results = await DiscoveryService(session).discover_from_rule(rule.id)
+
+        assert results == []
+        mods = session.exec(select(Mod).where(Mod.source == "loverslab")).all()
+        assert len(mods) == 1
+        assert mods[0].external_id == "48837"
+        assert mods[0].title == "Valentina playable character"
+
+    @pytest.mark.asyncio
+    async def test_discover_loverslab_prefers_existing_canonical_row_when_legacy_duplicate_exists(self, session):
+        url = "https://www.loverslab.com/files/file/48837-valentina-playable-character/"
+        legacy_external_id = hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
+        BaseAdapter.adapters["loverslab"] = _make_mock_adapter(
+            "loverslab",
+            [_make_mod_item(source_id="48837", source="loverslab", name="Valentina", url=url)],
+        )
+        session.add_all([
+            Mod(
+                source="loverslab",
+                external_id=legacy_external_id,
+                game="LoversLab",
+                game_domain="loverslab",
+                title="Legacy Search Result",
+                url=url,
+                first_seen_at="2026-01-01T00:00:00+00:00",
+                last_seen_at="2026-01-01T00:00:00+00:00",
+            ),
+            Mod(
+                source="loverslab",
+                external_id="48837",
+                game="LoversLab",
+                game_domain=None,
+                title="Canonical Result",
+                url=url,
+                first_seen_at="2026-01-02T00:00:00+00:00",
+                last_seen_at="2026-01-02T00:00:00+00:00",
+            ),
+        ])
+        session.commit()
+        rule = _create_rule(session, "ll-rule", source="loverslab")
+
+        with patch(
+            "app.services.discovery_service.FilterService.apply_filters",
+            return_value=[
+                {
+                    "source": "loverslab",
+                    "external_id": "48837",
+                    "title": "Valentina playable character",
+                    "game": "LoversLab",
+                    "game_domain": None,
+                    "url": url,
+                    "author": "TestAuthor",
+                    "category": None,
+                    "version": None,
+                    "created_at_remote": None,
+                    "updated_at_remote": None,
+                    "published_at_remote": None,
+                    "downloads": 0,
+                    "unique_downloads": None,
+                    "endorsements": 0,
+                    "views": None,
+                    "likes": 0,
+                    "adult_content": True,
+                    "thumbnail_url": "",
+                    "original_summary": "A test mod.",
+                }
+            ],
+        ):
+            results = await DiscoveryService(session).discover_from_rule(rule.id)
+
+        assert results == []
+        mods = session.exec(select(Mod).where(Mod.source == "loverslab")).all()
+        assert len(mods) == 2
+        canonical = next(mod for mod in mods if mod.external_id == "48837")
+        assert canonical.title == "Valentina playable character"

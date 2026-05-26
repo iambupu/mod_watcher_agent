@@ -10,6 +10,7 @@ from app.adapters.base import BaseAdapter
 from app.models.favorite import Favorite
 from app.models.mod import Mod
 from app.models.mod_item import ModItem
+from app.models.summary import ModSummary
 from app.models.update_event import ModUpdateEvent
 from app.services.favorite_service import FavoriteService
 
@@ -158,6 +159,71 @@ class TestCheckUpdate:
         reloaded = session.get(Favorite, fav.id)
         assert reloaded.last_known_version == "2.0.0"
         assert reloaded.last_checked_at is not None
+
+    @pytest.mark.asyncio
+    async def test_update_changed_summary_invalidates_and_regenerates_translation(self, service, mod, session):
+        mod.original_summary = "Old remote summary"
+        session.add(mod)
+        session.add(
+            ModSummary(
+                mod_id=mod.id,
+                language="zh-CN",
+                summary_type="brief",
+                content="旧译文",
+                model="test",
+                generated_at="2025-01-01T00:00:00Z",
+            )
+        )
+        session.commit()
+        fav = await service.add_favorite(mod.id)
+        mock_detail = {
+            "version": "2.0.0",
+            "updated_at_remote": "2025-06-01T12:00:00Z",
+            "original_summary": "New remote summary",
+        }
+        adapter = service._adapter_class()
+        with patch.object(
+            adapter,
+            "fetch_mod_detail",
+            new_callable=AsyncMock,
+            return_value=mock_detail,
+        ), patch.object(service, "_adapter_class", return_value=adapter), patch(
+            "app.services.favorite_service.SummaryService.generate_summary",
+            new_callable=AsyncMock,
+            return_value={"content": "新译文", "model": "test"},
+        ) as mock_generate:
+            result = await service.check_update(fav.id)
+
+        assert result is not None
+        reloaded_mod = session.get(Mod, mod.id)
+        assert reloaded_mod.original_summary == "New remote summary"
+        assert reloaded_mod.version == "2.0.0"
+        assert reloaded_mod.updated_at_remote == "2025-06-01T12:00:00Z"
+        assert session.exec(select(ModSummary).where(ModSummary.mod_id == mod.id)).all() == []
+        mock_generate.assert_awaited_once_with(mod.id, language="zh-CN", summary_type="brief")
+
+    @pytest.mark.asyncio
+    async def test_update_notification_respects_favorite_toggle(self, service, mod, session):
+        fav = await service.add_favorite(mod.id)
+        await service.update_favorite(fav.id, notify_on_update=False)
+        mock_detail = {
+            "version": "2.0.0",
+            "updated_at_remote": "2025-06-01T12:00:00Z",
+        }
+        adapter = service._adapter_class()
+        with patch.object(
+            adapter,
+            "fetch_mod_detail",
+            new_callable=AsyncMock,
+            return_value=mock_detail,
+        ), patch.object(service, "_adapter_class", return_value=adapter), patch(
+            "app.services.notification_service.NotificationService.notify_updates",
+            new_callable=AsyncMock,
+        ) as mock_notify:
+            result = await service.check_update(fav.id)
+
+        assert result is not None
+        mock_notify.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_detects_update_from_mod_item_detail(self, service, mod, session):
