@@ -114,6 +114,7 @@ def test_quality_runner_fails_invalid_expect_field_types():
     assert checks[0]["expected"] == expect_field_type_summary()
     assert expect_field_type_summary()["required_terms"] == "list"
     assert expect_field_type_summary()["understanding_field_contains"] == "object"
+    assert expect_field_type_summary()["understanding_field_not_contains"] == "object"
     assert expect_field_type_summary()["version"] == "string_or_null"
 
 

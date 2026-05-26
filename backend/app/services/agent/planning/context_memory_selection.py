@@ -46,6 +46,8 @@ def backfill_query_context_for_planning(
 
 
 def has_query_context_signal(context: dict[str, Any], keywords: list[str]) -> bool:
+    if str(context.get("source") or "").strip().lower() == "current":
+        return False
     return bool(keywords) or any(
         context.get(key) is not None
         for key in ("game", "source_name", "category", "adult_content", "sort_field", "sort_order")
@@ -64,14 +66,19 @@ def select_effective_last_query_context(query: str, short_context: dict | None, 
     short_keywords = _string_list(short.get("keywords"))
     short_anchors = _string_list(short.get("semantic_anchors"))
     short_quality = _as_float(short.get("quality_score"))
-    if (short_keywords or short_anchors) and short_quality >= 0.2:
+    followup = followup_decision(query)
+    short_is_current = str(short.get("source") or "").strip().lower() == "current"
+    if (
+        (short_keywords or short_anchors)
+        and short_quality >= 0.2
+        and not (short_is_current and (followup.is_followup or followup.low_signal))
+    ):
         return short
     long_keywords = _string_list(long.get("keywords"))
     long_anchors = _string_list(long.get("semantic_anchors"))
     long_quality = _as_float(long.get("quality_score"))
     if not (long_keywords or long_anchors) or long_quality < 0.45:
         return short
-    followup = followup_decision(query)
     if not followup.is_followup and not followup.low_signal:
         return short
     selected = dict(long)

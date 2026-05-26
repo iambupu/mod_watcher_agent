@@ -1,7 +1,7 @@
 import pytest
 
 from app.services.agent.chat_service import AgentService
-from app.services.agent.planning.context_plan_merge import merge_context_query_plan
+from app.services.agent.planning.context_plan_merge import merge_context_query_plan, merge_llm_context_query_plan
 from app.services.agent.planning.tool_plan_merge import apply_tool_plan_to_query_plan
 from app.services.agent.runtime import AgentRuntime
 from app.services.agent.schemas import AgentChatRequest, AgentModDetailRequest
@@ -111,6 +111,84 @@ def test_context_query_plan_keeps_internal_agent_hints():
     )
 
     assert merged["_agent_conservative_mode"] is True
+
+
+def test_llm_context_query_plan_does_not_backfill_current_turn_fallback_slots():
+    merged = merge_llm_context_query_plan(
+        {"keywords": ["framework"]},
+        {"sources": ["loverslab"], "keywords": ["bimbo"], "_agent_context_signal": {"inherited": False}},
+    )
+
+    assert merged["keywords"] == ["framework"]
+    assert "sources" not in merged
+    assert merged["_agent_context_signal"]["inherited"] is False
+
+
+def test_llm_context_query_plan_can_fill_explicitly_inherited_scope():
+    merged = merge_llm_context_query_plan(
+        {"keywords": ["related"]},
+        {
+            "games": ["Skyrim Special Edition"],
+            "sources": ["loverslab"],
+            "_agent_context_signal": {"inherited": True, "topic_shift": False},
+        },
+    )
+
+    assert merged["keywords"] == ["related"]
+    assert merged["games"] == ["Skyrim Special Edition"]
+    assert merged["sources"] == ["loverslab"]
+
+
+def test_llm_context_query_plan_preserves_result_reference_exact_title():
+    merged = merge_llm_context_query_plan(
+        {"intent": "install_risk", "keywords": ["risk"]},
+        {
+            "keywords": ["Stable Bimbo Preset"],
+            "exact_title": "Stable Bimbo Preset",
+            "_agent_result_reference_signal": {
+                "applied": True,
+                "fields": ["keywords", "exact_title"],
+            },
+        },
+    )
+
+    assert merged["exact_title"] == "Stable Bimbo Preset"
+    assert merged["keywords"] == ["Stable Bimbo Preset"]
+
+
+def test_llm_context_query_plan_preserves_result_reference_exclusions_without_context_inherit():
+    merged = merge_llm_context_query_plan(
+        {"intent": "search", "keywords": ["similar"]},
+        {
+            "exclude_titles": ["Bimbo Body Morph"],
+            "_agent_result_reference_signal": {
+                "applied": True,
+                "fields": ["exclude_titles"],
+                "has_explicit_reference": False,
+            },
+            "_agent_context_signal": {"inherited": False},
+        },
+    )
+
+    assert merged["keywords"] == ["similar"]
+    assert merged["exclude_titles"] == ["Bimbo Body Morph"]
+
+
+def test_llm_context_query_plan_preserves_referenced_similarity_keywords():
+    merged = merge_llm_context_query_plan(
+        {"intent": "search", "keywords": ["similar"]},
+        {
+            "keywords": ["doll", "face", "preset"],
+            "keyword_match_mode": "all",
+            "_agent_result_reference_signal": {
+                "applied": True,
+                "fields": ["keywords", "keyword_match_mode"],
+            },
+        },
+    )
+
+    assert merged["keywords"] == ["doll", "face", "preset"]
+    assert merged["keyword_match_mode"] == "all"
 
 
 def test_tool_plan_merge_applies_conservative_execution_hint():

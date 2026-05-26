@@ -47,6 +47,9 @@ def test_semantic_query_exposes_task_understanding_concepts_without_broad_bimbo_
         ("找能让角色走 bimbo 路线的系统 mod", "roleplay", "mechanics"),
         ("有什么生育系统玩法 mod", "pregnancy", "mechanics"),
         ("找风尘感的衣服 mod", "sexworker_style", "content_type"),
+        ("LL 有什么 framework mod", "loverslab", "source_scope"),
+        ("找基础框架 mod", "framework", "content_type"),
+        ("有什么 fertility gameplay mod", "pregnancy", "mechanics"),
     ],
 )
 def test_semantic_query_infers_compositional_signals_for_nearby_phrasings(query, expected_anchor, expected_domain):
@@ -54,3 +57,16 @@ def test_semantic_query_infers_compositional_signals_for_nearby_phrasings(query,
 
     assert expected_anchor in output.anchors
     assert expected_domain in output.domains
+
+
+def test_semantic_query_keeps_gameplay_and_style_axes_distinct():
+    gameplay = semantic_query("有什么在玩法上可以扮演bimbo的MOD")
+    style = semantic_query("有什么妓女风格的服装MOD")
+
+    assert "roleplay" in gameplay.anchors
+    assert "mechanics" in gameplay.domains
+    assert "sexworker_style" not in gameplay.anchors
+    assert "sexworker_style" in style.anchors
+    assert "content_type" in style.domains
+    assert "roleplay" not in style.anchors
+    assert "mechanics" not in style.domains

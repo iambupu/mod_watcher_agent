@@ -1,8 +1,9 @@
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from app.services.agent.semantic_taxonomy import SEMANTIC_RULES
+from app.services.agent.slot_aliases import SOURCE_ALIASES
 
 
 @dataclass
@@ -12,6 +13,15 @@ class SemanticSignals:
     matched_concepts: list[str] = field(default_factory=list)
     anchors: list[str] = field(default_factory=list)
     domains: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CompositionalInference:
+    anchor: str
+    signal: Callable[[str], bool]
+    required_anchors: frozenset[str] = frozenset()
+    any_anchor: frozenset[str] = frozenset()
+    blocked_anchors: frozenset[str] = frozenset()
 
 
 def extract_semantic_signals(query_text: str, category_text: str = "") -> SemanticSignals:
@@ -51,6 +61,25 @@ def extract_semantic_signals(query_text: str, category_text: str = "") -> Semant
         anchors=unique_terms(anchors),
         domains=unique_terms(domains),
     )
+
+
+def semantic_signals_from_anchors(anchors: list[str]) -> SemanticSignals:
+    signals = SemanticSignals()
+    for anchor in anchors:
+        _append_named_semantic_rule(
+            str(anchor or "").strip().lower(),
+            concepts=signals.matched_concepts,
+            expanded=signals.expanded_terms,
+            aliases=signals.category_aliases,
+            anchors=signals.anchors,
+            domains=signals.domains,
+        )
+    signals.expanded_terms = unique_terms(signals.expanded_terms)
+    signals.category_aliases = unique_terms(signals.category_aliases)
+    signals.matched_concepts = unique_terms(signals.matched_concepts)
+    signals.anchors = unique_terms(signals.anchors)
+    signals.domains = unique_terms(signals.domains)
+    return signals
 
 
 def semantic_domains_for_anchors(anchors: list[str]) -> list[str]:
@@ -107,14 +136,50 @@ def _apply_compositional_semantic_inferences(
     domains: list[str],
 ) -> None:
     anchor_set = {str(anchor).strip().lower() for anchor in anchors if str(anchor).strip()}
-    if "bimbo" in anchor_set and (
-        {"gameplay", "framework"} & anchor_set or _has_identity_progression_signal(lower_query)
-    ):
-        _append_named_semantic_rule("roleplay", concepts=concepts, expanded=expanded, aliases=aliases, anchors=anchors, domains=domains)
-    if "pregnancy" not in anchor_set and _has_reproductive_system_signal(lower_query):
-        _append_named_semantic_rule("pregnancy", concepts=concepts, expanded=expanded, aliases=aliases, anchors=anchors, domains=domains)
-    if "sexworker_style" not in anchor_set and "outfit" in anchor_set and _has_sexworker_style_signal(lower_query):
-        _append_named_semantic_rule("sexworker_style", concepts=concepts, expanded=expanded, aliases=aliases, anchors=anchors, domains=domains)
+    for inference in COMPOSITIONAL_INFERENCES:
+        if not _compositional_inference_matches(inference, lower_query, anchor_set):
+            continue
+        _append_named_semantic_rule(
+            inference.anchor,
+            concepts=concepts,
+            expanded=expanded,
+            aliases=aliases,
+            anchors=anchors,
+            domains=domains,
+        )
+        anchor_set.add(inference.anchor)
+
+
+COMPOSITIONAL_INFERENCES: tuple[CompositionalInference, ...] = (
+    CompositionalInference(
+        anchor="roleplay",
+        required_anchors=frozenset({"bimbo"}),
+        signal=lambda text: _has_identity_progression_signal(text),
+        any_anchor=frozenset({"gameplay", "framework"}),
+    ),
+    CompositionalInference(anchor="pregnancy", signal=lambda text: _has_reproductive_system_signal(text)),
+    CompositionalInference(
+        anchor="sexworker_style",
+        required_anchors=frozenset({"outfit"}),
+        signal=lambda text: _has_sexworker_style_signal(text),
+    ),
+    CompositionalInference(anchor="framework", signal=lambda text: _has_framework_signal(text)),
+    CompositionalInference(anchor="loverslab", signal=lambda text: _has_loverslab_source_signal(text)),
+)
+
+
+def _compositional_inference_matches(
+    inference: CompositionalInference,
+    lower_query: str,
+    anchor_set: set[str],
+) -> bool:
+    if inference.anchor in anchor_set or anchor_set & inference.blocked_anchors:
+        return False
+    if not inference.required_anchors.issubset(anchor_set):
+        return False
+    if inference.any_anchor and not anchor_set & inference.any_anchor and not inference.signal(lower_query):
+        return False
+    return inference.signal(lower_query) or bool(inference.any_anchor and anchor_set & inference.any_anchor)
 
 
 def _append_named_semantic_rule(
@@ -127,7 +192,10 @@ def _append_named_semantic_rule(
     domains: list[str],
 ) -> None:
     for rule in SEMANTIC_RULES:
-        if str(rule.get("name") or "").strip() == name:
+        if name in {
+            str(rule.get("name") or "").strip().lower(),
+            str(rule.get("anchor") or "").strip().lower(),
+        }:
             _append_semantic_rule_signal(rule, concepts=concepts, expanded=expanded, aliases=aliases, anchors=anchors, domains=domains)
             return
 
@@ -142,6 +210,17 @@ def _has_reproductive_system_signal(text: str) -> bool:
 
 def _has_sexworker_style_signal(text: str) -> bool:
     return any(marker in text for marker in {"风尘", "陪酒", "夜店", "stripper", "escort"})
+
+
+def _has_framework_signal(text: str) -> bool:
+    return any(marker in text for marker in {"框架", "基础框架", "核心系统", "framework", "mod framework"})
+
+
+def _has_loverslab_source_signal(text: str) -> bool:
+    return any(
+        source == "loverslab" and _marker_matches_text(str(alias).lower(), text)
+        for alias, source in SOURCE_ALIASES.items()
+    )
 
 
 def _canonical_semantic_rule_token(token: str) -> str:

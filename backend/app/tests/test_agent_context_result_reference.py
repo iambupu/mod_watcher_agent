@@ -16,6 +16,7 @@ def test_result_reference_similarity_uses_referenced_title_keywords():
 
     assert raw["keywords"] == ["doll", "face", "preset"]
     assert raw["keyword_match_mode"] == "all"
+    assert raw["_agent_result_reference_signal"]["fields"] == ["keywords", "keyword_match_mode", "exclude_titles"]
 
 
 def test_result_reference_install_risk_targets_exact_title():
@@ -29,6 +30,7 @@ def test_result_reference_install_risk_targets_exact_title():
 
     assert raw["keywords"] == ["Stable Bimbo Preset"]
     assert raw["exact_title"] == "Stable Bimbo Preset"
+    assert raw["_agent_result_reference_signal"]["fields"] == ["keywords", "exact_title"]
 
 
 def test_result_reference_alternative_excludes_prior_results():
@@ -42,6 +44,7 @@ def test_result_reference_alternative_excludes_prior_results():
 
     assert raw["keywords"] == ["bimbo", "body", "morph"]
     assert raw["exclude_titles"] == ["Bimbo Body Morph", "Stable Bimbo Preset"]
+    assert raw["_agent_result_reference_signal"]["fields"] == ["keywords", "exclude_titles"]
 
 
 def test_contextual_query_followup_includes_reference_modes():
@@ -52,3 +55,33 @@ def test_contextual_query_followup_includes_reference_modes():
 
 def test_referenced_title_keywords_drops_generic_mod_terms():
     assert referenced_title_keywords("Bimbo Body Morph Mod") == ["bimbo", "body", "morph"]
+
+
+def test_result_reference_does_not_target_title_without_explicit_reference():
+    raw = {"keywords": ["similar"]}
+
+    apply_result_reference_context(
+        raw,
+        "找类似的",
+        ["Bimbo Body Morph", "Stable Bimbo Preset"],
+    )
+
+    assert raw["keywords"] == ["similar"]
+    assert "exact_title" not in raw
+    assert raw["exclude_titles"] == ["Bimbo Body Morph", "Stable Bimbo Preset"]
+    assert raw["_agent_result_reference_signal"]["fields"] == ["exclude_titles"]
+
+
+def test_result_reference_can_exclude_prior_result_set_without_title_takeover():
+    raw = {"keywords": []}
+
+    apply_result_reference_context(
+        raw,
+        "还有类似的吗",
+        ["Bimbo Body Morph", "Stable Bimbo Preset"],
+    )
+
+    assert raw["exclude_titles"] == ["Bimbo Body Morph", "Stable Bimbo Preset"]
+    assert "exact_title" not in raw
+    assert raw["keywords"] == []
+    assert raw["_agent_result_reference_signal"]["fields"] == ["exclude_titles"]

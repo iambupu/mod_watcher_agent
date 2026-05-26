@@ -455,6 +455,9 @@ def test_diagnosis_includes_context_inherit_decision_evidence_when_signal_provid
             "quality_score": 0.54,
             "_agent_context_signal": {
                 "inherited": True,
+                "inherited_fields": ["keywords", "game"],
+                "skipped_reason": "",
+                "overridden_by_current_signal": False,
                 "inherit_threshold": 0.44,
                 "followup_score": 0.72,
                 "policy_reasons": ["semantic_anchor_bias"],
@@ -464,10 +467,16 @@ def test_diagnosis_includes_context_inherit_decision_evidence_when_signal_provid
 
     evidence = diagnosis["understanding"]["evidence"]
     inherited = [item for item in evidence if item["field"] == "context_inherited"]
+    inherited_fields = [item for item in evidence if item["field"] == "context_inherited_fields"]
+    skipped_reason = [item for item in evidence if item["field"] == "context_skipped_reason"]
+    overridden = [item for item in evidence if item["field"] == "context_overridden_by_current_signal"]
     threshold = [item for item in evidence if item["field"] == "context_inherit_threshold"]
     followup_score = [item for item in evidence if item["field"] == "context_followup_score"]
     policy_reasons = [item for item in evidence if item["field"] == "context_policy_reasons"]
     assert inherited and inherited[0]["value"] is True
+    assert inherited_fields and inherited_fields[0]["value"] == ["keywords", "game"]
+    assert skipped_reason and skipped_reason[0]["value"] == ""
+    assert overridden and overridden[0]["value"] is False
     assert threshold and float(threshold[0]["value"]) == 0.44
     assert followup_score and float(followup_score[0]["value"]) == 0.72
     assert policy_reasons and policy_reasons[0]["value"] == ["semantic_anchor_bias"]

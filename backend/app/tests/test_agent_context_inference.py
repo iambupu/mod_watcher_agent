@@ -19,12 +19,36 @@ def test_followup_decision_is_high_for_low_signal_similarity_followup():
     assert "low_signal_query" in decision.reasons
 
 
+def test_followup_decision_tracks_common_followup_phrases():
+    for query in ["还有类似的吗", "有什么相关风格的mod", "继续这个方向"]:
+        decision = followup_decision(query)
+        assert decision.is_followup is True
+        assert decision.low_signal is True
+
+
+def test_followup_decision_suppresses_new_strong_topic_even_with_switch_word():
+    decision = followup_decision("换成 Skyrim 的正常服装 mod")
+
+    assert decision.is_followup is False
+    assert decision.low_signal is False
+
+
 def test_should_not_inherit_when_current_has_distinctive_keywords():
     inherit = should_inherit_context_keywords(
         "有什么 bimbo 相关的",
         ["bimbo"],
         ["cbbe"],
     )
+    assert inherit is False
+
+
+def test_should_not_inherit_adult_gameplay_context_into_normal_outfit_query():
+    inherit = should_inherit_context_keywords(
+        "换成 Skyrim 的正常服装 mod",
+        ["skyrim", "outfit"],
+        ["bimbo", "pregnancy"],
+    )
+
     assert inherit is False
 
 

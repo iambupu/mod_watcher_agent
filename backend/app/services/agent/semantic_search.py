@@ -5,6 +5,7 @@ from app.services.agent.semantic_inference import (
     canonical_semantic_token,
     extract_semantic_signals,
     semantic_domains_for_anchors,
+    semantic_signals_from_anchors,
 )
 from app.services.agent.semantic_taxonomy import CHINESE_QUERY_FILLERS, STOP_WORDS
 
@@ -21,6 +22,7 @@ __all__ = [
     "infer_categories",
     "semantic_domains_for_anchors",
     "semantic_query",
+    "semantic_query_from_anchors",
     "strip_scope",
     "text_score",
     "unique_terms",
@@ -64,6 +66,22 @@ def semantic_query(query: str, categories: list[str] | None = None) -> SemanticQ
     clean_query = strip_scope(query)
     category_text = " ".join(categories or []).lower()
     signals = extract_semantic_signals(clean_query, category_text)
+    return SemanticQuery(
+        raw_query=query,
+        clean_query=clean_query,
+        base_keywords=base_keywords(clean_query),
+        expanded_terms=signals.expanded_terms,
+        category_aliases=signals.category_aliases,
+        matched_concepts=signals.matched_concepts,
+        anchors=signals.anchors,
+        domains=signals.domains,
+    )
+
+
+def semantic_query_from_anchors(query: str, anchors: list[str]) -> SemanticQuery:
+    """Build semantic expansion from upstream LLM anchors without rematching query text."""
+    clean_query = strip_scope(query)
+    signals = semantic_signals_from_anchors(anchors)
     return SemanticQuery(
         raw_query=query,
         clean_query=clean_query,
@@ -124,10 +142,15 @@ def distinctive_query_terms(query: str) -> list[str]:
     ]
 
 
-def infer_categories(query: str, available_categories: list[str], existing: list[str] | None = None) -> list[str]:
+def infer_categories(
+    query: str,
+    available_categories: list[str],
+    existing: list[str] | None = None,
+    semantic: SemanticQuery | None = None,
+) -> list[str]:
     """处理当前模块的业务逻辑并返回结果。"""
     selected = list(existing or [])
-    semantic = semantic_query(query, selected)
+    semantic = semantic or semantic_query(query, selected)
     if not semantic.category_aliases and not semantic.expanded_terms and not semantic.base_keywords:
         return selected
     selected_keys = {category_key(value) for value in selected}

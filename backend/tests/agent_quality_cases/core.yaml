@@ -348,6 +348,215 @@
     understanding_field_contains:
       semantic_anchors: "framework"
       semantic_domains: "source_scope"
+- id: open_mechanics_bimbo_play_as
+  query: "想找能以 bimbo 身份游玩的 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+    understanding_field_not_contains:
+      semantic_anchors: "sexworker_style"
+- id: open_mechanics_bimbo_identity_route
+  query: "找 bimbo 身份路线系统 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+- id: open_mechanics_bimbo_progression
+  query: "有没有 bimbo 养成玩法 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+- id: open_mechanics_bimbo_roleplay_quest
+  query: "bimbo roleplay quest mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+- id: open_mechanics_pregnancy_fertility
+  query: "有什么 fertility gameplay mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "mechanics"
+- id: open_mechanics_pregnancy_breeding
+  query: "找支持受孕和繁殖机制的 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "mechanics"
+- id: open_style_prostitute_appearance
+  query: "找妓女感外观服装 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "content_type"
+    understanding_field_not_contains:
+      semantic_domains: "mechanics"
+- id: open_style_courtesan_outfit
+  query: "有没有娼妓主题衣装 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "content_type"
+- id: open_style_nightclub_outfit
+  query: "找夜店女郎风格套装"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "content_type"
+    understanding_field_not_contains:
+      semantic_anchors: "roleplay"
+- id: open_style_escort_aesthetic
+  query: "escort aesthetic clothing mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "content_type"
+- id: open_style_stripclub_clothing
+  query: "stripper outfit mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "content_type"
+- id: open_style_fengchen_clothes
+  query: "找风尘感衣服 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "content_type"
+- id: open_framework_core_system
+  query: "有什么 mod 框架和核心体系"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "content_type"
+- id: open_framework_ll_framework
+  query: "LL 有什么 framework mod"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "source_scope"
+- id: open_framework_loverslab_core_system
+  query: "LoversLab 核心系统 mod"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "source_scope"
+- id: open_framework_loverslab_chinese_alias
+  query: "爱之实验室有哪些框架插件"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "source_scope"
+- id: open_framework_base_framework
+  query: "找基础框架 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "content_type"
+- id: open_source_loverslab_pregnancy
+  query: "只看 LoversLab 的怀孕玩法 mod"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "source_scope"
+- id: open_source_loverslab_bimbo_framework
+  query: "不要 Nexus，只看 LoversLab 的 bimbo 玩法框架"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    excluded_sources: ["nexusmods"]
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "source_scope"
+- id: open_source_ll_sexworker_outfit
+  query: "LL 妓女风格服装"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "source_scope"
+- id: open_source_loverslab_bimbo_system
+  query: "找爱的实验室里能扮演 bimbo 的系统"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "source_scope"
+- id: open_source_not_nexus_loverslab_pregnancy
+  query: "not from Nexus, LoversLab pregnancy mods"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    excluded_sources: ["nexusmods"]
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "source_scope"
+- id: open_mixed_loverslab_bimbo_pregnancy_framework
+  query: "LoversLab bimbo roleplay framework with pregnancy mechanics"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "mechanics"
+- id: open_mixed_loverslab_bimbo_route_pregnancy_system
+  query: "爱的实验室有什么 bimbo 路线的怀孕体系 mod"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "source_scope"
+- id: open_mixed_ll_style_and_pregnancy
+  query: "找 LL 风尘服装但要支持怀孕玩法"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "mechanics"
+- id: open_mixed_loverslab_framework_style
+  query: "找 LoversLab 体系内的妓女风格服装"
+  expect:
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    understanding_field_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "source_scope"
+- id: open_mixed_bimbo_roleplay_nightclub_outfit
+  query: "找可以扮演 bimbo 的夜店服装 mod"
+  expect:
+    diagnosis_intent: "search"
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "content_type"
 - id: skyrim_vr_specific_game_alias
   query: "Skyrim VR CBBE body preset"
   slot_options:

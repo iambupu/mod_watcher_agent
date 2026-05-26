@@ -25,9 +25,54 @@ def apply_followup_context(raw: dict[str, Any], context: dict[str, Any], query: 
     inherit_score = inherit_decision.inherit_score
     inherit_threshold = inherit_decision.inherit_threshold
     topic_shift = inherit_decision.topic_shift
+    inherited_fields: list[str] = []
+    skipped_reason = ""
+    overridden_by_current_signal = False
+    if not inherit_keywords:
+        if topic_shift:
+            skipped_reason = "topic_shift"
+            overridden_by_current_signal = True
+        elif current_keywords and not inherit_decision.low_signal:
+            skipped_reason = "strong_current_signal"
+            overridden_by_current_signal = True
+        else:
+            skipped_reason = "low_inherit_score"
+    if inherit_keywords:
+        raw["keywords"] = merge_context_keywords(
+            current_keywords=current_keywords,
+            context_keywords=effective_context_keywords,
+        )
+        inherited_fields.append("keywords")
+        _copy_context_value(raw, "game", "games", context, inherited_fields=inherited_fields)
+        _copy_context_value(raw, "source_name", "sources", context, inherited_fields=inherited_fields)
+        _copy_context_value(raw, "category", "categories", context, inherited_fields=inherited_fields)
+        for key in ["adult_content", "sort_field", "sort_order"]:
+            if raw.get(key) is None and context.get(key) is not None:
+                raw[key] = context[key]
+                inherited_fields.append(key)
+    raw["_agent_context_signal"] = {
+        "source": context.get("source"),
+        "quality_score": round(context_quality, 3),
+        "followup_score": round(float(inherit_decision.followup_score), 3),
+        "continuity_score": round(float(continuity), 3),
+        "inherit_score": round(float(inherit_score), 3),
+        "inherit_threshold": round(float(inherit_threshold), 3),
+        "inherited": bool(inherit_keywords),
+        "topic_shift": bool(topic_shift),
+        "low_signal": bool(inherit_decision.low_signal),
+        "inherited_fields": list(inherited_fields),
+        "skipped_reason": skipped_reason,
+        "overridden_by_current_signal": overridden_by_current_signal,
+        "reasons": list(inherit_decision.reasons),
+        "policy_reasons": list(inherit_decision.policy_reasons),
+    }
     logger.info(
-        "agent.context_inherit source=%s inherit_keywords=%s followup_score=%.2f continuity_score=%.2f inherit_score=%.2f inherit_threshold=%.2f topic_shift=%s low_signal=%s quality_score=%.2f reasons=%s policy_reasons=%s current_keywords=%s context_keywords=%s context_semantic_anchors=%s",
+        "agent.context_inherit source=%s inherited=%s inherited_fields=%s skipped_reason=%s overridden_by_current_signal=%s inherit_keywords=%s followup_score=%.2f continuity_score=%.2f inherit_score=%.2f inherit_threshold=%.2f topic_shift=%s low_signal=%s quality_score=%.2f reasons=%s policy_reasons=%s current_keywords=%s context_keywords=%s context_semantic_anchors=%s",
         context.get("source"),
+        bool(inherit_keywords),
+        inherited_fields,
+        skipped_reason,
+        overridden_by_current_signal,
         inherit_keywords,
         inherit_decision.followup_score,
         continuity,
@@ -42,30 +87,6 @@ def apply_followup_context(raw: dict[str, Any], context: dict[str, Any], query: 
         context_keywords,
         context_semantic_anchors,
     )
-    raw["_agent_context_signal"] = {
-        "source": context.get("source"),
-        "quality_score": round(context_quality, 3),
-        "followup_score": round(float(inherit_decision.followup_score), 3),
-        "continuity_score": round(float(continuity), 3),
-        "inherit_score": round(float(inherit_score), 3),
-        "inherit_threshold": round(float(inherit_threshold), 3),
-        "inherited": bool(inherit_keywords),
-        "topic_shift": bool(topic_shift),
-        "low_signal": bool(inherit_decision.low_signal),
-        "reasons": list(inherit_decision.reasons),
-        "policy_reasons": list(inherit_decision.policy_reasons),
-    }
-    if inherit_keywords:
-        raw["keywords"] = merge_context_keywords(
-            current_keywords=current_keywords,
-            context_keywords=effective_context_keywords,
-        )
-    _copy_context_value(raw, "game", "games", context)
-    _copy_context_value(raw, "source_name", "sources", context)
-    _copy_context_value(raw, "category", "categories", context)
-    for key in ["adult_content", "sort_field", "sort_order"]:
-        if raw.get(key) is None and context.get(key) is not None:
-            raw[key] = context[key]
 
 
 def merge_context_keywords(*, current_keywords: list[str], context_keywords: list[str]) -> list[str]:
@@ -114,10 +135,18 @@ def has_refinement_constraints(raw: dict[str, Any]) -> bool:
     return any(raw.get(slot) not in (None, [], "") for slot in slots)
 
 
-def _copy_context_value(raw: dict[str, Any], context_key: str, plan_key: str, context: dict[str, Any]) -> None:
+def _copy_context_value(
+    raw: dict[str, Any],
+    context_key: str,
+    plan_key: str,
+    context: dict[str, Any],
+    *,
+    inherited_fields: list[str],
+) -> None:
     if raw.get(plan_key) or context.get(context_key) is None:
         return
     raw[plan_key] = [context[context_key]]
+    inherited_fields.append(plan_key)
 
 
 def _string_list(value: object) -> list[str]:

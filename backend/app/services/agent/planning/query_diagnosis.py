@@ -290,6 +290,34 @@ def _build_understanding(
         )
         evidence.append(
             {
+                "fragment_id": _understanding_fragment_id("context_inherited_fields", "diagnosis"),
+                "field": "context_inherited_fields",
+                "source": "diagnosis",
+                "value": [
+                    str(item).strip()
+                    for item in (raw_context_signal.get("inherited_fields") or [])
+                    if str(item).strip()
+                ],
+            }
+        )
+        evidence.append(
+            {
+                "fragment_id": _understanding_fragment_id("context_skipped_reason", "diagnosis"),
+                "field": "context_skipped_reason",
+                "source": "diagnosis",
+                "value": str(raw_context_signal.get("skipped_reason") or ""),
+            }
+        )
+        evidence.append(
+            {
+                "fragment_id": _understanding_fragment_id("context_overridden_by_current_signal", "diagnosis"),
+                "field": "context_overridden_by_current_signal",
+                "source": "diagnosis",
+                "value": bool(raw_context_signal.get("overridden_by_current_signal")),
+            }
+        )
+        evidence.append(
+            {
                 "fragment_id": _understanding_fragment_id("context_inherit_threshold", "diagnosis"),
                 "field": "context_inherit_threshold",
                 "source": "diagnosis",

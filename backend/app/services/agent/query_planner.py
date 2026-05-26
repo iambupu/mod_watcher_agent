@@ -127,9 +127,12 @@ from app.services.agent.planning.slot_value_normalization import (
 )
 from app.services.agent.schemas import AgentHistoryItem
 from app.services.agent.semantic_search import (
+    SemanticQuery,
     category_match_score,
     infer_categories,
+    semantic_query_from_anchors,
     semantic_query,
+    strip_scope,
 )
 from app.services.agent.slot_attribute_inference import (
     infer_summary_language_constraints,
@@ -501,14 +504,15 @@ def _normalize_categories(
     raw: dict[str, Any],
     query: str,
     slot_options: dict[str, list[str]],
+    planning_source: str = "",
 ) -> tuple[list[str], str, list[str]]:
-    """合并 LLM 分类和语义分类；特定关键词查询会丢弃过宽的 LLM 分类猜测。"""
+    """合并上游分类和语义分类；LLM 来源只使用 LLM anchors，不再重跑词面语义规则。"""
 
     explicit_categories = _normalize_allowed_list(
         raw.get("categories") or raw.get("category"),
         slot_options["categories"],
     )
-    explicit_semantic = semantic_query(query)
+    explicit_semantic = _semantic_query_for_normalization(raw, query, planning_source=planning_source)
     if explicit_categories and explicit_semantic.all_terms and not explicit_semantic.category_aliases:
         explicit_categories = []
     if explicit_categories and explicit_semantic.category_aliases:
@@ -520,13 +524,34 @@ def _normalize_categories(
         if semantic_matched_categories:
             explicit_categories = semantic_matched_categories
     categories = list(explicit_categories)
-    categories = infer_categories(query, slot_options["categories"], categories)
+    categories = infer_categories(query, slot_options["categories"], categories, semantic=explicit_semantic)
     category_match_mode = "exact" if explicit_categories else "db_fuzzy"
-    semantic = semantic_query(query, categories)
+    semantic = _semantic_query_for_normalization(raw, query, planning_source=planning_source)
     return categories, category_match_mode, semantic.expanded_terms
 
 
-def normalize_query_plan(plan: dict | None, query: str, slot_options: dict[str, list[str]]) -> dict[str, Any]:
+def _semantic_query_for_normalization(raw: dict[str, Any], query: str, *, planning_source: str) -> SemanticQuery:
+    if planning_source == "llm":
+        anchors = _string_list(raw.get("semantic_anchors"))
+        if anchors:
+            return semantic_query_from_anchors(query, anchors)
+        return SemanticQuery(raw_query=query, clean_query=strip_scope(query))
+    return semantic_query(query)
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()][:12]
+
+
+def normalize_query_plan(
+    plan: dict | None,
+    query: str,
+    slot_options: dict[str, list[str]],
+    *,
+    planning_source: str = "",
+) -> dict[str, Any]:
     """将 LLM 或兜底生成的查询计划规范化为数据库查询可消费的结构。"""
 
     raw = plan if isinstance(plan, dict) else {}
@@ -539,7 +564,12 @@ def normalize_query_plan(plan: dict | None, query: str, slot_options: dict[str, 
     semantic_query_text = _query_without_excluded_terms(query, excluded_keywords)
     intent = _normalize_intent(raw, query)
     keywords, games = _normalize_keywords_and_games(raw, query, slot_options)
-    categories, category_match_mode, semantic_keywords = _normalize_categories(raw, semantic_query_text, slot_options)
+    categories, category_match_mode, semantic_keywords = _normalize_categories(
+        raw,
+        semantic_query_text,
+        slot_options,
+        planning_source=planning_source,
+    )
     keywords = _merge_unique(keywords, semantic_keywords)
     keywords = _drop_excluded_keywords(keywords, excluded_keywords)
     categories = _drop_excluded_categories(categories, excluded_keywords)
@@ -788,8 +818,12 @@ async def plan_query_with_llm(
         "15) 用户明确要求有中文/英文/日文摘要、介绍或说明时，把语言放入 summary_languages（中文=zh-CN，英文=en，日文=ja-JP）；明确要求无/不要/without/no 某语言摘要时，把语言放入 excluded_summary_languages，不要同时放入 summary_languages；不要把语言名或摘要/介绍/summary 放入 keywords",
         "16) limit 范围 1~20，默认 8",
         "17) keywords 只放无法映射到上述词槽的自由文本关键词",
-        "18) semantic_anchors/semantic_domains 用来表达整体语义，不要只复述关键词；例如 扮演/路线/玩法角色扮演 可输出 roleplay + mechanics，怀孕/生育玩法可输出 pregnancy + mechanics，妓女/娼妓风格服装可输出 sexworker_style + content_type，体系/框架/mod 系统可输出 framework + source_scope",
-        "19) 如果用户使用了翻译名/俗称/缩写，并且你能确定它对应某个 games 枚举值，请在 game_aliases 中输出映射，例如 {\"alias\":\"剑星\",\"game\":\"Stellar Blade\"}",
+        "18) semantic_anchors/semantic_domains 用来表达整体语义，不要只复述关键词；每个 anchor 必须能由用户原文、同义表达或明确上下文支持",
+        "19) 玩法/机制类表达输出 mechanics 域，例如 扮演/角色扮演/身份路线/职业路线/bimbo 养成 输出 roleplay + mechanics；怀孕/妊娠/生育/受孕/繁殖玩法 输出 pregnancy + mechanics",
+        "20) 风格/外观类表达输出 identity_style 或 content_type 域，例如 妓女/娼妓/风尘/夜店/escort 风格服装 输出 sexworker_style + content_type；不要因为出现“风格”就输出 roleplay/mechanics",
+        "21) 体系/framework/source 类表达要拆开：体系/框架/核心系统 输出 framework；LoversLab/爱的实验室/LL/llab 输出 loverslab + source_scope，并在 sources 中选择 loverslab",
+        "22) query rewrite 时保留用户真正的自由检索词；不要把 source、game、date、tag、requirement、compatibility、semantic anchor 解释词重复塞进 keywords",
+        "23) 如果用户使用了翻译名/俗称/缩写，并且你能确定它对应某个 games 枚举值，请在 game_aliases 中输出映射，例如 {\"alias\":\"剑星\",\"game\":\"Stellar Blade\"}",
     ]
     if history_summary:
         prompt_lines.extend(["", history_summary])
