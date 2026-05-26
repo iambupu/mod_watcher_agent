@@ -14,12 +14,12 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Info,
-  X,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useUIStore } from "@/stores/uiStore";
 import { NotificationCenter } from "@/components/NotificationCenter";
 import { fetchUnreadCount } from "@/api/notifications";
+import { ModalHeader, ModalShell } from "@/components/ui/Modal";
 
 type NavKey = "agent" | "dashboard" | "discover" | "favorites" | "updates" | "rules" | "logs" | "settings";
 
@@ -149,18 +149,18 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
       </div>
       <NotificationCenter open={notifyOpen} onClose={() => setNotifyOpen(false)} />
       {aboutOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-xl bg-white shadow-xl">
-            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-3">
-              <h3 className="text-base font-semibold text-gray-900">Mod Watcher（模组巡望者）</h3>
-              <button
-                type="button"
-                onClick={() => setAboutOpen(false)}
-                className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-              >
-                <X size={16} />
-              </button>
-            </div>
+        <ModalShell
+          open={aboutOpen}
+          onClose={() => setAboutOpen(false)}
+          size="drawer-right"
+          panelClassName="flex max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-xl"
+        >
+          <ModalHeader
+            title="Mod Watcher（模组巡望者）"
+            onClose={() => setAboutOpen(false)}
+            closeAriaLabel={t("common.close")}
+            className="mb-0 border-b border-gray-200 px-4 py-3 shrink-0"
+          />
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm text-gray-700">
               <div className="flex justify-center pb-1">
                 <img src="/mwlogo.png" alt="Mod Watcher" className="h-40 w-auto" />
@@ -202,8 +202,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
                 </a>
               </div>
             </div>
-          </div>
-        </div>
+        </ModalShell>
       )}
     </aside>
   );

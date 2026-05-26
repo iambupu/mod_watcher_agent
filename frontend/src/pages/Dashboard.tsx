@@ -5,6 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BellRing,
   Bot,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Database,
   Download,
@@ -16,7 +18,6 @@ import {
   RefreshCw,
   SlidersHorizontal,
   Sparkles,
-  Star,
   ThumbsUp,
   TrendingUp,
 } from "lucide-react";
@@ -24,13 +25,19 @@ import { Button } from "@/components/ui/Button";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { MarkdownText } from "@/components/MarkdownText";
 import { SourceBadge } from "@/components/SourceBadge";
+import { Panel } from "@/components/ui/Panel";
 import { fetchStats } from "@/api/stats";
 import type { Stats } from "@/api/stats";
-import { fetchMods } from "@/api/mods";
+import { fetchRecommendedMods } from "@/api/mods";
+import { addFavorite, fetchFavorites, getFavoriteModId, removeFavorite } from "@/api/favorites";
 import { fetchJobRuns, fetchSchedulerStatus, pauseScheduler, resumeScheduler, runSummaryReport } from "@/api/jobs";
 import type { JobRun } from "@/api/jobs";
 import { fetchSettings } from "@/api/settings";
-import type { ModItem } from "@/types";
+import { useUIStore } from "@/stores/uiStore";
+import { formatModTitle } from "@/utils/modTitle";
+import type { Favorite, ModItem } from "@/types";
+import { ModalHeader, ModalShell } from "@/components/ui/Modal";
+import { FilterBarButton } from "@/components/ui/FilterControls";
 
 interface StatCardConfig {
   icon: React.ReactNode;
@@ -165,7 +172,7 @@ const StatCard: React.FC<{ config: StatCardConfig; value?: number; loading?: boo
   const tone = toneClasses[config.tone];
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <Panel padding="lg">
       <div className="flex items-center gap-4">
         <div className={`flex h-16 w-16 items-center justify-center rounded-xl ${tone.icon}`}>
           {loading ? <div className="h-6 w-6 animate-pulse rounded bg-slate-200" /> : config.icon}
@@ -178,31 +185,54 @@ const StatCard: React.FC<{ config: StatCardConfig; value?: number; loading?: boo
           </p>
         </div>
       </div>
-    </div>
+    </Panel>
   );
 };
 
-const RecommendedModCard: React.FC<{ mod: ModItem }> = ({ mod }) => {
+const RecommendedModCard: React.FC<{
+  mod: ModItem;
+  isFavorited: boolean;
+  onToggleFavorite: (modId: number) => void;
+}> = ({ mod, isFavorited, onToggleFavorite }) => {
+  const summaryMode = useUIStore((s) => s.summaryMode);
+  const displayTitle = formatModTitle(mod, summaryMode);
   return (
-    <a
-      href={mod.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="group min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+    <Panel
+      as="div"
+      padding="none"
+      className="group w-[220px] shrink-0 overflow-hidden transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
     >
       <div className="aspect-[4/3] overflow-hidden bg-slate-100">
-        {mod.thumbnail_url ? (
-          <img src={mod.thumbnail_url} alt={mod.title} className="h-full w-full object-cover" loading="lazy" />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-slate-300">
-            <Sparkles size={32} />
-          </div>
-        )}
+        <div className="relative h-full w-full">
+          <a href={mod.url} target="_blank" rel="noopener noreferrer" className="block h-full w-full">
+            {mod.thumbnail_url ? (
+              <img src={mod.thumbnail_url} alt={displayTitle} className="h-full w-full object-cover" loading="lazy" />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-slate-300">
+                <Sparkles size={32} />
+              </div>
+            )}
+          </a>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleFavorite(mod.id);
+            }}
+            className="absolute right-2 top-2 rounded-full bg-white/90 p-2 text-slate-400 shadow-sm transition hover:bg-white hover:text-rose-500"
+            aria-label={isFavorited ? "Unfavorite" : "Favorite"}
+          >
+            <Heart size={16} className={isFavorited ? "fill-rose-500 text-rose-500" : ""} />
+          </button>
+        </div>
       </div>
       <div className="space-y-2 p-3">
-        <h4 className="line-clamp-2 min-h-10 text-sm font-bold leading-5 text-slate-900 group-hover:text-blue-700">
-          {mod.title}
-        </h4>
+        <a href={mod.url} target="_blank" rel="noopener noreferrer" className="block">
+          <h4 className="line-clamp-2 min-h-10 whitespace-pre-line text-sm font-bold leading-5 text-slate-900 group-hover:text-blue-700">
+            {displayTitle}
+          </h4>
+        </a>
         <p className="truncate text-xs font-semibold text-slate-500">{mod.game || mod.game_domain || "-"}</p>
         <div className="flex flex-wrap items-center gap-1.5">
           <SourceBadge source={mod.source} />
@@ -223,7 +253,7 @@ const RecommendedModCard: React.FC<{ mod: ModItem }> = ({ mod }) => {
           </span>
         </div>
       </div>
-    </a>
+    </Panel>
   );
 };
 
@@ -233,6 +263,49 @@ const Dashboard: React.FC = () => {
   const [manualSummaryReport, setManualSummaryReport] = React.useState("");
   const [manualSummaryStatus, setManualSummaryStatus] = React.useState("");
   const [showSchedulerDialog, setShowSchedulerDialog] = React.useState(false);
+  const recommendedScrollRef = React.useRef<HTMLDivElement | null>(null);
+
+  const { data: favorites = [] } = useQuery({
+    queryKey: ["favorites"],
+    queryFn: fetchFavorites,
+  });
+
+  const favoriteByModId = React.useMemo(() => {
+    const pairs = new Map<number, Favorite>();
+    for (const favorite of favorites) {
+      pairs.set(getFavoriteModId(favorite), favorite);
+    }
+    return pairs;
+  }, [favorites]);
+
+  const favoriteMutation = useMutation({
+    mutationFn: async (modId: number) => {
+      const favorite = favoriteByModId.get(modId);
+      if (favorite) {
+        await removeFavorite(favorite.id);
+        return;
+      }
+      await addFavorite({ mod_id: modId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["favorites"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+
+  const handleToggleFavorite = (modId: number) => {
+    favoriteMutation.mutate(modId);
+  };
+
+  const scrollRecommended = (direction: "left" | "right") => {
+    const container = recommendedScrollRef.current;
+    if (!container) return;
+    const offset = Math.max(260, Math.floor(container.clientWidth * 0.75));
+    container.scrollBy({
+      left: direction === "left" ? -offset : offset,
+      behavior: "smooth",
+    });
+  };
 
   const { data: stats, isLoading: statsLoading, isError: statsError, refetch: refetchStats } = useQuery({
     queryKey: ["stats"],
@@ -245,7 +318,7 @@ const Dashboard: React.FC = () => {
     refetch: refetchRecommendations,
   } = useQuery({
     queryKey: ["dashboard-recommendations"],
-    queryFn: () => fetchMods({ sortBy: "downloads", sortOrder: "desc", limit: 5 }),
+    queryFn: () => fetchRecommendedMods(10),
   });
   const { data: recentJobsData, isError: recentJobsError } = useQuery({
     queryKey: ["dashboard-job-runs"],
@@ -271,7 +344,6 @@ const Dashboard: React.FC = () => {
     unseen_updates: 0,
   };
   const showStatsLoading = statsLoading && recommendationData === undefined;
-  const focusMods = recommendedMods.slice(0, 4);
   const recentJobs = recentJobsData?.items ?? [];
   const latestSummaryJob = getLatestSummaryJob(recentJobs);
   const latestSummaryReportJob = getLatestSummaryReportJob(recentJobs);
@@ -395,7 +467,7 @@ const Dashboard: React.FC = () => {
       <div className="flex h-screen">
         <AppSidebar active="dashboard" />
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-x-hidden overflow-y-auto">
           <div className="space-y-5 px-6 py-6 lg:px-8">
             <header className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div>
@@ -407,19 +479,17 @@ const Dashboard: React.FC = () => {
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-sm font-semibold text-slate-600">{formatDateTime(new Date())}</span>
-                <Button
+                <FilterBarButton
                   type="button"
-                  variant="outline"
-                  className="h-11 rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-sm"
                   onClick={refreshDashboard}
+                  className="text-slate-700"
                 >
                   <RefreshCw size={17} />
                   <span className="ml-2">{t("dashboard.refreshData")}</span>
-                </Button>
-                <Button
+                </FilterBarButton>
+                <FilterBarButton
                   type="button"
-                  variant="outline"
-                  className="h-11 rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-sm"
+                  className="text-slate-700"
                   onClick={() => schedulerMutation.mutate(!(schedulerStatus?.running ?? false))}
                   disabled={schedulerMutation.isPending || schedulerError}
                 >
@@ -427,7 +497,7 @@ const Dashboard: React.FC = () => {
                   <span className="ml-2">
                     {schedulerStatus?.running ? t("dashboard.pauseScheduler") : t("dashboard.resumeScheduler")}
                   </span>
-                </Button>
+                </FilterBarButton>
               </div>
             </header>
 
@@ -452,8 +522,8 @@ const Dashboard: React.FC = () => {
               </div>
             )}
 
-            <div className="grid gap-5">
-              <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="grid min-w-0 gap-5">
+              <Panel as="section" padding="lg" className="min-w-0 max-w-full overflow-hidden">
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <Sparkles size={22} className="text-blue-600" />
@@ -496,78 +566,12 @@ const Dashboard: React.FC = () => {
                     )}
                   </div>
                 )}
-              </section>
+              </Panel>
 
             </div>
 
-            <div className="grid gap-5 xl:grid-cols-3">
-              <section className="rounded-lg border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-5 shadow-sm">
-                <div className="mb-4 flex items-center gap-2 text-blue-700">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
-                    <Star size={18} />
-                  </span>
-                  <h2 className="text-xl font-bold">{t("dashboard.focusMods")}</h2>
-                </div>
-                {focusMods.length > 0 ? (
-                  <ol className="space-y-3">
-                    {focusMods.map((mod, index) => {
-                      const gameLabel = mod.game || mod.game_domain || "-";
-                      const socialCount = mod.endorsements ?? mod.likes;
-
-                      return (
-                        <li key={mod.id} className="rounded-lg border border-blue-100 bg-white/90 p-3 shadow-sm">
-                          <div className="flex items-start gap-3">
-                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">
-                              {index + 1}
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <SourceBadge source={mod.source} />
-                                <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-600">
-                                  {gameLabel}
-                                </span>
-                                {mod.adult_content && (
-                                  <span className="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-bold text-rose-700">
-                                    NSFW
-                                  </span>
-                                )}
-                              </div>
-                              <a
-                                href={mod.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={mod.title}
-                                className="mt-2 block truncate text-sm font-bold text-slate-950 hover:text-blue-700"
-                              >
-                                {mod.title}
-                              </a>
-                              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
-                                <span className="inline-flex items-center gap-1">
-                                  <Download size={12} />
-                                  {compactNumber(mod.downloads)}
-                                </span>
-                                <span className="inline-flex items-center gap-1">
-                                  <ThumbsUp size={12} />
-                                  {compactNumber(socialCount)}
-                                </span>
-                              </div>
-                            </div>
-                            <span className="shrink-0 rounded-md bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">
-                              {index % 2 === 0 ? t("dashboard.newTag") : t("dashboard.updatedTag")}
-                            </span>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                ) : (
-                  <p className="rounded-lg bg-slate-50 px-3 py-4 text-sm font-semibold text-slate-500">
-                    {t("dashboard.noRecommendations")}
-                  </p>
-                )}
-              </section>
-
-              <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="grid gap-5 xl:grid-cols-2">
+              <Panel as="section" padding="lg" className="min-w-0 max-w-full overflow-hidden">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-xl font-bold text-slate-950">{t("dashboard.systemStatus")}</h2>
                   <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
@@ -637,9 +641,9 @@ const Dashboard: React.FC = () => {
                     </p>
                   )}
                 </div>
-              </section>
+              </Panel>
 
-              <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <Panel as="section" padding="lg">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-xl font-bold text-slate-950">{t("dashboard.recentTasks")}</h2>
                   <Link to="/logs?tab=finished" className="text-sm font-bold text-blue-600 hover:text-blue-700">
@@ -676,35 +680,69 @@ const Dashboard: React.FC = () => {
                     {t("dashboard.noRecentTasks")}
                   </p>
                 )}
-              </section>
+              </Panel>
             </div>
 
-            <div className="grid gap-5">
-              <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="grid min-w-0 grid-cols-1 gap-5">
+              <Panel as="section" padding="lg">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-xl font-bold text-slate-950">{t("dashboard.recommendedMods")}</h2>
-                  <Link to="/discover" className="text-sm font-bold text-blue-600 hover:text-blue-700">
-                    {t("dashboard.viewAll")} →
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => scrollRecommended("left")}
+                      className="hidden h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 lg:inline-flex"
+                      aria-label="Scroll Left"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => scrollRecommended("right")}
+                      className="hidden h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 lg:inline-flex"
+                      aria-label="Scroll Right"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                    <Link to="/discover" className="text-sm font-bold text-blue-600 hover:text-blue-700">
+                      {t("dashboard.viewAll")} →
+                    </Link>
+                  </div>
                 </div>
                 {recommendationsLoading ? (
-                  <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+                  <div className="no-scrollbar flex w-full min-w-0 max-w-full gap-4 overflow-x-auto pb-2">
                     {[0, 1, 2, 3, 4].map((item) => (
-                      <div key={item} className="h-64 animate-pulse rounded-lg bg-slate-100" />
+                      <div key={item} className="h-64 w-[220px] shrink-0 animate-pulse rounded-lg bg-slate-100" />
                     ))}
                   </div>
                 ) : recommendedMods.length > 0 ? (
-                  <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-                    {recommendedMods.map((mod) => (
-                      <RecommendedModCard key={mod.id} mod={mod} />
-                    ))}
+                  <div className="min-w-0 max-w-full overflow-hidden">
+                    <div
+                      ref={recommendedScrollRef}
+                      className="no-scrollbar flex w-full min-w-0 max-w-full gap-4 overflow-x-auto pb-2"
+                      onWheel={(e) => {
+                        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+                          e.preventDefault();
+                          e.currentTarget.scrollLeft += e.deltaY;
+                        }
+                      }}
+                    >
+                      {recommendedMods.map((mod) => (
+                        <RecommendedModCard
+                          key={mod.id}
+                          mod={mod}
+                          isFavorited={favoriteByModId.has(mod.id)}
+                          onToggleFavorite={handleToggleFavorite}
+                        />
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center">
                     <p className="text-sm font-semibold text-slate-500">{t("dashboard.noRecommendations")}</p>
                   </div>
                 )}
-              </section>
+              </Panel>
             </div>
 
             <section className="flex flex-col gap-4 rounded-lg border border-blue-200 bg-blue-50/60 p-5 shadow-sm md:flex-row md:items-center md:justify-between">
@@ -736,23 +774,23 @@ const Dashboard: React.FC = () => {
         </main>
       </div>
       {showSchedulerDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="max-h-[82vh] w-full max-w-2xl overflow-hidden rounded-lg bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-950">{t("dashboard.schedulerPreview")}</h2>
-                <p className="mt-1 text-sm font-semibold text-slate-500">
-                  {t("common.total", { total: sortedSchedulerJobs.length })}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSchedulerDialog(false)}
-                className="rounded-md px-3 py-1.5 text-sm font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-              >
-                {t("common.close")}
-              </button>
-            </div>
+        <ModalShell
+          open={showSchedulerDialog}
+          onClose={() => setShowSchedulerDialog(false)}
+          size="md"
+          panelClassName="max-h-[82vh] overflow-hidden"
+        >
+          <ModalHeader
+            title={
+              <span className="text-lg font-bold text-slate-950">
+                {t("dashboard.schedulerPreview")}
+              </span>
+            }
+            subtitle={<span className="font-semibold">{t("common.total", { total: sortedSchedulerJobs.length })}</span>}
+            onClose={() => setShowSchedulerDialog(false)}
+            closeAriaLabel={t("common.close")}
+            className="border-b border-slate-100 px-5 py-4"
+          />
             <div className="max-h-[64vh] overflow-y-auto p-4">
               {sortedSchedulerJobs.length > 0 ? (
                 <div className="space-y-2">
@@ -779,8 +817,7 @@ const Dashboard: React.FC = () => {
                 </p>
               )}
             </div>
-          </div>
-        </div>
+        </ModalShell>
       )}
     </div>
   );

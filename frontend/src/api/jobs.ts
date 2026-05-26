@@ -57,6 +57,18 @@ export function runDiscoveryAll(): Promise<QueuedJob> {
   return post<QueuedJob>("/jobs/discover-all");
 }
 
+export function importNexusModsGame(payload: {
+  gameDomainName: string;
+  batchSize?: number;
+  maxBatches?: number;
+}): Promise<QueuedJob> {
+  return post<QueuedJob>("/jobs/nexusmods/import-game", {
+    game_domain_name: payload.gameDomainName,
+    batch_size: payload.batchSize,
+    max_batches: payload.maxBatches,
+  });
+}
+
 export function runFavoriteCheck(): Promise<QueuedJob> {
   return post<QueuedJob>("/jobs/check-favorites");
 }
