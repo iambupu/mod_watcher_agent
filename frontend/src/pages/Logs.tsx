@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { FilterInput, FilterSelect } from "@/components/ui/FilterControls";
 import { Badge } from "@/components/ui/Badge";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { MarkdownText } from "@/components/MarkdownText";
@@ -171,30 +172,33 @@ const Logs: React.FC = () => {
 
             {activeTab === "logs" && (
             <div className="mb-4 flex gap-2 items-center">
-              <select
-                className="border rounded px-2 py-1.5 text-sm"
+              <FilterSelect
                 value={level}
-                onChange={(e) => {
-                  setLevel(e.target.value);
+                onValueChange={(value) => {
+                  setLevel(value);
                   setExpandedIndex(null);
                 }}
+                controlSize="sm"
+                containerClassName="w-28"
+                className="w-full"
               >
                 <option value="ALL">{t("logs.levelAll")}</option>
                 <option value="DEBUG">DEBUG</option>
                 <option value="INFO">INFO</option>
                 <option value="WARNING">WARNING</option>
                 <option value="ERROR">ERROR</option>
-              </select>
+              </FilterSelect>
 
-              <input
-                className="border rounded px-3 py-1.5 text-sm w-48"
-                type="text"
+              <FilterInput
                 placeholder={t("logs.searchPlaceholder")}
                 value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
+                onValueChange={(value) => {
+                  setSearch(value);
                   setExpandedIndex(null);
                 }}
+                containerClassName="w-48"
+                className="h-10 text-sm placeholder:text-gray-400"
+                controlSize="sm"
               />
 
               <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isLoading}>

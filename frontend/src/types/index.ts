@@ -33,6 +33,7 @@ export interface ModItem {
   game: string;
   game_domain?: string;
   title: string;
+  translated_title_zh?: string;
   url: string;
   author?: string;
   category?: string;
@@ -72,6 +73,15 @@ export interface Favorite {
   lastKnownVersion?: string;
   lastKnownUpdatedAt?: string;
   lastCheckedAt?: string;
+}
+
+export interface FavoriteCheckResult {
+  favoriteId: number;
+  modId: number;
+  updateDetected: boolean;
+  updateEvent: UpdateEvent | null;
+  lastCheckedAt?: string;
+  notificationSent: boolean;
 }
 
 export interface UpdateEvent {

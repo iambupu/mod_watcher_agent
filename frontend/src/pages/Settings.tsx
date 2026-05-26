@@ -5,6 +5,7 @@ import { Loader2, ArrowUp, ArrowDown } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { LanguageSelect } from "@/components/LanguageSelect";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { ApiError, getSecurityToken, setSecurityToken } from "@/api/client";
 
@@ -347,28 +348,18 @@ const Settings: React.FC = () => {
                 <CardContent className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">{t("settings.uiLanguage")}</label>
-                    <select
+                    <LanguageSelect
                       value={uiLanguage}
-                      onChange={(e) => handleLanguageChange(e.target.value as UILanguage)}
-                      className="h-9 w-full rounded-md border border-gray-300 px-3 text-sm"
-                    >
-                      <option value="zh-CN">中文</option>
-                      <option value="en-US">English</option>
-                      <option value="ja-JP">日本語</option>
-                    </select>
+                      onChange={handleLanguageChange}
+                    />
                     <p className="text-xs leading-5 text-gray-500">{t("settings.uiLanguageHint")}</p>
                   </div>
                   <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">{t("settings.summaryLanguage")}</label>
-                    <select
+                    <LanguageSelect
                       value={summaryLanguage}
-                      onChange={(e) => setSummaryLanguage(e.target.value as UILanguage)}
-                      className="h-9 w-full rounded-md border border-gray-300 px-3 text-sm"
-                    >
-                      <option value="zh-CN">中文</option>
-                      <option value="en-US">English</option>
-                      <option value="ja-JP">日本語</option>
-                    </select>
+                      onChange={setSummaryLanguage}
+                    />
                     <p className="text-xs leading-5 text-gray-500">{t("settings.summaryLanguageHint")}</p>
                   </div>
                 </CardContent>

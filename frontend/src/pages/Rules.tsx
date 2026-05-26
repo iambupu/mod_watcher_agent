@@ -17,6 +17,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import AppSidebar from "@/components/layout/AppSidebar";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import {
   fetchRules,
   deleteRule,
@@ -188,12 +189,10 @@ const Rules: React.FC = () => {
     queryClient.invalidateQueries({ queryKey: ["job-runs-for-rules"] });
   };
 
-  const handleImportByUrl = async () => {
-    const url = window.prompt(t("rules.importByUrl"));
-    if (!url) return;
+  const runImport = async (importer: () => Promise<{ imported: number; skipped: number }>) => {
     setIsImporting(true);
     try {
-      const result = await importRulesByUrl(url);
+      const result = await importer();
       alert(t("rules.importDone", { imported: result.imported, skipped: result.skipped }));
       refreshAfterImport();
     } catch (err) {
@@ -203,20 +202,17 @@ const Rules: React.FC = () => {
     }
   };
 
+  const handleImportByUrl = async () => {
+    const url = window.prompt(t("rules.importByUrl"));
+    if (!url) return;
+    await runImport(() => importRulesByUrl(url));
+  };
+
   const handleImportLocal: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    setIsImporting(true);
-    try {
-      const result = await importRulesFromLocalFile(file);
-      alert(t("rules.importDone", { imported: result.imported, skipped: result.skipped }));
-      refreshAfterImport();
-    } catch (err) {
-      alert((err as Error).message || t("rules.importFailed"));
-    } finally {
-      setIsImporting(false);
-    }
+    await runImport(() => importRulesFromLocalFile(file));
   };
 
   return (
@@ -368,36 +364,33 @@ const Rules: React.FC = () => {
           )}
 
           {deleteTarget && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-              <div className="bg-white rounded-xl p-6 shadow-xl max-w-sm w-full mx-4">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  {t("rules.deleteTitle")}
-                </h3>
-                <p className="text-sm text-gray-600 mb-4">
-                  {t("rules.deleteConfirm", { name: deleteTarget.name })}
-                </p>
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setDeleteTarget(null)}
-                    disabled={deleteMutation.isPending}
-                  >
-                    {t("common.cancel")}
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => deleteMutation.mutate(deleteTarget.id)}
-                    disabled={deleteMutation.isPending}
-                  >
-                    {deleteMutation.isPending ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      t("common.delete")
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </div>
+            <ConfirmModal
+              open
+              onClose={!deleteMutation.isPending ? () => setDeleteTarget(null) : undefined}
+              onCancel={() => setDeleteTarget(null)}
+              onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
+              title={t("rules.deleteTitle")}
+              closeAriaLabel={t("common.close")}
+              confirmLoading={deleteMutation.isPending}
+              confirmDisabled={deleteMutation.isPending}
+              confirmText={t("common.delete")}
+              confirmChildren={
+                <>
+                  {deleteMutation.isPending ? (
+                    <Loader2 size={14} className="mr-1.5 animate-spin" />
+                  ) : (
+                    t("common.delete")
+                  )}
+                </>
+              }
+              cancelText={t("common.cancel")}
+              messageClassName="text-sm text-gray-600 mb-4"
+              size="sm"
+              panelClassName="max-w-sm mx-4 rounded-xl p-0"
+              actionsClassName="flex justify-end gap-2"
+            >
+              {t("rules.deleteConfirm", { name: deleteTarget.name })}
+            </ConfirmModal>
           )}
         </main>
       </div>

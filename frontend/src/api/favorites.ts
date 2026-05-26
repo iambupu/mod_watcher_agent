@@ -1,6 +1,6 @@
 import { get, post, put, del } from "./client";
 import { fetchMod } from "./mods";
-import type { Favorite, ModItem, UpdateEvent } from "@/types";
+import type { Favorite, FavoriteCheckResult, ModItem } from "@/types";
 import { hydrateUpdateEvent, type BackendUpdateEvent } from "./updates";
 
 interface BackendFavorite {
@@ -77,6 +77,10 @@ function toBackendFavoriteUpdate(data: Partial<Favorite>): Record<string, unknow
   return payload;
 }
 
+export function getFavoriteModId(favorite: Favorite): number {
+  return favorite.modId;
+}
+
 export const fetchFavorites = async (): Promise<Favorite[]> => {
   const raw = await get<BackendFavorite[]>("/favorites");
   return Promise.all(raw.map(hydrateFavorite));
@@ -96,17 +100,19 @@ export const removeFavorite = (id: number): Promise<void> => del(`/favorites/${i
 
 export const checkUpdate = (
   id: number,
-): Promise<{
-  favorite_id: number;
-  update_detected: boolean;
-  update_event: UpdateEvent | null;
-}> =>
+): Promise<FavoriteCheckResult> =>
   post<{
     favorite_id: number;
+    mod_id: number;
     update_detected: boolean;
     update_event: BackendUpdateEvent | null;
+    last_checked_at?: string | null;
+    notification_sent: boolean;
   }>(`/favorites/${id}/check-update`).then((result) => ({
-    favorite_id: result.favorite_id,
-    update_detected: result.update_detected,
-    update_event: result.update_event ? hydrateUpdateEvent(result.update_event) : null,
+    favoriteId: result.favorite_id,
+    modId: result.mod_id,
+    updateDetected: result.update_detected,
+    updateEvent: result.update_event ? hydrateUpdateEvent(result.update_event) : null,
+    lastCheckedAt: result.last_checked_at ?? undefined,
+    notificationSent: result.notification_sent,
   }));
