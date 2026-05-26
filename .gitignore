@@ -91,9 +91,13 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 *.db-journal
+*.db-shm
+*.db-wal
+*.db.backup-*
 mod_watcher.db
 backend/mod_watcher.db
 backend/mod_watcher.db.bak-*
+backend/e2e_debug.txt
 backend/stdout.txt
 backend/stderr.txt
 
@@ -120,3 +124,6 @@ REASONIX.md
 
 # Local UI verification screenshots
 dashboard-ui-screenshot*.png
+
+# Local one-off scripts
+scripts/temp_*.py
