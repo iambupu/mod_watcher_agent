@@ -159,6 +159,10 @@ Copy-TreeFiltered -Src (Join-Path $root "backend") -Dst (Join-Path $stagingRoot 
 New-Item -ItemType Directory -Force -Path (Join-Path $stagingRoot "frontend\dist") | Out-Null
 Copy-TreeFiltered -Src (Join-Path $root "frontend\dist") -Dst (Join-Path $stagingRoot "frontend\dist") -ExcludeRelGlobs @()
 
+if (Test-Path (Join-Path $root "chrome-extension")) {
+    Copy-TreeFiltered -Src (Join-Path $root "chrome-extension") -Dst (Join-Path $stagingRoot "chrome-extension") -ExcludeRelGlobs @()
+}
+
 Write-Host "[4/4] Creating zip..." -ForegroundColor Cyan
 Compress-Archive -Path (Join-Path $stagingRoot "*") -DestinationPath $zipPath -Force
 
