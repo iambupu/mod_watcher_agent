@@ -413,3 +413,94 @@
     slot_game: "Cyberpunk 2077"
     understanding_field_max:
       context_inherit_score: 0.2
+
+- id: e2e_three_turn_followups_keep_last_topic_traceable
+  turns:
+    - message: "Skyrim Special Edition bimbo roleplay mod"
+      history: []
+    - message: "有什么相关风格的mod"
+      history: []
+    - message: "继续这个方向"
+      history: []
+  seed_mods:
+    - source: "nexusmods"
+      external_id: "bimbo-roleplay-three-turn"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "Bimbo Roleplay Framework"
+      url: "https://example.com/bimbo-roleplay-three-turn"
+      category: "Gameplay"
+      original_summary: "Roleplay framework for bimbo-style character progression."
+      adult_content: false
+  expect:
+    top_title: "Bimbo Roleplay Framework"
+    understanding_field_equals:
+      context_inherited: true
+      context_skipped_reason: ""
+      context_overridden_by_current_signal: false
+    understanding_field_contains:
+      context_inherited_fields: "keywords"
+      semantic_anchors: "bimbo"
+    audit_conclusion_equals:
+      contract_status: "ok"
+
+- id: e2e_strong_new_outfit_question_suppresses_adult_gameplay_context
+  message: "换成 Skyrim 的正常服装 mod"
+  history:
+    - role: "user"
+      text: "LoversLab bimbo pregnancy gameplay mod"
+    - role: "assistant"
+      text: "我会查找 LoversLab 上的 bimbo pregnancy gameplay。"
+  seed_mods:
+    - source: "nexusmods"
+      external_id: "skyrim-normal-outfit-1"
+      game: "Skyrim"
+      game_domain: "skyrim"
+      title: "Skyrim Normal Outfit"
+      url: "https://example.com/skyrim-normal-outfit"
+      category: "Outfit"
+      original_summary: "A normal non-adult Skyrim outfit mod."
+      adult_content: false
+    - source: "loverslab"
+      external_id: "ll-bimbo-pregnancy-old-context"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "LL Bimbo Pregnancy Gameplay"
+      url: "https://example.com/ll-bimbo-pregnancy-context"
+      category: "Gameplay"
+      original_summary: "Adult bimbo pregnancy gameplay systems."
+      adult_content: true
+  expect:
+    top_title: "Skyrim Normal Outfit"
+    understanding_field_equals:
+      context_inherited: false
+      context_overridden_by_current_signal: true
+      context_skipped_reason: "current_input_not_context"
+    understanding_field_max:
+      context_inherit_score: 0.2
+    audit_conclusion_equals:
+      contract_status: "ok"
+
+- id: e2e_result_reference_requires_explicit_reference_for_title_takeover
+  message: "找类似的"
+  history:
+    - role: "user"
+      text: "Skyrim bimbo mod"
+    - role: "assistant"
+      text: "我找到了 Bimbo Body Morph。"
+  seed_mods:
+    - source: "nexusmods"
+      external_id: "generic-similar-style"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "Generic Similar Style"
+      url: "https://example.com/generic-similar-style"
+      category: "Body"
+      original_summary: "A similar bimbo style preset without exact title targeting."
+      adult_content: false
+  expect:
+    top_title: "Generic Similar Style"
+    understanding_field_equals:
+      context_inherited: true
+    audit_conclusion_equals:
+      contract_status: "ok"

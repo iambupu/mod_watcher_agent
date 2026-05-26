@@ -9,19 +9,32 @@ def apply_result_reference_context(raw: dict[str, Any], query: str, shown_mod_ti
     titles = [str(value).strip() for value in (shown_mod_titles or []) if str(value).strip()]
     if not titles:
         return
+    applied_fields: list[str] = []
     if is_comparison_followup(query):
         raw["keywords"] = titles[:5]
+        applied_fields.append("keywords")
     if is_referenced_alternative_followup(query):
         raw["keywords"] = referenced_title_keywords(_referenced_shown_title(query, titles))
+        applied_fields.append("keywords")
     if is_referenced_similarity_followup(query):
         raw["keywords"] = referenced_title_keywords(_referenced_shown_title(query, titles))
         raw["keyword_match_mode"] = "all"
+        applied_fields.extend(["keywords", "keyword_match_mode"])
     if is_mod_reference_followup(query):
         referenced_title = _referenced_shown_title(query, titles)
         raw["keywords"] = [referenced_title]
         raw["exact_title"] = referenced_title
+        applied_fields.extend(["keywords", "exact_title"])
     if should_avoid_prior_results(query):
         raw["exclude_titles"] = titles
+        applied_fields.append("exclude_titles")
+    if applied_fields:
+        raw["_agent_result_reference_signal"] = {
+            "applied": True,
+            "fields": list(dict.fromkeys(applied_fields)),
+            "titles": titles[:5],
+            "has_explicit_reference": _has_reference(query),
+        }
 
 
 def is_contextual_query_followup(query: str) -> bool:
@@ -106,6 +119,8 @@ def should_avoid_prior_results(query: str) -> bool:
             "还有",
             "其他",
             "再找",
+            "类似",
+            "同类",
             "换一批",
             "不要重复",
             "别重复",
@@ -113,9 +128,27 @@ def should_avoid_prior_results(query: str) -> bool:
             "other",
             "another",
             "different",
+            "similar",
+            "related",
         }
         | _ALTERNATIVE_MARKERS
     )
+
+
+def shown_titles_from_history(history: list | None) -> list[str]:
+    if not history:
+        return []
+    titles: list[str] = []
+    for item in reversed(history):
+        if str(getattr(item, "role", "")).strip() != "assistant":
+            continue
+        text = str(getattr(item, "text", "") or "")
+        for title in _title_candidates_from_assistant_text(text):
+            if title not in titles:
+                titles.append(title)
+        if titles:
+            return titles[:5]
+    return []
 
 
 def _has_reference(query: str) -> bool:
@@ -144,6 +177,19 @@ def _referenced_index(query: str) -> int | None:
         if number is not None and number > 0:
             return number - 1
     return None
+
+
+def _title_candidates_from_assistant_text(text: str) -> list[str]:
+    candidates: list[str] = []
+    for pattern in [
+        r"(?:找到了|找到|展示|推荐)\s*([A-Z][A-Za-z0-9][A-Za-z0-9 '&:_-]{2,80})",
+        r"\b([A-Z][A-Za-z0-9]+(?:[ '&:_-]+[A-Z][A-Za-z0-9]+){1,8})\b",
+    ]:
+        for match in re.finditer(pattern, text):
+            title = match.group(1).strip(" 。.,，")
+            if title and title.lower() not in {"i found", "here are"}:
+                candidates.append(title)
+    return candidates
 
 
 def _ordinal_number(value: str) -> int | None:

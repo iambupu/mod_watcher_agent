@@ -12,6 +12,8 @@ _GENERIC_TERMS = {
     "效果",
     "这种",
     "那种",
+    "方向",
+    "direction",
 }
 
 
@@ -255,6 +257,7 @@ def _has_relational_intent(text: str) -> bool:
     patterns = (
         r"(?:^|[\s，。,？！!?.])(?:more|another|same|similar|related)(?:$|[\s，。,？！!?.])",
         r"(?:^|[\s，。,？！!?.]).{0,2}(?:继续|再来|还有|同类|类似|相关)(?:$|[\s，。,？！!?.])",
+        r"(?:继续|保持).{0,4}(?:方向|这个方向|这个路子)",
         r"(?:^|[\s，。,？！!?.])(?:这种|那种|这个|那个)(?:$|[\s，。,？！!?.])",
     )
     return any(re.search(pattern, compact, flags=re.IGNORECASE) for pattern in patterns)

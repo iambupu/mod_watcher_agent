@@ -25,8 +25,16 @@ def test_apply_followup_context_records_signal_and_inherits_keywords(caplog):
     signal = raw["_agent_context_signal"]
     assert signal["source"] == "recent_user"
     assert signal["inherited"] is True
+    assert signal["skipped_reason"] == ""
+    assert signal["overridden_by_current_signal"] is False
+    assert {"keywords", "games", "sources"}.issubset(set(signal["inherited_fields"]))
     assert signal["inherit_score"] >= 0.0
-    assert any("agent.context_inherit" in item.message for item in caplog.records)
+    assert any(
+        "agent.context_inherit" in item.message
+        and "inherited=True" in item.message
+        and "inherited_fields=" in item.message
+        for item in caplog.records
+    )
 
 
 def test_apply_followup_context_preserves_explicit_slots():
@@ -52,6 +60,38 @@ def test_apply_followup_context_preserves_explicit_slots():
     assert raw["sources"] == ["nexusmods"]
     assert raw["adult_content"] is False
     assert raw["_agent_context_signal"]["topic_shift"] is True
+    assert raw["_agent_context_signal"]["inherited"] is False
+    assert raw["_agent_context_signal"]["skipped_reason"] == "topic_shift"
+    assert raw["_agent_context_signal"]["overridden_by_current_signal"] is True
+    assert raw["_agent_context_signal"]["inherited_fields"] == []
+
+
+def test_apply_followup_context_does_not_copy_adult_topic_into_strong_new_outfit_query():
+    raw = {
+        "keywords": ["skyrim", "outfit"],
+        "games": ["Skyrim"],
+        "sources": [],
+        "categories": ["Outfit"],
+        "adult_content": None,
+    }
+    context = {
+        "source": "recent_user",
+        "keywords": ["bimbo", "pregnancy"],
+        "semantic_anchors": ["pregnancy", "roleplay"],
+        "game": "Skyrim Special Edition",
+        "source_name": "loverslab",
+        "adult_content": True,
+        "quality_score": 0.9,
+    }
+
+    apply_followup_context(raw, context, "换成 Skyrim 的正常服装 mod")
+
+    assert raw["keywords"] == ["skyrim", "outfit"]
+    assert raw["games"] == ["Skyrim"]
+    assert raw["sources"] == []
+    assert raw["adult_content"] is None
+    assert raw["_agent_context_signal"]["inherited"] is False
+    assert raw["_agent_context_signal"]["overridden_by_current_signal"] is True
 
 
 def test_merge_context_keywords_filters_weak_terms():

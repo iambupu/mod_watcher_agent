@@ -43,7 +43,7 @@ async def test_query_planning_tool_uses_fallback_and_logs_plan(caplog):
 
 
 @pytest.mark.asyncio
-async def test_query_planning_tool_uses_injected_llm_planner_and_context_keywords():
+async def test_query_planning_tool_keeps_llm_plan_over_current_turn_context_fallback():
     engine = _engine()
 
     async def fake_planner(**kwargs):
@@ -68,7 +68,35 @@ async def test_query_planning_tool_uses_injected_llm_planner_and_context_keyword
     assert output.query_plan["_agent_llm_planning_used"] is True
     assert output.query_plan["_agent_fallback_planning_used"] is False
     assert output.query_plan["_agent_context_plan_used"] is True
-    assert output.query_plan["keywords"] == ["bimbo"]
+    assert output.query_plan["keywords"] == ["相关"]
+    assert output.query_plan["sources"] == []
+
+
+@pytest.mark.asyncio
+async def test_query_planning_tool_allows_llm_plan_to_inherit_explicit_context_scope():
+    engine = _engine()
+
+    async def fake_planner(**kwargs):
+        return {"intent": "search", "keywords": ["related"], "evidence_id": "ev_plan"}
+
+    with Session(engine) as session:
+        output = await QueryPlanningTool(session, planner=fake_planner).run(
+            QueryPlanningInput(
+                query="继续找相关的",
+                llm_available=True,
+                provider="test",
+                api_key="key",
+                model="model",
+                context_query_plan={
+                    "keywords": ["bimbo"],
+                    "sources": ["loverslab"],
+                    "_agent_context_signal": {"inherited": True, "topic_shift": False},
+                },
+            )
+        )
+
+    assert output.source == "llm"
+    assert output.query_plan["keywords"] == ["related"]
     assert output.query_plan["sources"] == ["loverslab"]
 
 
@@ -127,6 +155,68 @@ async def test_query_planning_tool_preserves_llm_semantic_signals():
     assert output.source == "llm"
     assert output.query_plan["_agent_semantic_anchors"] == ["framework"]
     assert output.query_plan["_agent_semantic_domains"] == ["source_scope"]
+    assert output.query_plan["_agent_semantic_source"] == "llm"
+
+
+@pytest.mark.asyncio
+async def test_query_planning_tool_does_not_apply_text_taxonomy_over_llm_plan_without_anchors():
+    engine = _engine()
+
+    async def fake_planner(**kwargs):
+        return {
+            "intent": "search",
+            "keywords": ["怀孕玩法"],
+            "semantic_anchors": [],
+            "semantic_domains": [],
+            "evidence_id": "ev_llm_no_anchors",
+        }
+
+    with Session(engine) as session:
+        output = await QueryPlanningTool(session, planner=fake_planner).run(
+            QueryPlanningInput(
+                query="有什么mod支持怀孕玩法",
+                llm_available=True,
+                provider="test",
+                api_key="key",
+                model="model",
+            )
+        )
+
+    assert output.source == "llm"
+    assert output.query_plan["keywords"] == ["怀孕玩法"]
+    assert "pregnancy" not in output.query_plan["keywords"]
+    assert "_agent_semantic_anchors" not in output.query_plan
+
+
+@pytest.mark.asyncio
+async def test_query_planning_tool_expands_semantics_from_llm_anchors_only():
+    engine = _engine()
+
+    async def fake_planner(**kwargs):
+        return {
+            "intent": "search",
+            "keywords": ["服装"],
+            "semantic_anchors": ["sexworker_style", "outfit"],
+            "semantic_domains": ["identity_style", "content_type"],
+            "evidence_id": "ev_llm_style",
+        }
+
+    with Session(engine) as session:
+        output = await QueryPlanningTool(session, planner=fake_planner).run(
+            QueryPlanningInput(
+                query="有什么妓女风格的服装MOD",
+                llm_available=True,
+                provider="test",
+                api_key="key",
+                model="model",
+            )
+        )
+
+    assert output.source == "llm"
+    assert "prostitute" in output.query_plan["keywords"]
+    assert "outfit" in output.query_plan["keywords"]
+    assert "roleplay" not in output.query_plan["keywords"]
+    assert "gameplay" not in output.query_plan["keywords"]
     assert output.query_plan["_agent_semantic_source"] == "llm"
 
 

@@ -1,6 +1,7 @@
 from app.services.agent.planning.context_memory_selection import (
     backfill_query_context_for_planning,
     diagnosis_context_from_last_query,
+    has_query_context_signal,
     history_context_for_diagnosis,
     select_effective_last_query_context,
 )
@@ -12,9 +13,9 @@ class _HistoryItem:
         self.text = text
 
 
-def test_select_effective_context_prefers_good_short_context():
+def test_select_effective_context_prefers_good_current_context_for_new_question():
     selected = select_effective_last_query_context(
-        "继续找相关的",
+        "Skyrim pregnancy gameplay mod",
         {"source": "current", "keywords": ["pregnancy"], "quality_score": 0.4},
         {
             "long_term": {
@@ -48,6 +49,40 @@ def test_select_effective_context_uses_long_term_when_short_context_is_weak_foll
 
     assert selected["keywords"] == ["bimbo"]
     assert selected["source"] == "long_term_writeback"
+
+
+def test_select_effective_context_does_not_use_long_term_for_strong_new_question():
+    selected = select_effective_last_query_context(
+        "换成 Skyrim 的正常服装 mod",
+        {"source": "current", "keywords": [], "quality_score": 0.0},
+        {
+            "long_term": {
+                "last_query_context": {
+                    "keywords": ["bimbo", "pregnancy"],
+                    "semantic_anchors": ["pregnancy"],
+                    "quality_score": 0.9,
+                }
+            }
+        },
+    )
+
+    assert selected["source"] == "current"
+    assert selected["keywords"] == []
+
+
+def test_current_context_is_not_treated_as_inheritable_query_context():
+    assert (
+        has_query_context_signal(
+            {
+                "source": "current",
+                "keywords": ["skyrim", "outfit"],
+                "game": "Skyrim",
+                "category": "Outfit",
+            },
+            ["skyrim", "outfit"],
+        )
+        is False
+    )
 
 
 def test_backfill_query_context_uses_recent_user_history_for_followup():

@@ -6,7 +6,10 @@ from typing import Any
 from sqlmodel import Session
 
 from app.services.agent import query_planner as query_planner_module
-from app.services.agent.planning.context_plan_merge import merge_context_query_plan
+from app.services.agent.planning.context_plan_merge import (
+    merge_context_query_plan,
+    merge_llm_context_query_plan,
+)
 from app.services.agent.planning.fallback_query_plan import build_fallback_query_plan
 from app.services.agent.query_planner import (
     build_database_schema_text,
@@ -79,10 +82,18 @@ class QueryPlanningTool:
         if raw_query_plan is None:
             raw_query_plan = build_fallback_query_plan(tool_input.query)
 
-        raw_query_plan = merge_context_query_plan(raw_query_plan, tool_input.context_query_plan)
+        if source == "llm":
+            raw_query_plan = merge_llm_context_query_plan(raw_query_plan, tool_input.context_query_plan)
+        else:
+            raw_query_plan = merge_context_query_plan(raw_query_plan, tool_input.context_query_plan)
         raw_evidence_id = str((raw_query_plan or {}).get("evidence_id") or "").strip()
         evidence_id = str(tool_input.evidence_id or raw_evidence_id).strip() or None
-        query_plan = normalize_query_plan(raw_query_plan, tool_input.query, slot_options)
+        query_plan = normalize_query_plan(
+            raw_query_plan,
+            tool_input.query,
+            slot_options,
+            planning_source=source,
+        )
         context_used = bool(tool_input.context_query_plan)
         if evidence_id:
             query_plan["evidence_id"] = evidence_id

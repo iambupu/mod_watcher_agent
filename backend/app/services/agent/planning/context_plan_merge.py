@@ -54,6 +54,55 @@ def merge_context_query_plan(raw_plan: dict | None, context_plan: dict | None) -
     return merged
 
 
+def merge_llm_context_query_plan(raw_plan: dict | None, context_plan: dict | None) -> dict | None:
+    """Merge only explicit inherited context into an LLM plan.
+
+    Current-turn fallback parsing can be useful when LLM planning is unavailable,
+    but it should not repair or override an LLM plan. For LLM output, only carry
+    internal context metadata and slots that were explicitly inherited from
+    previous context.
+    """
+    if not isinstance(context_plan, dict):
+        return raw_plan
+    merged = dict(raw_plan or {})
+    if not merged.get("evidence_id") and context_plan.get("evidence_id"):
+        merged["evidence_id"] = context_plan["evidence_id"]
+    for key, value in context_plan.items():
+        if str(key).startswith("_agent_"):
+            merged[key] = value
+    _merge_result_reference_constraints(merged, context_plan)
+    context_signal = context_plan.get("_agent_context_signal")
+    if not isinstance(context_signal, dict) or not context_signal.get("inherited") or context_signal.get("topic_shift"):
+        return merged
+    for key in ["games", "game_domains", "categories", "sources"]:
+        if not merged.get(key) and context_plan.get(key):
+            merged[key] = context_plan[key]
+    if merged.get("adult_content") is None and context_plan.get("adult_content") is not None:
+        merged["adult_content"] = context_plan["adult_content"]
+    if not merged.get("sort_field") and context_plan.get("sort_field"):
+        merged["sort_field"] = context_plan["sort_field"]
+    if not merged.get("sort_order") and context_plan.get("sort_order"):
+        merged["sort_order"] = context_plan["sort_order"]
+    return merged
+
+
+def _merge_result_reference_constraints(merged: dict, context_plan: dict) -> None:
+    signal = context_plan.get("_agent_result_reference_signal")
+    if not isinstance(signal, dict) or not signal.get("applied"):
+        return
+    fields = {str(field).strip() for field in (signal.get("fields") or []) if str(field).strip()}
+    if "exact_title" in fields and context_plan.get("exact_title"):
+        merged["exact_title"] = context_plan["exact_title"]
+        if context_plan.get("keywords"):
+            merged["keywords"] = context_plan["keywords"]
+    if "exclude_titles" in fields and context_plan.get("exclude_titles"):
+        merged["exclude_titles"] = context_plan["exclude_titles"]
+    if "keyword_match_mode" in fields and context_plan.get("keyword_match_mode"):
+        merged["keyword_match_mode"] = context_plan["keyword_match_mode"]
+        if context_plan.get("keywords"):
+            merged["keywords"] = context_plan["keywords"]
+
+
 def _should_replace_keywords_with_context(raw_keywords: object, context_keywords: object) -> bool:
     if not context_keywords:
         return False

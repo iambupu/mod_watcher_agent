@@ -57,6 +57,7 @@ _EXPECT_FIELD_TYPES = {
     "tools": "list",
     "topic_shift_detected": "bool",
     "understanding_field_contains": "object",
+    "understanding_field_not_contains": "object",
     "updated_after": "string",
     "updated_before": "string",
     "updated_since_days": "number",
@@ -295,6 +296,16 @@ def _diagnosis_expectations_pass(
             str(target) in [str(item) for item in values],
             actual=values,
             expected_value=target,
+        ):
+            return False, checks
+    for field, target in (expected.get("understanding_field_not_contains") or {}).items():
+        actual = evidence_map.get(str(field))
+        values = actual if isinstance(actual, list) else []
+        if not check(
+            f"diagnosis.understanding.{field}_not_contains",
+            str(target) not in [str(item) for item in values],
+            actual=values,
+            expected_value=f"not {target}",
         ):
             return False, checks
     if "diagnosis_intent" in expected and not check(
