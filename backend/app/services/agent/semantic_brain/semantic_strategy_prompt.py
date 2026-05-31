@@ -27,6 +27,7 @@ def build_semantic_strategy_prompt(
         "3) hard_filters 只能放用户本轮明确说死的条件，例如游戏、来源、标题、URL、ID、不要/排除。",
         "4) history、memory、收藏偏好默认只能作为 soft_signals 或语境提示，不能覆盖本轮明确输入。",
         "5) 开放发现问题不要擅自把分类、标签、依赖、兼容词变成 hard filter。",
+        "6) core_terms / soft_signals 只能来自本轮问题可归因的语义线索，不允许添加用户没有提到且与 query 无关的宽泛词（例如 subtitle、翻译、补丁等未提及项）。",
         "",
         "JSON 结构：",
         "{",

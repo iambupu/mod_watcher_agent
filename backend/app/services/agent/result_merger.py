@@ -6,11 +6,16 @@ from app.models.mod import Mod
 from app.services.agent.list_utils import string_list
 from app.services.agent.ranking.fusion import fuse_duplicate_results
 from app.services.agent.search_types import SearchPlan, SearchResult
-from app.services.agent.semantic_search import distinctive_query_terms
+from app.services.agent.semantic_search import distinctive_query_terms, semantic_query_from_anchors
 from app.utils.boolean import parse_bool
 from app.utils.numeric import safe_nonnegative_int
 
 logger = logging.getLogger(__name__)
+
+_ANCHOR_PRIMARY_TERM_SCORE = 6.0
+_ANCHOR_SECONDARY_TERM_SCORE = 0.2
+_ANCHOR_SOURCE_WEIGHT_RANKING = 2.0
+_ANCHOR_SOURCE_WEIGHT_SEMANTIC = 1.0
 
 
 def merge_results(*groups: Iterable[SearchResult]) -> list[SearchResult]:
@@ -49,10 +54,14 @@ def sort_results(results: list[SearchResult], plan: SearchPlan, query_plan: dict
     if plan.sort_field == "endorsements":
         return sorted(results, key=lambda item: (safe_nonnegative_int(item.mod.endorsements), item.score), reverse=reverse)
     if plan.sort_field == "relevance":
+        include_author_in_match = _should_include_author_in_matching(plan, query_plan)
         return sorted(
             results,
             key=lambda item: (
-                item.score + _category_hint_score(item, plan) + _semantic_hint_score(item.mod, query_plan),
+                item.score
+                + _category_hint_score(item, plan)
+                + _semantic_hint_score(item.mod, query_plan, include_author=include_author_in_match)
+                + _keyword_group_score(item.mod, query_plan, include_author=include_author_in_match),
                 item.mod.first_seen_at,
             ),
             reverse=reverse,
@@ -63,23 +72,217 @@ def sort_results(results: list[SearchResult], plan: SearchPlan, query_plan: dict
 def filter_by_distinctive_terms(
     results: list[SearchResult],
     query: str,
+    query_plan: dict | None = None,
     *,
     fallback_terms: list[str] | None = None,
+    plan: SearchPlan | None = None,
+) -> list[SearchResult]:
+    anchor_groups = _query_plan_anchor_groups(query_plan)
+    include_author = _should_include_author_in_matching(plan, query_plan)
+    if anchor_groups:
+        results_with_scores = [
+            (_query_group_match_count(item.mod, anchor_groups, include_author=include_author), idx, item)
+            for idx, item in enumerate(results)
+        ]
+        if not any(score > 0 for score, *_ in results_with_scores):
+            return _legacy_filter_by_distinctive_terms(
+                results,
+                query,
+                fallback_terms=fallback_terms,
+                include_author=include_author,
+            )
+        results_with_scores.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+        return [item for _, _, item in results_with_scores]
+    return _legacy_filter_by_distinctive_terms(
+        results,
+        query,
+        fallback_terms=fallback_terms,
+        include_author=include_author,
+    )
+
+
+def _legacy_filter_by_distinctive_terms(
+    results: list[SearchResult],
+    query: str,
+    *,
+    fallback_terms: list[str] | None = None,
+    include_author: bool = False,
 ) -> list[SearchResult]:
     terms = distinctive_query_terms(query)
-    if not terms:
-        fallback = [
-            term
-            for term in (fallback_terms or [])
-            if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", term)
+    if terms:
+        min_hits = _required_term_hits(len(terms))
+        return [
+            item
+            for item in results
+            if _mod_term_hit_count(item.mod, terms, include_author=include_author) >= min_hits
         ]
-        if not fallback:
-            return results
-        return [item for item in results if _mod_contains_any_term(item.mod, fallback)]
-    if not terms:
+    fallback = [term for term in (fallback_terms or []) if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", str(term).strip().lower())]
+    if not fallback:
         return results
-    min_hits = _required_term_hits(len(terms))
-    return [item for item in results if _mod_term_hit_count(item.mod, terms) >= min_hits]
+    return [item for item in results if _mod_contains_any_term(item.mod, fallback, include_author=include_author)]
+
+
+def _query_plan_anchor_groups(query_plan: dict | None) -> list[tuple[tuple[str, ...], float]]:
+    """
+    Build weighted anchor term groups.
+    Each group is `(ordered_terms, source_weight)`, where `ordered_terms[0]` is the anchor.
+    """
+    groups: list[tuple[tuple[str, ...], float]] = []
+    groups.extend(
+        _query_plan_anchor_groups_from_field(
+            query_plan,
+            field="_agent_ranking_semantic_anchors",
+            source_weight=_ANCHOR_SOURCE_WEIGHT_RANKING,
+        )
+    )
+    groups.extend(
+        _query_plan_anchor_groups_from_field(
+            query_plan,
+            field="_agent_semantic_anchors",
+            source_weight=_ANCHOR_SOURCE_WEIGHT_SEMANTIC,
+        )
+    )
+    deduped: list[tuple[tuple[str, ...], float]] = []
+    seen: set[str] = set()
+    for terms, weight in groups:
+        if not terms:
+            continue
+        anchor_term = terms[0]
+        if anchor_term in seen:
+            continue
+        seen.add(anchor_term)
+        deduped.append((terms, weight))
+    return deduped
+
+
+def _query_group_match_count(
+    mod: Mod,
+    term_groups: list[tuple[tuple[str, ...], float]],
+    *,
+    include_author: bool = False,
+) -> float:
+    return _query_group_match_score(mod, term_groups, include_author=include_author)
+
+
+def _query_group_match_score(
+    mod: Mod,
+    term_groups: list[tuple[tuple[str, ...], float]],
+    *,
+    include_author: bool = False,
+) -> float:
+    if not term_groups:
+        return 0.0
+    haystack = _mod_haystack(mod, include_author=include_author)
+    group_count = len(term_groups)
+    return sum(
+        _score_anchor_group(
+            terms,
+            haystack,
+            group_index=group_index,
+            group_count=group_count,
+            source_weight=source_weight,
+        )
+        for group_index, (terms, source_weight) in enumerate(term_groups)
+    )
+
+
+def _should_include_author_in_matching(plan: SearchPlan | None, query_plan: dict | None) -> bool:
+    if plan and plan.author:
+        return True
+    if not isinstance(query_plan, dict):
+        return False
+    if str(query_plan.get("author") or "").strip():
+        return True
+    return str(query_plan.get("intent") or "").strip().lower() == "author"
+
+
+def _score_anchor_group(
+    terms: tuple[str, ...],
+    haystack: str,
+    *,
+    group_index: int,
+    group_count: int,
+    source_weight: float,
+) -> float:
+    if not terms:
+        return 0.0
+    anchor_term = terms[0]
+    anchor_hit = _term_in_haystack(anchor_term, haystack)
+    secondary_hits = [_term_in_haystack(term, haystack) for term in terms[1:]]
+    if not anchor_hit and not any(secondary_hits):
+        return 0.0
+    group_term_score = 0.0
+    if anchor_hit:
+        group_term_score += _ANCHOR_PRIMARY_TERM_SCORE
+    group_term_score += _ANCHOR_SECONDARY_TERM_SCORE * sum(1 for hit in secondary_hits if hit)
+    if group_count <= 1:
+        position_weight = 1.0
+    else:
+        position_weight = 1.0 + 0.6 * (group_count - group_index) / group_count
+    return group_term_score * source_weight * position_weight
+
+
+def _term_in_haystack(term: str, haystack: str) -> bool:
+    if not term:
+        return False
+    if " " in term:
+        return term in haystack
+    if re.fullmatch(r"[a-z0-9]+", term):
+        return re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", haystack) is not None
+    return term in haystack
+
+
+def _query_plan_anchor_groups_from_field(
+    query_plan: dict | None,
+    *,
+    field: str,
+    source_weight: float,
+) -> list[tuple[tuple[str, ...], float]]:
+    if not isinstance(query_plan, dict):
+        return []
+    normalized = [
+        str(anchor or "").strip().lower()
+        for anchor in string_list(query_plan.get(field))
+        if str(anchor or "").strip()
+    ]
+    groups: list[tuple[tuple[str, ...], float]] = []
+    seen: set[str] = set()
+    for anchor in normalized:
+        if anchor in seen:
+            continue
+        seen.add(anchor)
+        signals = semantic_query_from_anchors("", [anchor])
+        raw_terms = [
+            anchor,
+            *signals.expanded_terms,
+            *signals.matched_concepts,
+            *signals.category_aliases,
+        ]
+        terms = [str(term).strip().lower() for term in raw_terms if str(term).strip()]
+        seen_terms: set[str] = set()
+        ordered_terms: list[str] = []
+        for term in terms:
+            if term in seen_terms:
+                continue
+            seen_terms.add(term)
+            ordered_terms.append(term)
+        if ordered_terms:
+            groups.append((tuple(ordered_terms), source_weight))
+    return groups
+
+
+def _keyword_group_score(
+    mod: Mod,
+    query_plan: dict | None = None,
+    *,
+    include_author: bool = False,
+) -> int:
+    if not isinstance(query_plan, dict):
+        return 0
+    term_groups = _query_plan_anchor_groups(query_plan)
+    if not term_groups:
+        return 0
+    return int(_query_group_match_score(mod, term_groups, include_author=include_author))
 
 
 def filter_excluded_titles(results: list[SearchResult], excluded_titles: list[str] | None) -> list[SearchResult]:
@@ -163,12 +366,12 @@ def _looks_like_visual_support_without_roleplay(mod: Mod) -> bool:
     )
 
 
-def _mod_haystack(mod: Mod) -> str:
+def _mod_haystack(mod: Mod, *, include_author: bool = False) -> str:
     return " ".join(
         str(value or "")
         for value in [
             mod.title,
-            mod.author,
+            *([mod.author] if include_author and str(mod.author or "").strip() else []),
             mod.category,
             mod.game,
             mod.game_domain,
@@ -186,7 +389,7 @@ def _category_hint_score(result: SearchResult, plan: SearchPlan) -> int:
     return 2 if category in hints else 0
 
 
-def _semantic_hint_score(mod: Mod, query_plan: dict | None) -> int:
+def _semantic_hint_score(mod: Mod, query_plan: dict | None, *, include_author: bool = False) -> int:
     """用语义锚点做轻量排序加权；强相关判断仍交给 Candidate Semantic Judge。"""
     if not isinstance(query_plan, dict):
         return 0
@@ -206,7 +409,7 @@ def _semantic_hint_score(mod: Mod, query_plan: dict | None) -> int:
     }
     if not anchors and not domains:
         return 0
-    haystack = _mod_haystack(mod)
+    haystack = _mod_haystack(mod, include_author=include_author)
     category = str(mod.category or "").strip().lower()
     score = 0
     if "roleplay" in anchors or "mechanics" in domains:
@@ -229,14 +432,14 @@ def _term_bonus(haystack: str, terms: list[str], value: int) -> int:
     return value if any(term in haystack for term in terms) else 0
 
 
-def _mod_contains_any_term(mod: Mod, terms: list[str]) -> bool:
-    haystack = _mod_haystack(mod)
-    return any(term in haystack for term in terms)
+def _mod_contains_any_term(mod: Mod, terms: list[str], *, include_author: bool = False) -> bool:
+    haystack = _mod_haystack(mod, include_author=include_author)
+    return any(_term_in_haystack(term.strip().lower(), haystack) for term in terms)
 
 
-def _mod_term_hit_count(mod: Mod, terms: list[str]) -> int:
-    haystack = _mod_haystack(mod)
-    return sum(1 for term in terms if term in haystack)
+def _mod_term_hit_count(mod: Mod, terms: list[str], *, include_author: bool = False) -> int:
+    haystack = _mod_haystack(mod, include_author=include_author)
+    return sum(1 for term in terms if _term_in_haystack(term.strip().lower(), haystack))
 
 
 def _required_term_hits(term_count: int) -> int:

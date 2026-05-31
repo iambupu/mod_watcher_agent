@@ -287,6 +287,22 @@ def test_agent_fallback_plan_infers_chinese_explicit_tag_filter():
     assert plan["tags"] == ["CBBE"]
 
 
+def test_normalize_query_plan_treats_bimbo_synonym_baishaitian_as_keyword():
+    slot_options = {
+        "games": ["Skyrim Special Edition"],
+        "game_domains": ["skyrimspecialedition"],
+        "categories": [],
+        "sources": ["nexusmods", "loverslab"],
+    }
+    plan = _normalize_query_plan(
+        {"intent": "search", "keywords": []},
+        "天际有什么傻白甜的身材改造 mod",
+        slot_options,
+    )
+
+    assert "bimbo" in plan["keywords"]
+
+
 def test_agent_normalizer_does_not_trust_implicit_tags_as_hard_filters():
     slot_options = {
         "games": ["Skyrim Special Edition"],

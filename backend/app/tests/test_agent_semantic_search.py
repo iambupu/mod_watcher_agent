@@ -91,6 +91,14 @@ def test_semantic_query_keeps_core_token_from_long_chinese_request():
     assert distinctive_query_terms("我想让角色变成那种夸张的 bimbo 化审美，有没有相关 mod") == ["bimbo"]
 
 
+def test_semantic_query_treats_bimbo_synonym_baishaitian_as_bimbo():
+    semantic = semantic_query("傻白甜 身材 改造")
+
+    assert "bimbo" in semantic.expanded_terms
+    assert "bimbo" in semantic.anchors
+    assert "傻白甜" in semantic.base_keywords
+
+
 def test_semantic_query_treats_alternative_words_as_intent_fillers():
     semantic = semantic_query("有没有更稳的 bimbo 替代品")
 

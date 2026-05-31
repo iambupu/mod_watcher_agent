@@ -390,7 +390,13 @@ CHINESE_QUERY_FILLERS = (
 SEMANTIC_RULES: tuple[dict, ...] = (
     {
         "name": "bimbo",
-        "markers": ["bimbo", "bimbo化", "bimbo风格"],
+        "markers": [
+            "bimbo",
+            "bimbo化",
+            "bimbo风格",
+            "傻白甜",
+            "傻白甜风格",
+        ],
         "terms": ["bimbo"],
         "category_aliases": ["body", "presets"],
         "anchor": "bimbo",
