@@ -6,6 +6,7 @@ from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.models.mod import Mod
+from app.services.loverslab.url_utils import extract_loverslab_file_id_from_url
 
 GENERIC_LOVERSLAB_GAME_LABELS = {"", "loverslab", "nexusmods", "nexus mods"}
 
@@ -32,13 +33,13 @@ def canonical_external_id(
     if normalized_source == "loverslab":
         scope = _loverslab_identity_scope(game=game, game_domain=game_domain)
         parsed_id = _parse_loverslab_identity(external_id)
-        matched = re.search(r"^/files/file/(\d+)(?:[-/]|$)", path, flags=re.IGNORECASE)
-        file_id = matched.group(1) if matched else (parsed_id[1] if parsed_id is not None else external_id.strip())
+        url_file_id = extract_loverslab_file_id_from_url(path)
+        file_id = url_file_id or (parsed_id[1] if parsed_id is not None else external_id.strip())
         if scope and file_id:
             return f"{scope}:{file_id}"
         if parsed_id is not None:
             return f"{parsed_id[0]}:{file_id}"
-        if matched:
+        if url_file_id:
             return file_id
     return external_id.strip()
 
@@ -63,9 +64,9 @@ def external_id_aliases(
         parsed_id = _parse_loverslab_identity(canonical)
         if parsed_id is not None:
             aliases.append(parsed_id[1])
-        matched = re.search(r"^/files/file/(\d+)(?:[-/]|$)", urlparse(normalized_url).path or "", flags=re.IGNORECASE)
-        if matched:
-            aliases.append(matched.group(1))
+        file_id = extract_loverslab_file_id_from_url(urlparse(normalized_url).path or "")
+        if file_id:
+            aliases.append(file_id)
         if normalized_url:
             aliases.append(hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()[:32])
             aliases.append(hashlib.sha256(_canonicalize_loverslab_url(normalized_url).encode("utf-8")).hexdigest()[:16])
@@ -89,7 +90,7 @@ def find_existing_mod_by_identity(
     normalized_source = source.strip().lower()
     canonical = canonical_external_id(normalized_source, external_id, url, game=game, game_domain=game_domain)
     if normalized_source == "nexusmods":
-        return _find_existing_nexusmods_mod(session, canonical, external_id, url)
+        return _find_existing_nexusmods_mod(session, canonical, url)
     if normalized_source == "loverslab":
         return _find_existing_loverslab_mod(
             session,
@@ -174,7 +175,6 @@ def _loverslab_identity_scope(*, game: str | None, game_domain: str | None) -> s
 def _find_existing_nexusmods_mod(
     session: Session,
     canonical: str,
-    external_id: str,
     url: str,
 ) -> Mod | None:
     existing = session.exec(

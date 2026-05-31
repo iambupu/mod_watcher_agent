@@ -17,6 +17,24 @@ def _make_engine():
     )
 
 
+def test_merge_favorite_values_parses_legacy_string_booleans() -> None:
+    merged = app_db._merge_favorite_values(
+        {
+            "tracking_enabled": "false",
+            "notify_on_update": "0",
+            "user_tags_json": "[]",
+        },
+        {
+            "tracking_enabled": "",
+            "notify_on_update": "false",
+            "user_tags_json": "[]",
+        },
+    )
+
+    assert merged["tracking_enabled"] is False
+    assert merged["notify_on_update"] is False
+
+
 def test_normalize_mod_identity_merges_duplicates_and_relinks_foreign_keys(monkeypatch) -> None:
     engine = _make_engine()
     SQLModel.metadata.create_all(engine)

@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -11,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.db import engine
 from app.jobs.check_favorite_updates import check_favorite_updates
-from app.jobs.generate_summaries import generate_summaries
+from app.jobs.generate_summaries import SUMMARY_BATCH_SIZE, generate_summaries
 from app.jobs.generate_summary_report import generate_summary_report
 from app.jobs.refresh_agent_preferences import refresh_agent_preferences
 from app.jobs.send_digest import run_digest_catchup, send_daily_digest, send_weekly_digest
@@ -19,7 +18,12 @@ from app.jobs.tracked_jobs import run_tracked_job
 from app.models.job_run import JobRun
 from app.models.watch_rule import WatchRule
 from app.services.discovery_service import DiscoveryService
+from app.services.rule_service import safe_interval_minutes
 from app.services.settings_service import SettingsService
+from app.services.summary_report_service import summary_report_interval_minutes
+from app.utils.json import json_object
+from app.utils.numeric import bounded_int
+from app.utils.time import parse_utc_datetime
 
 scheduler = AsyncIOScheduler()
 logger = logging.getLogger(__name__)
@@ -28,26 +32,9 @@ SUMMARY_REPORT_JOB_ID = "llm_summary_report"
 SUMMARY_REPORT_CATCHUP_JOB_ID = "llm_summary_report_catchup"
 
 
-def _safe_int(
-    value: str | None,
-    default: int,
-    min_value: int = 1,
-    max_value: int | None = None,
-) -> int:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
-    try:
-        parsed = int(value or "")
-    except (TypeError, ValueError):
-        return default
-    if parsed < min_value:
-        return default
-    if max_value is not None and parsed > max_value:
-        return max_value
-    return parsed
-
-
 async def _discover_single_rule(rule_id: int, rule_name: str) -> dict:
     """内部辅助函数，用于拆分上层流程中的局部规则。"""
+
     async def handler(db_session: Session) -> dict:
         """处理当前模块的业务逻辑并返回结果。"""
         discovery = DiscoveryService(db_session)
@@ -67,37 +54,20 @@ async def _discover_single_rule(rule_id: int, rule_name: str) -> dict:
     )
 
 
-def _parse_iso_time(value: str | None) -> datetime | None:
-    """解析原始内容并返回结构化结果。"""
-    if not value:
-        return None
-    normalized = value.strip()
-    if not normalized:
-        return None
-    if normalized.endswith("Z"):
-        normalized = normalized[:-1] + "+00:00"
-    try:
-        dt = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
-
-
 def _extract_rule_id(metadata_json: str | None) -> int | None:
     """从原始内容中提取目标字段。"""
-    if not metadata_json:
-        return None
-    try:
-        parsed = json.loads(metadata_json)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
+    parsed = json_object(metadata_json)
+    if not parsed:
         return None
     rule_id = parsed.get("rule_id")
     if isinstance(rule_id, int) and rule_id > 0:
         return rule_id
+    if isinstance(rule_id, str):
+        try:
+            parsed_rule_id = int(rule_id)
+        except ValueError:
+            return None
+        return parsed_rule_id if parsed_rule_id > 0 else None
     return None
 
 
@@ -124,7 +94,7 @@ def _should_catch_up_summary_report(
     if latest is None:
         return True
 
-    last_at = _parse_iso_time(latest.finished_at) or _parse_iso_time(latest.started_at)
+    last_at = parse_utc_datetime(latest.finished_at) or parse_utc_datetime(latest.started_at)
     if last_at is None:
         return True
 
@@ -144,21 +114,21 @@ async def _run_rule_watchdog() -> dict:
     async with _RULE_WATCHDOG_LOCK:
         with Session(engine) as session:
             settings_svc = SettingsService(session)
-            grace_minutes = _safe_int(
+            grace_minutes = bounded_int(
                 settings_svc.get("watchdog_grace_minutes"),
                 default=60,
-                min_value=1,
-                max_value=1440,
+                minimum=1,
+                maximum=1440,
+                default_when_below_minimum=True,
             )
-            max_catchup_per_run = _safe_int(
+            max_catchup_per_run = bounded_int(
                 settings_svc.get("watchdog_max_catchup_per_run"),
                 default=3,
-                min_value=1,
-                max_value=20,
+                minimum=1,
+                maximum=20,
+                default_when_below_minimum=True,
             )
-            rules = session.exec(
-                select(WatchRule).where(WatchRule.enabled.is_(True))
-            ).all()
+            rules = session.exec(select(WatchRule).where(WatchRule.enabled.is_(True))).all()
 
             recent_runs = session.exec(
                 select(JobRun)
@@ -173,10 +143,10 @@ async def _run_rule_watchdog() -> dict:
             rule_id = _extract_rule_id(run.metadata_json)
             if rule_id is None:
                 continue
-            last_at = _parse_iso_time(run.finished_at) or _parse_iso_time(run.started_at)
+            last_at = parse_utc_datetime(run.finished_at) or parse_utc_datetime(run.started_at)
             if last_at is not None and rule_id not in latest_by_rule:
                 latest_by_rule[rule_id] = last_at
-            if run.status == "running":
+            if run.status in {"queued", "running"}:
                 running_rule_ids.add(rule_id)
 
         now = datetime.now(UTC)
@@ -186,7 +156,7 @@ async def _run_rule_watchdog() -> dict:
                 continue
             if rule.id in running_rule_ids:
                 continue
-            interval_minutes = max(1, int(rule.interval_minutes or 360))
+            interval_minutes = safe_interval_minutes(rule.interval_minutes)
             overdue_limit = timedelta(minutes=interval_minutes + grace_minutes)
             last_at = latest_by_rule.get(rule.id)
             if last_at is None:
@@ -228,7 +198,7 @@ def register_jobs(session: Session | None = None) -> None:
         rule_jobs.add(rule_job_id)
         scheduler.add_job(
             _discover_single_rule,
-            IntervalTrigger(minutes=max(1, int(rule.interval_minutes or 360))),
+            IntervalTrigger(minutes=safe_interval_minutes(rule.interval_minutes)),
             id=rule_job_id,
             name=f"Discover Rule: {rule.name}",
             args=[rule.id, rule.name],
@@ -248,9 +218,10 @@ def register_jobs(session: Session | None = None) -> None:
     )
     scheduler.add_job(
         generate_summaries,
-        IntervalTrigger(minutes=15),
+        IntervalTrigger(minutes=5),
         id="generate_summaries",
         name="Generate AI Summaries",
+        kwargs={"max_items": SUMMARY_BATCH_SIZE},
         replace_existing=True,
     )
     scheduler.add_job(
@@ -265,7 +236,9 @@ def register_jobs(session: Session | None = None) -> None:
     summary_report_prompt = ""
     try:
         svc = SettingsService(session)
-        summary_report_interval = int(svc.get("summary_report_interval_minutes") or "0")
+        summary_report_interval = summary_report_interval_minutes(
+            svc.get("summary_report_interval_minutes")
+        )
         summary_report_prompt = (svc.get("summary_report_prompt") or "").strip()
     except Exception:
         summary_report_interval = 0
@@ -312,7 +285,7 @@ def register_jobs(session: Session | None = None) -> None:
     )
     scheduler.add_job(
         run_digest_catchup,
-        DateTrigger(run_date=datetime.now() + timedelta(seconds=5)),
+        DateTrigger(run_date=datetime.now(UTC) + timedelta(seconds=5)),
         id="digest_catchup_startup",
         name="Digest Catch-up Startup",
         kwargs={"trigger": "startup"},
@@ -330,11 +303,12 @@ def register_jobs(session: Session | None = None) -> None:
     watchdog_interval = 10
     try:
         svc = SettingsService(session)
-        watchdog_interval = _safe_int(
+        watchdog_interval = bounded_int(
             svc.get("watchdog_check_interval_minutes"),
             default=10,
-            min_value=1,
-            max_value=180,
+            minimum=1,
+            maximum=180,
+            default_when_below_minimum=True,
         )
     except Exception:
         watchdog_interval = 10

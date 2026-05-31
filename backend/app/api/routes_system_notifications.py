@@ -1,5 +1,7 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 from sqlmodel import Session
 
 from app.db import get_session
@@ -8,13 +10,15 @@ from app.services.windows_notifier import send_windows_notification
 
 router = APIRouter(prefix="/api/system-notifications", tags=["system-notifications"])
 
+PositiveId = Annotated[StrictInt, Field(ge=1)]
+
 
 class MarkSeenRequest(BaseModel):
-    event_ids: list[int]
+    event_ids: list[PositiveId] = Field(min_length=1, max_length=500)
 
 
 class DispatchRequest(BaseModel):
-    event_ids: list[int] = Field(min_length=1, max_length=50)
+    event_ids: list[PositiveId] = Field(min_length=1, max_length=50)
 
 
 @router.get("/recent")

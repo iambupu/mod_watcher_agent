@@ -110,3 +110,27 @@ class TestTranslationFallback:
         assert response.status_code == 200
         item = response.json()["items"][0]
         assert item["translated_summary"] is None
+
+    def test_english_content_stored_as_zh_cn_is_hidden(self, client, session):
+        mod = make_mod(external_id="4")
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        session.add(ModSummary(
+            mod_id=mod.id,
+            language="zh-CN",
+            summary_type="brief",
+            content="This is still an English source summary.",
+            model="old-bad-run",
+            generated_at="2025-01-01T00:00:00",
+        ))
+        session.commit()
+
+        response = client.get("/api/mods")
+        assert response.status_code == 200
+        item = response.json()["items"][0]
+        assert item["translated_summary"] is None
+
+        detail_response = client.get(f"/api/mods/{mod.id}")
+        assert detail_response.status_code == 200
+        assert detail_response.json()["translated_summary"] is None

@@ -1,14 +1,15 @@
-import asyncio
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlmodel import Session
 
-from app.db import get_session
+from app.db import engine, get_session
 from app.jobs.generate_summaries import (
+    generate_single_summary_payload_locked,
     run_missing_summaries_job,
     run_single_summary_job,
 )
+from app.jobs.manual_jobs import create_job_run, enqueue_job_run
 from app.schemas.mod import ModGameOption, ModList, ModRead
 from app.services.mod_service import ModService
 
@@ -28,7 +29,7 @@ def list_mods(
     sort_by: str = Query(default="first_seen_at"),
     sort_order: str = Query(default="desc"),
     offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
 ):
     """List discovered mods with optional filters."""
     mod_service = ModService(session)
@@ -85,7 +86,7 @@ def list_ignored_mods(
     sort_by: str = Query(default="first_seen_at"),
     sort_order: str = Query(default="desc"),
     offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
 ):
     """List ignored mods so users can restore them."""
     displays, total, _language, _missing_ids = ModService(session).list_mod_displays(
@@ -143,9 +144,24 @@ async def regenerate_mod_summary(
     if mod is None:
         raise HTTPException(status_code=404, detail="Mod not found")
     language = mod_service.get_summary_language()
-    mod_service.delete_summary_if_exists(mod_id, language, "brief")
-    asyncio.create_task(run_single_summary_job(mod_id, language, "brief"))
-    return {"status": "queued", "mod_id": mod_id, "language": language}
+    job = create_job_run(
+        session,
+        "llm_regenerate_summary",
+        metadata={"mod_id": mod_id, "language": language, "summary_type": "brief"},
+    )
+
+    async def handler() -> dict:
+        """Run single summary regeneration in a fresh job session."""
+        with Session(engine) as job_session:
+            return await generate_single_summary_payload_locked(
+                job_session,
+                mod_id=mod_id,
+                language=language,
+                summary_type="brief",
+            )
+
+    enqueue_job_run(int(job.id), handler)
+    return {"status": "queued", "job_id": job.id, "mod_id": mod_id, "language": language}
 
 
 @router.post("/{mod_id}/introduction/generate")

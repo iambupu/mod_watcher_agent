@@ -12,13 +12,14 @@ from app.config import settings
 from app.db import engine
 from app.models.settings import Setting
 from app.services.llm_provider_config import provider_default_base_url
+from app.settings_constants import ACCESS_PROFILES, ACCESS_PROFILES_REQUIRING_TOKEN
+from app.utils.boolean import parse_bool
 
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 CONTROL_ENDPOINTS_SHARED_LAN = {
     "/api/logs/open-dir",
     "/api/settings/auto-start",
 }
-ACCESS_PROFILES = {"local_relaxed", "local_strict", "shared_lan"}
 _POLICY_CACHE_TTL_SECONDS = 15.0
 _policy_cache: dict[str, object] = {"expires_at": 0.0, "value": None}
 
@@ -37,13 +38,6 @@ def _host_to_ip(host: str):
         return ip_address(host)
     except ValueError:
         return None
-
-
-def _is_truthy(value: str | bool | None) -> bool:
-    """判断内部条件是否成立。"""
-    if isinstance(value, bool):
-        return value
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _is_ip_literal(host: str) -> bool:
@@ -126,7 +120,7 @@ def _load_runtime_policy(force_refresh: bool = False) -> RuntimePolicy:
             ).all()
         values = {row.key: row.value for row in rows}
         profile = (values.get("access_profile") or profile).strip().lower()
-        allow_lan = _is_truthy(values.get("allow_lan")) if "allow_lan" in values else allow_lan
+        allow_lan = parse_bool(values.get("allow_lan")) if "allow_lan" in values else allow_lan
     except Exception:
         # Keep runtime availability even if DB is temporarily unavailable.
         pass
@@ -174,7 +168,7 @@ class AccessPolicy:
         for prefix in self._TOKEN_EXEMPT_PREFIXES:
             if path.startswith(prefix):
                 return False
-        return self.profile in {"local_strict", "shared_lan"}
+        return self.profile in ACCESS_PROFILES_REQUIRING_TOKEN
 
     def evaluate(self, request: Request) -> AccessDecision:
         """处理当前模块的业务逻辑并返回结果。"""

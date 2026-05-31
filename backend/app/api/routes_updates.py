@@ -40,7 +40,7 @@ def list_updates(
     favorite_id: int | None = Query(default=None),
     seen: bool | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),
 ):
     """查询并返回列表数据。"""

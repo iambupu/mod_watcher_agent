@@ -13,6 +13,7 @@ from app.services.llm_provider_config import (
 )
 from app.services.settings_service import SettingsService
 from app.services.system_notification_service import SystemNotificationService
+from app.utils.numeric import bounded_int, safe_nonnegative_int
 
 REPORT_LANGUAGE_NAMES = {
     "zh-CN": "简体中文",
@@ -20,6 +21,12 @@ REPORT_LANGUAGE_NAMES = {
     "ja-JP": "日本語",
 }
 MIN_SCHEDULED_WINDOW_MINUTES = 360
+MAX_SUMMARY_REPORT_INTERVAL_MINUTES = 10080
+
+
+def summary_report_interval_minutes(raw: str | None) -> int:
+    """Return a bounded interval for legacy or malformed stored settings."""
+    return bounded_int(raw, default=0, minimum=0, maximum=MAX_SUMMARY_REPORT_INTERVAL_MINUTES)
 
 
 def summary_window_minutes(interval_minutes: int, *, force: bool) -> int:
@@ -37,7 +44,7 @@ async def generate_summary_report_payload(
 ) -> dict:
     """处理当前模块的业务逻辑并返回结果。"""
     settings_svc = SettingsService(session)
-    interval = int(settings_svc.get("summary_report_interval_minutes") or "0")
+    interval = summary_report_interval_minutes(settings_svc.get("summary_report_interval_minutes"))
     prompt_focus = (settings_svc.get("summary_report_prompt") or "").strip()
     ui_language = settings_svc.get("ui_language") or "zh-CN"
     output_language = REPORT_LANGUAGE_NAMES.get(ui_language, ui_language)
@@ -120,5 +127,5 @@ def notify_summary_report_complete(
     notification_service_cls(session).create_event(
         event_type="llm_summary_report_complete",
         title="摘要汇总报告完成",
-        message=f"已生成摘要汇总报告，样本 {int(result.get('items_matched', 0) or 0)} 个。{str(result.get('report') or '')[:160]}",
+        message=f"已生成摘要汇总报告，样本 {safe_nonnegative_int(result.get('items_matched'))} 个。{str(result.get('report') or '')[:160]}",
     )

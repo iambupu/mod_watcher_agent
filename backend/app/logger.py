@@ -3,7 +3,7 @@ import logging.handlers
 import os
 import re
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 
@@ -14,16 +14,17 @@ _SENSITIVE_PATTERNS = [
     (re.compile(r"\b(?:sk|dsk)-[A-Za-z0-9_\-]{8,}\b"), "********"),
     (re.compile(r"([?&]key=)[^&\s]+", re.IGNORECASE), r"\1********"),
     (re.compile(r"(https://api\.telegram\.org/bot)[^/\s]+", re.IGNORECASE), r"\1********"),
-    (re.compile(r"https://discord\.com/api/webhooks/[^\s\"']+", re.IGNORECASE), "https://discord.com/api/webhooks/********"),
+    (
+        re.compile(r"https://discord\.com/api/webhooks/[^\s\"']+", re.IGNORECASE),
+        "https://discord.com/api/webhooks/********",
+    ),
     (
         re.compile(r'(?i)\b(api_key|token|password)\b(\s*[:=]\s*)(["\']?)[^,"\'}\s]+(["\']?)'),
         r"\1\2\3********\4",
     ),
 ]
 
-_QUIET_THIRD_PARTY_LOGGERS = (
-    "alembic.",
-)
+_QUIET_THIRD_PARTY_LOGGERS = ("alembic.",)
 _FILE_LOG_PATTERN = re.compile(
     r"^\[(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+"
     r"(?P<level>[A-Z]+)\s+"
@@ -84,9 +85,9 @@ class RingBufferHandler(logging.Handler):
         """处理当前模块的业务逻辑并返回结果。"""
         try:
             entry = {
-                "timestamp": datetime.fromtimestamp(record.created).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
+                "timestamp": datetime.fromtimestamp(record.created, tz=UTC)
+                .astimezone()
+                .strftime("%Y-%m-%d %H:%M:%S"),
                 "level": record.levelname,
                 "name": record.name,
                 "message": redact_sensitive_text(record.getMessage()),
@@ -110,8 +111,7 @@ class RingBufferHandler(logging.Handler):
             entries = [
                 e
                 for e in entries
-                if search_lower in e["name"].lower()
-                or search_lower in e["message"].lower()
+                if search_lower in e["name"].lower() or search_lower in e["message"].lower()
             ]
         return entries[-limit:]
 
@@ -190,10 +190,11 @@ def get_log_entries(
         entries = [
             entry
             for entry in entries
-            if search_lower in entry["name"].lower()
-            or search_lower in entry["message"].lower()
+            if search_lower in entry["name"].lower() or search_lower in entry["message"].lower()
         ]
-    entries.sort(key=lambda entry: (entry.get("timestamp", ""), entry.get("_order", 0)), reverse=True)
+    entries.sort(
+        key=lambda entry: (entry.get("timestamp", ""), entry.get("_order", 0)), reverse=True
+    )
     return [_public_log_entry(entry) for entry in entries[:limit]]
 
 
@@ -279,7 +280,11 @@ def _parse_log_line(line: str, *, source: str, fallback_timestamp: str = "") -> 
 def _file_timestamp(path: Path) -> str:
     """内部辅助函数，用于拆分上层流程中的局部规则。"""
     try:
-        return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        return (
+            datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S")
+        )
     except OSError:
         return ""
 

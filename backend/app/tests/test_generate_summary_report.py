@@ -8,7 +8,11 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.jobs.generate_summary_report import generate_summary_report
 from app.models.mod import Mod
 from app.services.settings_service import SettingsService
-from app.services.summary_report_service import summary_window_minutes
+from app.services.summary_report_service import (
+    notify_summary_report_complete,
+    summary_report_interval_minutes,
+    summary_window_minutes,
+)
 
 
 def _make_engine():
@@ -24,6 +28,32 @@ def test_summary_window_keeps_minimum_analysis_window_for_hourly_schedule():
     assert summary_window_minutes(720, force=False) == 720
     assert summary_window_minutes(0, force=True) == 10080
     assert summary_window_minutes(0, force=False) == 0
+
+
+def test_summary_report_interval_recovers_from_legacy_bad_settings():
+    assert summary_report_interval_minutes("bad") == 0
+    assert summary_report_interval_minutes("-5") == 0
+    assert summary_report_interval_minutes("20000") == 10080
+    assert summary_report_interval_minutes("60") == 60
+
+
+def test_summary_report_notification_tolerates_invalid_matched_count():
+    events = []
+
+    class FakeNotificationService:
+        def __init__(self, session):  # noqa: ANN001
+            self.session = session
+
+        def create_event(self, **kwargs):  # noqa: ANN001
+            events.append(kwargs)
+
+    notify_summary_report_complete(
+        session=object(),
+        result={"generated": True, "items_matched": "bad", "report": "报告正文"},
+        notification_service_cls=FakeNotificationService,
+    )
+
+    assert events[0]["message"].startswith("已生成摘要汇总报告，样本 0 个。")
 
 
 @pytest.mark.asyncio

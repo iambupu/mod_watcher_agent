@@ -4,6 +4,13 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.rule_constants import (
+    DEFAULT_RULE_INTERVAL_MINUTES,
+    MAX_RULE_INTERVAL_MINUTES,
+    MIN_RULE_INTERVAL_MINUTES,
+)
+from app.services.loverslab.constants import LOVERSLAB_HOSTS
+
 # ---------------------------------------------------------------------------
 # Platform-specific source configs
 # ---------------------------------------------------------------------------
@@ -51,7 +58,7 @@ class LoversLabRuleConfig(BaseModel):
             if parsed.scheme != "https":
                 raise ValueError("Only https URLs are allowed")
             host = (parsed.hostname or "").lower()
-            if not host or host not in {"www.loverslab.com", "loverslab.com"}:
+            if not host or host not in LOVERSLAB_HOSTS:
                 raise ValueError("Only loverslab.com URLs are allowed")
             try:
                 ip = ip_address(host)
@@ -110,7 +117,12 @@ class NotificationConfig(BaseModel):
 class WatchRuleCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100, description="Rule name")
     enabled: bool = Field(default=True, description="Whether the rule is active")
-    intervalMinutes: int = Field(default=360, ge=1, le=1440, description="Polling interval for this rule in minutes")
+    intervalMinutes: int = Field(
+        default=DEFAULT_RULE_INTERVAL_MINUTES,
+        ge=MIN_RULE_INTERVAL_MINUTES,
+        le=MAX_RULE_INTERVAL_MINUTES,
+        description="Polling interval for this rule in minutes",
+    )
     source: Literal["nexusmods", "loverslab"] = Field(description="Data source platform")
     sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig = Field(description="Platform-specific config")
     filters: CommonRuleFilters = Field(default_factory=CommonRuleFilters, description="Common filtering rules")
@@ -126,7 +138,12 @@ class WatchRuleCreate(BaseModel):
 class WatchRuleUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100, description="Rule name")
     enabled: bool | None = Field(default=None, description="Whether the rule is active")
-    intervalMinutes: int | None = Field(default=None, ge=1, le=1440, description="Polling interval for this rule in minutes")
+    intervalMinutes: int | None = Field(
+        default=None,
+        ge=MIN_RULE_INTERVAL_MINUTES,
+        le=MAX_RULE_INTERVAL_MINUTES,
+        description="Polling interval for this rule in minutes",
+    )
     source: Literal["nexusmods", "loverslab"] | None = Field(default=None, description="Data source platform")
     sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig | None = Field(default=None, description="Platform-specific config")
     filters: CommonRuleFilters | None = Field(default=None, description="Common filtering rules")
@@ -155,7 +172,12 @@ class WatchRuleRead(BaseModel):
     id: int
     name: str
     enabled: bool
-    intervalMinutes: int = Field(default=360, ge=1, le=1440, description="Polling interval for this rule in minutes")
+    intervalMinutes: int = Field(
+        default=DEFAULT_RULE_INTERVAL_MINUTES,
+        ge=MIN_RULE_INTERVAL_MINUTES,
+        le=MAX_RULE_INTERVAL_MINUTES,
+        description="Polling interval for this rule in minutes",
+    )
     source: Literal["nexusmods", "loverslab"]
     sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig
     filters: CommonRuleFilters

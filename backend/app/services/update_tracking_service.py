@@ -1,5 +1,7 @@
 from sqlmodel import Session, func, select
 
+from app.models.favorite import Favorite
+from app.models.mod import Mod
 from app.models.update_event import ModUpdateEvent
 
 
@@ -67,3 +69,43 @@ class UpdateTrackingService:
             .where(ModUpdateEvent.seen == False)  # noqa: E712
         )
         return int(self.session.exec(query).one() or 0)
+
+
+def record_favorite_metadata_update(
+    session: Session,
+    mod: Mod,
+    *,
+    new_version: str | None,
+    new_updated_at: str | None,
+    detected_at: str,
+) -> ModUpdateEvent | None:
+    """Record an update when a metadata refresh advances a favorited mod."""
+    if mod.id is None:
+        return None
+    favorite = session.exec(select(Favorite).where(Favorite.mod_id == mod.id)).first()
+    if favorite is None:
+        return None
+
+    old_version = favorite.last_known_version
+    old_updated_at = favorite.last_known_updated_at
+    version_changed = bool(new_version) and new_version != old_version
+    updated_at_changed = bool(new_updated_at) and new_updated_at != old_updated_at
+    if not version_changed and not updated_at_changed:
+        return None
+
+    event = ModUpdateEvent(
+        mod_id=mod.id,
+        favorite_id=favorite.id,
+        old_version=old_version,
+        new_version=new_version or old_version,
+        old_updated_at=old_updated_at,
+        new_updated_at=new_updated_at or old_updated_at,
+        detected_at=detected_at,
+        seen=False,
+    )
+    favorite.last_known_version = new_version or old_version
+    favorite.last_known_updated_at = new_updated_at or old_updated_at
+    favorite.last_checked_at = detected_at
+    session.add(event)
+    session.add(favorite)
+    return event

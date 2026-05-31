@@ -3,7 +3,15 @@ from typing import Any
 
 from app.config import settings
 from app.security import validate_outbound_url
+from app.services.llm_provider_config import SUPPORTED_PROVIDERS
 from app.services.settings_service import SettingsService
+from app.settings_constants import (
+    ACCESS_PROFILES,
+    ACCESS_PROFILES_REQUIRING_TOKEN,
+    LOVERSLAB_SEARCH_SCRAPE_ENGINES,
+)
+from app.utils.boolean import parse_bool
+from app.utils.json import json_array
 
 SENSITIVE_KEYS = {
     "nexus_api_key",
@@ -30,11 +38,6 @@ MIN_LENGTH_SENSITIVE_KEYS: dict[str, int] = {
     "llm_api_key": 8,
     "telegram_bot_token": 20,
 }
-ACCESS_PROFILES_REQUIRING_TOKEN = {"local_strict", "shared_lan"}
-ACCESS_PROFILES = {"local_relaxed", "local_strict", "shared_lan"}
-LOVERSLAB_SEARCH_SCRAPE_ENGINES = {"duckduckgo", "google"}
-
-
 class SettingsPayloadError(Exception):
     def __init__(self, status_code: int, detail: str):
         """初始化实例并保存运行所需的依赖。"""
@@ -57,28 +60,18 @@ def redact_settings_for_response(settings_data: dict[str, str]) -> dict[str, str
 
     raw_providers = redacted.get("llm_providers_json")
     if raw_providers:
-        try:
-            providers = json.loads(raw_providers)
-            if isinstance(providers, list):
-                for provider in providers:
-                    if isinstance(provider, dict) and "api_key" in provider:
-                        provider["api_key"] = mask_if_present(str(provider.get("api_key") or ""))
-                redacted["llm_providers_json"] = json.dumps(providers, ensure_ascii=False)
-        except json.JSONDecodeError:
-            pass
+        providers = json_array(raw_providers)
+        if providers:
+            for provider in providers:
+                if isinstance(provider, dict) and "api_key" in provider:
+                    provider["api_key"] = mask_if_present(str(provider.get("api_key") or ""))
+            redacted["llm_providers_json"] = json.dumps(providers, ensure_ascii=False)
     return redacted
 
 
 def provider_key_map(existing_json: str | None) -> dict[str, str]:
     """处理当前模块的业务逻辑并返回结果。"""
-    if not existing_json:
-        return {}
-    try:
-        providers = json.loads(existing_json)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(providers, list):
-        return {}
+    providers = json_array(existing_json)
     keys: dict[str, str] = {}
     for item in providers:
         if not isinstance(item, dict):
@@ -185,17 +178,26 @@ def prepare_settings_update(
             providers = json.loads(sanitized["llm_providers_json"])
         except json.JSONDecodeError:
             raise SettingsPayloadError(422, "llm_providers_json must be valid JSON") from None
-        if isinstance(providers, list):
-            for provider in providers:
-                if not isinstance(provider, dict):
-                    continue
-                enabled = bool(provider.get("enabled"))
-                provider_name = str(provider.get("provider") or "").strip().lower()
-                api_key = str(provider.get("api_key") or "").strip()
-                if enabled and provider_name != "ollama" and api_key and len(api_key) < 8:
-                    raise SettingsPayloadError(422, f"llm provider '{provider_name}' api_key is too short")
-                if enabled:
-                    validate_outbound_url(provider_name, str(provider.get("base_url") or ""))
+        if not isinstance(providers, list):
+            raise SettingsPayloadError(422, "llm_providers_json must be a JSON array")
+        for provider in providers:
+            if not isinstance(provider, dict):
+                raise SettingsPayloadError(422, "llm_providers_json items must be objects")
+            provider_name = str(provider.get("provider") or "").strip().lower()
+            if provider_name not in SUPPORTED_PROVIDERS:
+                raise SettingsPayloadError(422, f"llm provider '{provider_name or 'unknown'}' is unsupported")
+            try:
+                priority = int(str(provider.get("priority") or "").strip())
+            except ValueError:
+                raise SettingsPayloadError(422, f"llm provider '{provider_name}' priority must be an integer") from None
+            if priority < 1 or priority > 999:
+                raise SettingsPayloadError(422, f"llm provider '{provider_name}' priority must be between 1 and 999")
+            enabled = parse_bool(provider.get("enabled"))
+            api_key = str(provider.get("api_key") or "").strip()
+            if enabled and provider_name != "ollama" and api_key and len(api_key) < 8:
+                raise SettingsPayloadError(422, f"llm provider '{provider_name}' api_key is too short")
+            if enabled:
+                validate_outbound_url(provider_name, str(provider.get("base_url") or ""))
         sanitized["llm_providers_json"] = merge_provider_keys(
             sanitized["llm_providers_json"],
             service.get("llm_providers_json"),
@@ -223,15 +225,12 @@ def sanitize_export_settings(raw: dict[str, str]) -> dict[str, str]:
             continue
         export_data[key] = value
     if "llm_providers_json" in export_data:
-        try:
-            providers = json.loads(export_data["llm_providers_json"])
-            if isinstance(providers, list):
-                for provider in providers:
-                    if isinstance(provider, dict):
-                        provider.pop("api_key", None)
-                export_data["llm_providers_json"] = json.dumps(providers, ensure_ascii=False)
-        except json.JSONDecodeError:
-            pass
+        providers = json_array(export_data["llm_providers_json"])
+        if providers:
+            for provider in providers:
+                if isinstance(provider, dict):
+                    provider.pop("api_key", None)
+            export_data["llm_providers_json"] = json.dumps(providers, ensure_ascii=False)
     return export_data
 
 
@@ -239,8 +238,8 @@ def settings_import_items(data: dict[str, Any]) -> dict[str, str]:
     """处理当前模块的业务逻辑并返回结果。"""
     items: dict[str, str] = {}
     for key, value in data.items():
-        if key in SENSITIVE_KEYS:
+        if key in SENSITIVE_KEYS or key.startswith(EXPORT_EXCLUDED_PREFIXES):
             continue
-        if isinstance(value, str) and value.strip():
+        if isinstance(value, str):
             items[key] = value
     return items

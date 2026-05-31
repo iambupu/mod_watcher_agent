@@ -1,6 +1,8 @@
-import json
 import os
 from typing import TYPE_CHECKING, Any
+
+from app.utils.boolean import parse_bool
+from app.utils.json import json_array
 
 if TYPE_CHECKING:
     from app.services.settings_service import SettingsService
@@ -154,12 +156,13 @@ def get_provider_chain(settings: "SettingsService") -> list[dict[str, Any]]:
     raw = settings.get("llm_providers_json") or ""
     providers: list[dict[str, Any]] = []
     if raw:
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                providers = [item for item in parsed if isinstance(item, dict) and item.get("enabled")]
-        except json.JSONDecodeError:
-            providers = []
+        providers = [
+            item
+            for item in json_array(raw)
+            if isinstance(item, dict)
+            and parse_bool(item.get("enabled"))
+            and str(item.get("provider") or "").strip().lower() in SUPPORTED_PROVIDERS
+        ]
 
     if not providers:
         providers = [
@@ -172,4 +175,12 @@ def get_provider_chain(settings: "SettingsService") -> list[dict[str, Any]]:
             }
         ]
 
-    return sorted(providers, key=lambda item: int(item.get("priority") or 999))
+    return sorted(providers, key=provider_priority)
+
+
+def provider_priority(provider_config: dict[str, Any]) -> int:
+    """Return a stable fallback priority for legacy or malformed stored config."""
+    try:
+        return int(str(provider_config.get("priority") or "").strip())
+    except ValueError:
+        return 999

@@ -1,4 +1,6 @@
-from app.services.loverslab.category_parser import parse_category_items
+from datetime import UTC, datetime
+
+from app.services.loverslab.category_parser import parse_category_items, parse_datetime
 
 
 def test_parse_category_items_extracts_stable_file_fields():
@@ -34,3 +36,8 @@ def test_parse_category_items_extracts_stable_file_fields():
     assert item.thumbnail_url == "https://www.loverslab.com/uploads/thumb.jpg"
     assert item.raw["content_hash"]
     assert item.raw["fetch_mode"] == "browser_html"
+
+
+def test_parse_datetime_keeps_loverslab_text_date_formats():
+    assert parse_datetime("Apr 29, 2026 16:30") == datetime(2026, 4, 29, 16, 30, tzinfo=UTC)
+    assert parse_datetime("2026-05-01T10:30:00Z") == datetime(2026, 5, 1, 10, 30, tzinfo=UTC)

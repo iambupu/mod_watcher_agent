@@ -3,15 +3,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.utils.boolean import parse_bool
+
 load_dotenv()
 
 
 def _env_bool(name: str, default: bool) -> bool:
     """内部辅助函数，用于拆分上层流程中的局部规则。"""
     raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return parse_bool(raw, default=default)
 
 
 def _env_list(name: str, default: str) -> list[str]:
@@ -21,6 +21,19 @@ def _env_list(name: str, default: str) -> list[str]:
         for item in os.getenv(name, default).split(",")
         if item.strip()
     ]
+
+
+def _env_int(name: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    raw = os.getenv(name)
+    try:
+        value = int(str(raw if raw is not None else default).strip())
+    except (TypeError, ValueError):
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
 
 
 def _normalize_database_url(raw_url: str) -> str:
@@ -51,9 +64,7 @@ class Settings:
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai")
-    POLL_INTERVAL_MINUTES: int = int(
-        os.getenv("POLL_INTERVAL_MINUTES", "60")
-    )
+    POLL_INTERVAL_MINUTES: int = _env_int("POLL_INTERVAL_MINUTES", 60, minimum=1)
     DIGEST_CRON: str = os.getenv("DIGEST_CRON", "0 9 * * *")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_DIR: str = os.getenv("LOG_DIR", "../log")

@@ -3,7 +3,7 @@
 from sqlmodel import Session
 
 from app.db import engine
-from app.jobs.tracked_jobs import run_tracked_job
+from app.jobs.tracked_jobs import run_tracked_job, safe_job_count
 from app.services.digest_service import (
     DigestPeriod,
     send_digest_for_window,
@@ -76,8 +76,8 @@ async def run_digest_catchup(trigger: str = "scheduled") -> dict:
             "checked": True,
             "trigger": trigger,
             "results": results,
-            "items_scanned": sum(int(item.get("items_scanned", 0) or 0) for item in results),
-            "items_matched": sum(int(item.get("items_matched", 0) or 0) for item in results),
+            "items_scanned": sum(safe_job_count(item.get("items_scanned", 0)) for item in results),
+            "items_matched": sum(safe_job_count(item.get("items_matched", 0)) for item in results),
         }
 
     return await run_tracked_job(

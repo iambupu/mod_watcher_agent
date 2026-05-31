@@ -11,6 +11,8 @@ from app.db import get_session
 from app.main import app as fastapi_app
 from app.models.mod import Mod
 from app.models.mod_item import ModItem
+from app.models.watch_rule import WatchRule
+from app.services.rule_import_service import RuleImportError, require_public_host
 
 
 @pytest.fixture(name="engine")
@@ -277,6 +279,55 @@ class TestPatchRule:
 
 
 class TestGetRules:
+    def test_get_rules_normalizes_invalid_stored_interval(self, client, session):
+        for name, interval_minutes in [("Too low interval", -5), ("Too high interval", 2000)]:
+            session.add(
+                WatchRule(
+                    name=name,
+                    enabled=True,
+                    source="nexusmods",
+                    interval_minutes=interval_minutes,
+                    source_config_json='{"gameDomainName":"skyrimspecialedition","updatedSinceDays":7}',
+                    filters_json="{}",
+                    notification_json="{}",
+                    created_at="2026-05-01T00:00:00+00:00",
+                    updated_at="2026-05-01T00:00:00+00:00",
+                )
+            )
+        session.commit()
+
+        response = client.get("/api/rules")
+
+        assert response.status_code == 200
+        intervals_by_name = {item["name"]: item["intervalMinutes"] for item in response.json()}
+        assert intervals_by_name["Too low interval"] == 360
+        assert intervals_by_name["Too high interval"] == 1440
+
+    def test_get_rules_recovers_from_invalid_stored_json_payloads(self, client, session):
+        session.add(
+            WatchRule(
+                name="Corrupt json",
+                enabled=True,
+                source="nexusmods",
+                interval_minutes=30,
+                source_config_json="{bad json",
+                filters_json="[not-object]",
+                notification_json="null",
+                created_at="2026-05-01T00:00:00+00:00",
+                updated_at="2026-05-01T00:00:00+00:00",
+            )
+        )
+        session.commit()
+
+        response = client.get("/api/rules")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data[0]["name"] == "Corrupt json"
+        assert data[0]["sourceConfig"]["gameDomainName"] == "skyrimspecialedition"
+        assert data[0]["filters"]["includeKeywords"] == []
+        assert data[0]["notification"]["mode"] == "daily_digest"
+
     def test_get_rules_with_source_filter(self, client):
         client.post("/api/rules", json=make_nexusmods_payload(name="NM Rule"))
         client.post("/api/rules", json=make_loverslab_payload(name="LL Rule"))
@@ -357,6 +408,16 @@ class TestImportExportRules:
 
         assert response.status_code == 422
         assert requested_urls == ["https://example.com/rules.json"]
+
+    @pytest.mark.parametrize("ip", ["127.0.0.1", "10.0.0.1", "169.254.1.1", "224.0.0.1", "0.0.0.0"])
+    def test_require_public_host_rejects_non_public_addresses(self, monkeypatch, ip):
+        monkeypatch.setattr(
+            "app.services.rule_import_service.socket.getaddrinfo",
+            lambda *_args, **_kwargs: [(None, None, None, None, (ip, 0))],
+        )
+
+        with pytest.raises(RuleImportError, match="Only public hosts are allowed"):
+            require_public_host("example.com")
 
 
 class TestDryRun:

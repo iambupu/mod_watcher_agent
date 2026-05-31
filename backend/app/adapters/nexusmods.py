@@ -9,6 +9,9 @@ from app.adapters.base import BaseAdapter
 from app.config import settings
 from app.models.mod_item import ModItem
 from app.schemas.watch_rule import NexusModsRuleConfig
+from app.utils.boolean import parse_bool
+from app.utils.numeric import safe_nonnegative_int
+from app.utils.time import parse_utc_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +56,6 @@ MOD_FIELDS = """
         name
     }
 """
-
-
-def _parse_datetime(value: str | None) -> datetime | None:
-    """解析原始内容并返回结构化结果。"""
-    if not value:
-        return None
-    value = value.replace("Z", "+00:00")
-    return datetime.fromisoformat(value)
 
 
 def _parse_unix_timestamp(value: int | float | str | None) -> datetime | None:
@@ -277,6 +272,8 @@ class NexusModsAdapter(BaseAdapter):
     ) -> ModItem | None:
         """请求外部数据并返回标准化结果。"""
         embedded_game_domain, mod_id = _parse_external_id(external_id)
+        if mod_id is None:
+            return None
         resolved_game_domain = (game_domain or embedded_game_domain or "").strip().lower() or None
 
         if resolved_game_domain:
@@ -379,7 +376,7 @@ class NexusModsAdapter(BaseAdapter):
             or payload.get("category")
             or ""
         )
-        updated_at = _parse_datetime(payload.get("updatedAt")) or _parse_datetime(payload.get("updated_time"))
+        updated_at = parse_utc_datetime(payload.get("updatedAt")) or parse_utc_datetime(payload.get("updated_time"))
         if updated_at is None:
             updated_at = _parse_unix_timestamp(payload.get("updated_timestamp") or payload.get("updated_time"))
         summary = (payload.get("summary") or payload.get("description") or "").strip()
@@ -410,6 +407,10 @@ class NexusModsAdapter(BaseAdapter):
             "raw_detail_payload": payload,
         }
 
+        adult_content = payload.get("contains_adult_content")
+        if adult_content is None:
+            adult_content = payload.get("adultContent")
+
         return ModItem(
             source_id=f"{game_domain}:{rest_mod_id}",
             source="nexusmods",
@@ -418,18 +419,14 @@ class NexusModsAdapter(BaseAdapter):
             url=f"https://www.nexusmods.com/{game_domain}/mods/{rest_mod_id}",
             summary=summary,
             author=author,
-            downloads=int(downloads or 0),
-            endorsements=int(endorsements or 0),
-            likes=int(payload.get("likes") or 0),
+            downloads=safe_nonnegative_int(downloads),
+            endorsements=safe_nonnegative_int(endorsements),
+            likes=safe_nonnegative_int(payload.get("likes")),
             categories=[category_name] if category_name else [],
             tags=[],
             thumbnail_url=thumbnail_url,
             updated_at=updated_at,
-            is_adult=bool(
-                payload.get("contains_adult_content")
-                if payload.get("contains_adult_content") is not None
-                else payload.get("adultContent")
-            ),
+            is_adult=parse_bool(adult_content),
             raw=raw_payload,
         )
 
@@ -452,21 +449,29 @@ class NexusModsAdapter(BaseAdapter):
             url=f"https://www.nexusmods.com/{game_domain}/mods/{raw_item.get('modId')}",
             summary=raw_item.get("summary", ""),
             author=raw_item.get("author") or "",
-            downloads=raw_item.get("downloads") or 0,
-            endorsements=raw_item.get("endorsements") or 0,
+            downloads=safe_nonnegative_int(raw_item.get("downloads")),
+            endorsements=safe_nonnegative_int(raw_item.get("endorsements")),
             likes=0,
             categories=[category] if category else [],
             tags=tags,
             thumbnail_url=raw_item.get("thumbnailUrl", ""),
-            updated_at=_parse_datetime(raw_item.get("updatedAt")),
-            is_adult=raw_item.get("adultContent", False),
+            updated_at=parse_utc_datetime(raw_item.get("updatedAt")),
+            is_adult=parse_bool(raw_item.get("adultContent")),
             raw=raw_item,
         )
 
 
-def _parse_external_id(external_id: str) -> tuple[str | None, int]:
+def _parse_external_id(external_id: str) -> tuple[str | None, int | None]:
     value = str(external_id or "").strip()
     if ":" in value:
         game_domain, mod_id = value.split(":", 1)
-        return game_domain.strip().lower() or None, int(mod_id)
-    return None, int(value)
+        try:
+            parsed_mod_id = int(mod_id)
+        except ValueError:
+            return game_domain.strip().lower() or None, None
+        return game_domain.strip().lower() or None, parsed_mod_id if parsed_mod_id > 0 else None
+    try:
+        parsed_mod_id = int(value)
+    except ValueError:
+        return None, None
+    return None, parsed_mod_id if parsed_mod_id > 0 else None

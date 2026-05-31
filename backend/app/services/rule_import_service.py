@@ -82,8 +82,13 @@ def require_public_host(hostname: str | None) -> set[str]:
             ip = ip_address(sockaddr[0])
         except ValueError:
             continue
-        if ip.is_loopback or ip.is_private or ip.is_link_local:
-            raise RuleImportError(422, "Private or loopback hosts are not allowed")
+        if (
+            not ip.is_global
+            or ip.is_multicast
+            or ip.is_unspecified
+            or ip.is_reserved
+        ):
+            raise RuleImportError(422, "Only public hosts are allowed")
         ips.add(str(ip))
     if not ips:
         raise RuleImportError(422, "No addresses resolved")

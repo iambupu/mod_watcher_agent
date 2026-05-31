@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.base import STATE_RUNNING
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlmodel import Session, func, select
 
@@ -13,12 +13,14 @@ from app.jobs.generate_summary_report import generate_summary_report
 from app.jobs.import_nexusmods_game import import_nexusmods_game
 from app.jobs.manual_jobs import create_job_run, enqueue_job_run
 from app.jobs.scheduler import scheduler
+from app.jobs.tracked_jobs import safe_job_count
 from app.models.favorite import Favorite
 from app.models.job_run import JobRun
 from app.models.mod import Mod
 from app.models.notification import Notification
 from app.models.update_event import ModUpdateEvent
 from app.models.watch_rule import WatchRule
+from app.utils.boolean import parse_bool
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -52,16 +54,16 @@ def _queued_response(job: JobRun) -> dict:
 def _count_numeric_values(result: dict) -> tuple[int, int]:
     """内部辅助函数，用于拆分上层流程中的局部规则。"""
     scanned = len(result)
-    matched = sum(value for value in result.values() if isinstance(value, int))
+    matched = sum(safe_job_count(value) for value in result.values())
     return scanned, matched
 
 
 def _count_favorite_check_result(result: dict) -> tuple[int, int]:
     summary = result.get("summary") if isinstance(result, dict) else None
     if isinstance(summary, dict):
-        return int(summary.get("scanned", 0) or 0), int(summary.get("updated", 0) or 0)
+        return safe_job_count(summary.get("scanned", 0)), safe_job_count(summary.get("updated", 0))
     entries = [value for value in result.values() if isinstance(value, dict)]
-    return len(entries), sum(1 for value in entries if value.get("update_detected"))
+    return len(entries), sum(1 for value in entries if parse_bool(value.get("update_detected")))
 
 
 def _current_week_start_utc_iso() -> str:
@@ -138,7 +140,7 @@ def get_scheduler_status():
 
 @router.get("/runs/recent")
 def list_job_runs(
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),
 ):
     """List recent manual and scheduled task runs."""
@@ -247,10 +249,11 @@ def run_generate_missing_summaries(session: Session = Depends(get_session)):
     async def handler():
         """处理当前模块的业务逻辑并返回结果。"""
         results = await generate_summaries(record_job=False)
-        generated = int(results.get("generated", 0) or 0)
+        generated = safe_job_count(results.get("generated", 0))
+        scanned = safe_job_count(results.get("items_scanned", generated))
         return {
             "results": results,
-            "items_scanned": generated,
+            "items_scanned": scanned,
             "items_matched": generated,
         }
 

@@ -146,6 +146,38 @@ async def test_import_nexusmods_game_persists_batches(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_import_nexusmods_game_tolerates_invalid_upsert_counts(monkeypatch):
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+
+    class FakeAdapter:
+        def __init__(self, api_key: str | None = None):
+            self.api_key = api_key
+
+        async def iter_game_mod_batches(self, game_domain_name, *, batch_size, max_batches):
+            yield NexusModsBatch(items=[_mod_item("1", "First Mod")], total_count=1, offset=0)
+
+    class FakeDiscoveryService:
+        def __init__(self, session):
+            self.session = session
+
+        def upsert_mod_items(self, items):
+            return {"created": "bad", "updated": "-3"}
+
+    monkeypatch.setattr("app.jobs.import_nexusmods_game.engine", engine)
+    monkeypatch.setattr("app.jobs.import_nexusmods_game.NexusModsAdapter", FakeAdapter)
+    monkeypatch.setattr("app.jobs.import_nexusmods_game.DiscoveryService", FakeDiscoveryService)
+
+    from app.jobs.import_nexusmods_game import import_nexusmods_game
+
+    result = await import_nexusmods_game("skyrimspecialedition")
+
+    assert result["created"] == 0
+    assert result["updated"] == 0
+    assert result["items_scanned"] == 1
+
+
+@pytest.mark.asyncio
 async def test_import_nexusmods_game_fails_when_total_count_not_reached(monkeypatch):
     engine = _make_engine()
     SQLModel.metadata.create_all(engine)
