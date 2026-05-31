@@ -13,12 +13,15 @@ from app.models.mod import Mod
 from app.models.settings import Setting
 from app.models.summary import ModSummary
 from app.services import llm_provider_config
-from app.services.agent import llm_config_service, query_planner, search_orchestrator
+from app.services.agent import llm_config_service
 from app.services.agent import runtime as runtime_module
 from app.services.agent.answer_service import AgentAnswerService
-from app.services.agent.retrievers.qdrant_retriever import QdrantRetriever, QdrantSearchResult
 from app.services.agent.schemas import AgentChatResponse
 from app.services.agent.search_types import SearchResult
+from app.services.agent.tools.llm_candidate_validator_tool import (
+    LlmCandidateValidatorOutput,
+    LlmCandidateValidatorTool,
+)
 from app.services.agent.tools.nexusmods_search_tool import NexusModsSearchTool
 
 
@@ -79,6 +82,65 @@ def _seed_mods(engine) -> None:
         session.commit()
 
 
+def _seed_skyrim_bimbo_open_discovery_mods(engine) -> None:
+    with Session(engine) as session:
+        session.add_all(
+            [
+                Mod(
+                    source="loverslab",
+                    external_id="skyrimspecialedition:24435",
+                    game="skyrimspecialedition",
+                    title="Bimbos Of Skyrim LE SE",
+                    url="https://example.com/bimbos-of-skyrim",
+                    category="Bimbos Of Skyrim",
+                    original_summary="BIMBOS OF SKYRIM adds bimbofied NPCs, quests, and player progression.",
+                    first_seen_at="2026-05-20T00:00:00+00:00",
+                    last_seen_at="2026-05-20T00:00:00+00:00",
+                    adult_content=True,
+                ),
+                Mod(
+                    source="loverslab",
+                    external_id="skyrimspecialedition:47968",
+                    game="skyrimspecialedition",
+                    title="Bimbos of Skyrim - BimboLips",
+                    url="https://example.com/bimbolips",
+                    category="Bimbos of Skyrim",
+                    original_summary="A Bimbos of Skyrim plugin adding bimbo lip changes based on progression.",
+                    first_seen_at="2026-05-19T00:00:00+00:00",
+                    last_seen_at="2026-05-19T00:00:00+00:00",
+                    adult_content=True,
+                ),
+                Mod(
+                    source="nexusmods",
+                    external_id="skyrimspecialedition:156753",
+                    game="Skyrim Special Edition",
+                    game_domain="skyrimspecialedition",
+                    title="Bimbos of Skyrim - Charismatic HPH Overhaul",
+                    url="https://example.com/charismatic-hph",
+                    category="Overhauls",
+                    original_summary="Overhaul of Bimbos of Skyrim female NPCs.",
+                    first_seen_at="2026-05-18T00:00:00+00:00",
+                    last_seen_at="2026-05-18T00:00:00+00:00",
+                    adult_content=True,
+                ),
+                Mod(
+                    source="nexusmods",
+                    external_id="skyrimspecialedition:armor",
+                    game="Skyrim Special Edition",
+                    game_domain="skyrimspecialedition",
+                    title="Realistic Armor Overhaul",
+                    url="https://example.com/armor",
+                    category="Armor",
+                    original_summary="A lore friendly armor replacement.",
+                    first_seen_at="2026-05-17T00:00:00+00:00",
+                    last_seen_at="2026-05-17T00:00:00+00:00",
+                    adult_content=False,
+                ),
+            ]
+        )
+        session.commit()
+
+
 def _log_messages(caplog) -> list[str]:
     return [record.getMessage() for record in caplog.records]
 
@@ -131,8 +193,6 @@ def test_chat_endpoint_inherits_context_keywords_and_logs_agent_stages(client, e
     messages = _log_messages(caplog)
     _assert_graph_stage_logs(messages)
     assert any("agent.memory loaded=" in message for message in messages)
-    assert any("agent.vector status=degraded reason=qdrant_disabled" in message for message in messages)
-    assert any("agent.retrieval.vector status=degraded reason=qdrant_disabled" in message for message in messages)
     assert any("agent.chat.plan" in message and "bimbo" in message for message in messages)
     assert any("agent.retrieval.fts status=succeeded" in message and "bimbo" in message for message in messages)
     assert any("agent.search.local count=" in message and "bimbo" in message for message in messages)
@@ -155,6 +215,27 @@ def test_chat_endpoint_inherits_context_keywords_and_logs_agent_stages(client, e
     assert any("agent.search.final count=" in message for message in messages)
     assert any("agent.diagnosis" in message and "context_continuity_score=" in message for message in messages)
     assert any("agent.diagnosis" in message and "semantic_anchors=" in message and "semantic_domains=" in message for message in messages)
+
+
+def test_chat_endpoint_open_discovery_fuzzy_retrieval_returns_multiple_bimbo_matches(client, engine, caplog):
+    _seed_skyrim_bimbo_open_discovery_mods(engine)
+    caplog.set_level(logging.INFO)
+
+    response = client.post("/api/agent/chat", json={"message": "天际有什么扮演bimbo的MOD"})
+
+    assert response.status_code == 200
+    body = response.json()
+    titles = [match["title"] for match in body["matches"]]
+    assert len(titles) >= 3
+    assert "Bimbos Of Skyrim LE SE" in titles
+    assert "Bimbos of Skyrim - BimboLips" in titles
+    assert "Bimbos of Skyrim - Charismatic HPH Overhaul" in titles
+    slots = ((body.get("understanding") or {}).get("slots") or {})
+    assert slots.get("open_discovery") is True
+    assert slots.get("retrieval_mode") == "fuzzy"
+    messages = _log_messages(caplog)
+    assert any("agent.retrieval" in message and "keywords=['bimbo', 'bimbos', 'bimbofication', 'bimbofied']" in message for message in messages)
+    assert any("agent.search.local count=" in message and "open_discovery=True" in message and "retrieval_mode=fuzzy" in message for message in messages)
 
 
 def test_chat_endpoint_semantic_followup_inherits_bimbo_intent(client, engine):
@@ -2228,7 +2309,7 @@ def test_chat_endpoint_understands_alternative_followup_and_excludes_seen_result
                 title="Stable Bimbo Preset",
                 url="https://example.com/stable-bimbo",
                 category="Body",
-                original_summary="A stable bimbo transformation preset with conservative defaults.",
+                original_summary="A stable bimbo transformation preset with narrow defaults.",
                 version="1.2.0",
                 first_seen_at="2026-05-22T00:00:00+00:00",
                 last_seen_at="2026-05-22T00:00:00+00:00",
@@ -2278,7 +2359,7 @@ def test_chat_endpoint_uses_ordinal_reference_for_alternative_followup(client, e
                 title="Stable Safe Bimbo Preset",
                 url="https://example.com/stable-safe-bimbo",
                 category="Body",
-                original_summary="A safer stable bimbo preset with conservative dependency choices.",
+                original_summary="A safer stable bimbo preset with narrow dependency choices.",
                 version="1.2.0",
                 first_seen_at="2026-05-23T00:00:00+00:00",
                 last_seen_at="2026-05-23T00:00:00+00:00",
@@ -2332,7 +2413,7 @@ def test_chat_endpoint_compares_shown_mods_for_beginner_safety(client, engine, c
                 title="Stable Bimbo Preset",
                 url="https://example.com/stable-bimbo",
                 category="Body",
-                original_summary="A stable conservative bimbo transformation preset with compatibility notes.",
+                original_summary="A stable narrow bimbo transformation preset with compatibility notes.",
                 version="1.2.0",
                 first_seen_at="2026-05-22T00:00:00+00:00",
                 last_seen_at="2026-05-22T00:00:00+00:00",
@@ -3339,46 +3420,6 @@ def test_chat_endpoint_logs_online_branch_from_real_entry(client, caplog, monkey
     assert any("agent.ranking status=succeeded" in message for message in messages)
 
 
-def test_chat_endpoint_logs_vector_branch_from_real_entry(client, caplog, monkeypatch):
-    caplog.set_level(logging.INFO)
-    vector_mod = Mod(
-        source="nexusmods",
-        external_id="vector-1",
-        game="Skyrim Special Edition",
-        game_domain="skyrimspecialedition",
-        title="Vector Bimbo Style",
-        url="https://example.com/vector-bimbo",
-        category="Body",
-        original_summary="Semantic vector bimbo style result.",
-        first_seen_at="2026-05-22T00:00:00+00:00",
-        last_seen_at="2026-05-22T00:00:00+00:00",
-        adult_content=False,
-    )
-
-    def fake_vector_search(self, *, query, filters, limit):
-        return QdrantSearchResult(
-            results=[SearchResult(score=11, mod=vector_mod, tool_name="qdrant_vector")],
-            degraded_reason=None,
-        )
-
-    async def fake_nexus_run(self, tool_input):
-        return []
-
-    monkeypatch.setattr(QdrantRetriever, "search", fake_vector_search)
-    monkeypatch.setattr(NexusModsSearchTool, "run", fake_nexus_run)
-
-    response = client.post("/api/agent/chat", json={"message": "semantic bimbo"})
-
-    assert response.status_code == 200
-    assert [match["title"] for match in response.json()["matches"]][:1] == ["Vector Bimbo Style"]
-    messages = _log_messages(caplog)
-    _assert_graph_stage_logs(messages)
-    assert any("agent.retrieval.vector status=succeeded count=1" in message for message in messages)
-    assert not any("agent.chat.plan" in message and "male" in message for message in messages)
-    assert any("agent.fusion status=succeeded" in message for message in messages)
-    assert any("agent.ranking status=succeeded" in message for message in messages)
-
-
 def test_chat_endpoint_logs_memory_preferences_in_tool_plan(client, engine, caplog):
     _seed_mods(engine)
     with Session(engine) as session:
@@ -3398,12 +3439,12 @@ def test_chat_endpoint_logs_memory_preferences_in_tool_plan(client, engine, capl
     messages = _log_messages(caplog)
     _assert_graph_stage_logs(messages)
     assert any("agent.memory loaded=True favorite_summary=True" in message for message in messages)
-    assert any("agent.tool_plan" in message and "nexusmods_search" in message for message in messages)
+    assert any("agent.tool name=tool_planner" in message and "nexusmods_search" in message for message in messages)
     assert any(
-        "agent.tool_plan" in message
-        and "planning_score=" in message
-        and "planning_strategy=" in message
-        and "conservative_mode=" in message
+        "agent.tool name=tool_planner" in message
+        and "tool_policy_score=" in message
+        and "tool_policy_strategy=" in message
+        and "online_recall_mode=" in message
         for message in messages
     )
 
@@ -3457,23 +3498,19 @@ def test_chat_endpoint_logs_llm_answer_branch(client, engine, caplog, monkeypatc
     )
     monkeypatch.setattr(llm_provider_config, "provider_has_credentials", lambda provider, api_key: True)
 
-    async def fake_plan_query_with_llm(**kwargs):
-        return None
-
     async def fake_answer_matches(self, **kwargs):
         return "LLM 推荐 Bimbo Body Morph。"
 
     async def fake_next_steps(self, **kwargs):
         return ["继续看安装风险"]
 
-    monkeypatch.setattr(query_planner, "plan_query_with_llm", fake_plan_query_with_llm)
     monkeypatch.setattr(AgentAnswerService, "answer_matches", fake_answer_matches)
     monkeypatch.setattr(AgentAnswerService, "suggest_next_steps", fake_next_steps)
 
-    async def fake_validate_matches_with_llm(**kwargs):
-        return kwargs["matches"]
+    async def fake_validate_matches(self, tool_input):
+        return LlmCandidateValidatorOutput(matches=tool_input.matches, status="succeeded")
 
-    monkeypatch.setattr(search_orchestrator, "validate_matches_with_llm", fake_validate_matches_with_llm)
+    monkeypatch.setattr(LlmCandidateValidatorTool, "run", fake_validate_matches)
 
     response = client.post("/api/agent/chat", json={"message": "bimbo"})
 
@@ -3522,7 +3559,7 @@ def test_chat_endpoint_returns_standard_understanding_and_evidence_id(client, en
     assert body["audit"]["analysis"]["intent"] == "search"
     assert body["audit"]["conclusion"]["match_count"] >= 1
     assert body["audit"]["conclusion"]["consistency_risk"] in {"low", "medium", "high"}
-    assert body["audit"]["conclusion"]["planning_confidence"] in {"low", "medium", "high", "unknown"}
+    assert body["audit"]["conclusion"]["tool_policy_confidence"] in {"low", "medium", "high", "unknown"}
     assert body["audit"]["conclusion"]["evidence_sufficiency"] in {"insufficient", "partial", "sufficient"}
     assert body["audit"]["conclusion"]["contract_status"] in {"ok", "violated"}
     assert isinstance(body["audit"]["conclusion"]["contract_violations_count"], int)
@@ -3547,15 +3584,15 @@ def test_chat_endpoint_returns_standard_understanding_and_evidence_id(client, en
     assert isinstance(body["audit"]["evidence"].get("analysis_evidence_coverage"), dict)
     assert isinstance(body["audit"]["evidence"]["analysis_evidence_coverage"].get("coverage_ratio"), float)
     assert isinstance(body["audit"]["evidence"]["analysis_evidence_coverage"].get("missing_fields"), list)
-    assert isinstance(body["audit"]["evidence"].get("tool_planning"), dict)
-    assert body["audit"]["evidence"]["tool_planning"].get("strategy") in {
+    assert isinstance(body["audit"]["evidence"].get("tool_policy"), dict)
+    assert body["audit"]["evidence"]["tool_policy"].get("strategy") in {
         "local_only",
-        "local_first_with_online_fallback",
-        "local_first_no_online_fallback",
+        "local_first_with_online",
+        "local_first",
     }
-    assert isinstance(body["audit"]["evidence"]["tool_planning"].get("conservative_mode"), bool)
-    assert isinstance(body["audit"]["evidence"]["tool_planning"].get("expand_online_candidates"), list)
-    assert isinstance(body["audit"]["evidence"]["tool_planning"].get("score"), float)
+    assert body["audit"]["evidence"]["tool_policy"].get("online_recall_mode") in {"narrow", "broad"}
+    assert isinstance(body["audit"]["evidence"]["tool_policy"].get("expand_online_candidates"), list)
+    assert isinstance(body["audit"]["evidence"]["tool_policy"].get("score"), float)
     assert "clarifying_question" in body
     assert isinstance(body.get("evidence_id"), str)
     assert body["evidence_id"].startswith("ev_")
@@ -3628,7 +3665,7 @@ def test_chat_endpoint_recommends_expand_sources_when_online_adaptation_signal_p
                         "tool": "online_strategy",
                         "status": "suggested",
                         "count": 0,
-                        "reason": "conservative_online_zero_result_expand_sources",
+                        "reason": "narrow_online_zero_result_expand_sources",
                     }
                 ],
             ),
@@ -3654,12 +3691,12 @@ def test_chat_endpoint_recommends_expand_sources_when_online_adaptation_signal_p
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.31,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 0,
                     "should_clarify": False,
-                    "conservative_mode": True,
+                    "online_recall_mode": "narrow",
                     "local_tools": ["structured_sql", "sqlite_fts"],
                     "online_tools": ["nexusmods_search"],
                     "degraded_reasons": [],
@@ -3671,7 +3708,7 @@ def test_chat_endpoint_recommends_expand_sources_when_online_adaptation_signal_p
     response = client.post("/api/agent/chat", json={"message": "test"})
     assert response.status_code == 200
     body = response.json()
-    assert body["audit"]["conclusion"]["planning_confidence"] == "low"
+    assert body["audit"]["conclusion"]["tool_policy_confidence"] == "low"
     assert body["audit"]["conclusion"]["recommended_action"] == "expand_online_sources_and_narrow_scope"
     assert body["audit"]["conclusion"]["expand_online_candidates"] == ["loverslab_google"]
     assert body["audit"]["conclusion"]["expand_online_candidates_detail"] == [
@@ -3689,11 +3726,10 @@ def test_chat_endpoint_recommends_expand_sources_when_online_adaptation_signal_p
     assert body["audit"]["evidence"]["web_search"]["tool_result_counts"] == {
         "online_gate": 0,
     }
-    assert "conservative_online_zero_result_expand_sources" in body["audit"]["evidence"]["web_search"]["trigger_reasons"]
+    assert "narrow_online_zero_result_expand_sources" in body["audit"]["evidence"]["web_search"]["trigger_reasons"]
     assert body["audit"]["evidence"]["retrieval_decision"]["mode"] == "web_adaptation_only"
-    assert "conservative_online_zero_result_expand_sources" in body["audit"]["evidence"]["retrieval_decision"]["reason_groups"]["web"]
-    assert body["response_cards"]["next_steps"][0].startswith("当前在线来源召回不足")
-    assert "loverslab_google" in body["response_cards"]["next_steps"][0]
+    assert "narrow_online_zero_result_expand_sources" in body["audit"]["evidence"]["retrieval_decision"]["reason_groups"]["web"]
+    assert body["response_cards"]["next_steps"][0] == "继续查 LoversLab 来源，并放宽关键词再试"
 
 
 def test_chat_endpoint_exposes_web_query_decision_evidence(client, monkeypatch):
@@ -3736,12 +3772,12 @@ def test_chat_endpoint_exposes_web_query_decision_evidence(client, monkeypatch):
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.76,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 0,
                     "should_clarify": False,
-                    "conservative_mode": False,
+                    "online_recall_mode": "broad",
                     "local_tools": ["structured_sql", "sqlite_fts"],
                     "online_tools": ["nexusmods_search"],
                     "degraded_reasons": [],
@@ -3804,12 +3840,12 @@ def test_chat_endpoint_recommends_review_memory_signals_for_medium_risk(client, 
                 "merged": {},
             },
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.66,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 1,
                     "should_clarify": False,
-                    "conservative_mode": False,
+                    "online_recall_mode": "broad",
                     "local_tools": ["structured_sql", "sqlite_fts"],
                     "online_tools": ["nexusmods_search"],
                     "degraded_reasons": [],
@@ -3851,12 +3887,12 @@ def test_chat_endpoint_collects_more_evidence_when_analysis_coverage_is_low(clie
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.81,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 0,
                     "should_clarify": False,
-                    "conservative_mode": False,
+                    "online_recall_mode": "broad",
                     "local_tools": ["structured_sql", "sqlite_fts"],
                     "online_tools": ["nexusmods_search"],
                     "degraded_reasons": [],
@@ -3872,7 +3908,7 @@ def test_chat_endpoint_collects_more_evidence_when_analysis_coverage_is_low(clie
     assert body["audit"]["conclusion"]["recommended_action"] == "collect_more_evidence"
     assert body["audit"]["conclusion"]["recommended_action_reason"] == "insufficient_analysis_evidence"
     assert "analysis_evidence" in body["audit"]["conclusion"]["action_payload"]["review_targets"]
-    assert body["response_cards"]["next_steps"][0].startswith("当前任务理解证据不足")
+    assert body["response_cards"]["next_steps"][0] == "我想补充目标游戏和关键词后再查一次"
 
 
 def test_chat_endpoint_normalizes_semantic_memory_field_aliases(client, monkeypatch):
@@ -3946,7 +3982,7 @@ def test_agent_chat_openapi_includes_standardized_action_payload_schema(client):
     assert "context_signal" in evidence_props
     assert "memory_context_alignment" in evidence_props
     assert "analysis_evidence_coverage" in evidence_props
-    assert "tool_planning" in evidence_props
+    assert "tool_policy" in evidence_props
     assert "fragments" in evidence_props
     assert "memory_count" in evidence_props
     assert "retrieval_count" in evidence_props
@@ -4122,11 +4158,11 @@ def test_chat_endpoint_business_examples_include_retrieval_decision_evidence(
     assert expected_anchor in (semantic_anchor_items[0].get("value") or [])
     assert expected_domain in (semantic_domain_items[0].get("value") or [])
 
-    tool_planning = evidence.get("tool_planning") or {}
-    assert isinstance(tool_planning.get("semantic_anchors"), list)
-    assert isinstance(tool_planning.get("semantic_domains"), list)
-    assert expected_anchor in (tool_planning.get("semantic_anchors") or [])
-    assert expected_domain in (tool_planning.get("semantic_domains") or [])
+    tool_policy = evidence.get("tool_policy") or {}
+    assert isinstance(tool_policy.get("semantic_anchors"), list)
+    assert isinstance(tool_policy.get("semantic_domains"), list)
+    assert expected_anchor in (tool_policy.get("semantic_anchors") or [])
+    assert expected_domain in (tool_policy.get("semantic_domains") or [])
     assert expected_anchor in (retrieval_decision.get("semantic_anchors") or [])
     assert expected_domain in (retrieval_decision.get("semantic_domains") or [])
     assert f"semantic_domain_{expected_domain}" in ((retrieval_decision.get("reason_groups") or {}).get("semantic") or [])
