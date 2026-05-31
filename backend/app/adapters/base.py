@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 from app.models.mod_item import ModItem
 
 
 class BaseAdapter(ABC):
     source: str
-    adapters: dict[str, type["BaseAdapter"]] = {}
+    adapters: ClassVar[dict[str, type["BaseAdapter"]]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """内部辅助函数，用于拆分上层流程中的局部规则。"""

@@ -66,7 +66,7 @@ async def check_favorite_updates() -> dict:
                         "new_version": detail.new_version,
                         "old_updated_at": detail.old_updated_at,
                         "new_updated_at": detail.new_updated_at,
-                        "notification_sent": bool(fav.notify_on_update),
+                        "notification_sent": bool(getattr(detail, "notification_sent", False)),
                     })
                 session.commit()
                 if detail is not None and fav.notify_on_update:

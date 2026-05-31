@@ -5,6 +5,17 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.utils.json import json_object
+
+DEFAULT_KNOWN_GAMES = [
+    "Stellar Blade",
+    "Skyrim Special Edition",
+    "Skyrim Legendary Edition",
+    "Skyrim VR",
+    "Skyrim",
+    "Fallout 4",
+    "Cyberpunk 2077",
+]
 
 
 def alias_key(value: str) -> str:
@@ -30,10 +41,12 @@ def load_game_aliases(path: str | Path | None = None) -> dict[str, list[str]]:
     if not file_path.exists():
         return {}
     try:
-        data = json.loads(file_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        data = json_object(file_path.read_text(encoding="utf-8"))
+    except OSError:
         return {}
-    raw_aliases = data.get("aliases") if isinstance(data, dict) else data
+    raw_aliases = data.get("aliases")
+    if raw_aliases is None:
+        raw_aliases = data
     if not isinstance(raw_aliases, dict):
         return {}
     aliases: dict[str, list[str]] = {}

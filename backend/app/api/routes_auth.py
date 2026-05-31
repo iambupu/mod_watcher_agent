@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login")
-async def login(request: Request, body: dict = Body(...)):
+async def login(body: dict = Body(...)):
     """Validate token and set httpOnly session cookie."""
     token = str(body.get("token", "")).strip()
     if not token:

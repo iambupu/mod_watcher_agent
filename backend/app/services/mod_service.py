@@ -14,7 +14,19 @@ from app.services.llm_provider_config import get_provider_chain, provider_config
 from app.services.settings_service import SettingsService
 from app.services.summary_service import load_summary_map
 
-SORT_WHITELIST = {"first_seen_at", "downloads", "endorsements", "updated_at_remote"}
+MOD_SORT_COLUMNS = {
+    "first_seen_at": Mod.first_seen_at,
+    "downloads": Mod.downloads,
+    "endorsements": Mod.endorsements,
+    "updated_at_remote": Mod.updated_at_remote,
+}
+MOD_SORT_SQL_COLUMNS = {
+    "first_seen_at": "m.first_seen_at",
+    "downloads": "COALESCE(m.downloads, 0)",
+    "endorsements": "COALESCE(m.endorsements, 0)",
+    "updated_at_remote": "COALESCE(m.updated_at_remote, '')",
+}
+SORT_WHITELIST = set(MOD_SORT_COLUMNS)
 RECOMMENDATION_PREFETCH_LIMIT = 250
 CONTENT_LANGUAGE_KEYWORDS: dict[str, list[str]] = {
     "en": ["english", "en", "英文", "英语", "英語"],
@@ -97,19 +109,14 @@ class ModService:
         conditions = self._build_mod_conditions(game, source, content_language, adult_content, ignored=ignored)
         has_search = bool(search and search.strip())
 
-        sort_map = {
-            "first_seen_at": Mod.first_seen_at,
-            "downloads": Mod.downloads,
-            "endorsements": Mod.endorsements,
-            "updated_at_remote": Mod.updated_at_remote,
-        }
-        if sort_by not in SORT_WHITELIST:
-            sort_by = "first_seen_at"
-        sort_column = sort_map[sort_by]
+        sort_by = _normalize_sort_by(sort_by)
+        sort_column = _mod_sort_column(sort_by)
 
         items: list[Mod]
+        terms = _search_terms(search or "") if has_search else []
+        if has_search and not terms:
+            return [], 0, self.get_summary_language(), {}, {}, []
         if has_search and self.session.get_bind().dialect.name == "sqlite":
-            terms = _search_terms(search or "")
             items, total = self._list_mods_with_sqlite_fts(
                 terms=terms,
                 game=game,
@@ -125,25 +132,7 @@ class ModService:
         else:
             base_stmt = select(Mod)
             if has_search:
-                terms = _search_terms(search or "")
-                search_condition = or_(
-                    *[
-                        or_(
-                            Mod.title.ilike(f"%{term}%"),
-                            Mod.translated_title_zh.ilike(f"%{term}%"),
-                            Mod.external_id.ilike(f"%{term}%"),
-                            Mod.author.ilike(f"%{term}%"),
-                            Mod.category.ilike(f"%{term}%"),
-                            Mod.game.ilike(f"%{term}%"),
-                            Mod.game_domain.ilike(f"%{term}%"),
-                            Mod.url.ilike(f"%{term}%"),
-                            Mod.tags_json.ilike(f"%{term}%"),
-                            Mod.original_summary.ilike(f"%{term}%"),
-                            ModSummariesForSearch.content.ilike(f"%{term}%"),
-                        )
-                        for term in terms
-                    ]
-                )
+                search_condition = _build_mod_search_condition(terms)
                 base_stmt = base_stmt.outerjoin(
                     ModSummariesForSearch,
                     ModSummariesForSearch.mod_id == Mod.id,
@@ -154,25 +143,7 @@ class ModService:
 
             count_stmt = select(func.count(Mod.id)).select_from(Mod)
             if has_search:
-                terms = _search_terms(search or "")
-                search_condition = or_(
-                    *[
-                        or_(
-                            Mod.title.ilike(f"%{term}%"),
-                            Mod.translated_title_zh.ilike(f"%{term}%"),
-                            Mod.external_id.ilike(f"%{term}%"),
-                            Mod.author.ilike(f"%{term}%"),
-                            Mod.category.ilike(f"%{term}%"),
-                            Mod.game.ilike(f"%{term}%"),
-                            Mod.game_domain.ilike(f"%{term}%"),
-                            Mod.url.ilike(f"%{term}%"),
-                            Mod.tags_json.ilike(f"%{term}%"),
-                            Mod.original_summary.ilike(f"%{term}%"),
-                            ModSummariesForSearch.content.ilike(f"%{term}%"),
-                        )
-                        for term in terms
-                    ]
-                )
+                search_condition = _build_mod_search_condition(terms)
                 base_stmt = base_stmt.distinct()
                 count_stmt = select(func.count(func.distinct(Mod.id))).select_from(Mod).outerjoin(
                     ModSummariesForSearch,
@@ -342,15 +313,8 @@ class ModService:
             return [], 0
         where_sql = " AND ".join(where_clauses)
 
-        sort_key = sort_by if sort_by in SORT_WHITELIST else "first_seen_at"
-        sort_sql_map = {
-            "first_seen_at": "m.first_seen_at",
-            "downloads": "COALESCE(m.downloads, 0)",
-            "endorsements": "COALESCE(m.endorsements, 0)",
-            "updated_at_remote": "COALESCE(m.updated_at_remote, '')",
-        }
-        direction = "DESC" if sort_order == "desc" else "ASC"
-        order_sql = f"{sort_sql_map[sort_key]} {direction}, m.id {direction}"
+        direction = _mod_sort_sql_direction(sort_order)
+        order_sql = f"{_mod_sort_sql_column(sort_by)} {direction}, m.id {direction}"
 
         count_sql = text(f"SELECT COUNT(1) AS total FROM mods m WHERE {where_sql}")
         total = int(self.session.execute(count_sql, params).scalar_one() or 0)
@@ -417,32 +381,11 @@ class ModService:
         ignored: bool,
     ) -> tuple[list[Mod], int]:
         conditions = self._build_mod_conditions(game, source, content_language, adult_content, ignored=ignored)
-        search_condition = or_(
-            *[
-                or_(
-                    Mod.title.ilike(f"%{term}%"),
-                    Mod.external_id.ilike(f"%{term}%"),
-                    Mod.author.ilike(f"%{term}%"),
-                    Mod.category.ilike(f"%{term}%"),
-                    Mod.game.ilike(f"%{term}%"),
-                    Mod.game_domain.ilike(f"%{term}%"),
-                    Mod.url.ilike(f"%{term}%"),
-                    Mod.tags_json.ilike(f"%{term}%"),
-                    Mod.original_summary.ilike(f"%{term}%"),
-                    ModSummariesForSearch.content.ilike(f"%{term}%"),
-                )
-                for term in terms
-            ]
-        )
+        if not terms:
+            return [], 0
+        search_condition = _build_mod_search_condition(terms)
 
-        sort_map = {
-            "first_seen_at": Mod.first_seen_at,
-            "downloads": Mod.downloads,
-            "endorsements": Mod.endorsements,
-            "updated_at_remote": Mod.updated_at_remote,
-        }
-        sort_key = sort_by if sort_by in SORT_WHITELIST else "first_seen_at"
-        sort_column = sort_map[sort_key]
+        sort_column = _mod_sort_column(sort_by)
 
         base_stmt = (
             select(Mod)
@@ -574,20 +517,10 @@ class ModService:
         if mod is None:
             return None, language, None, None
 
-        summary_rows = self.session.exec(
-            select(ModSummary).where(
-                ModSummary.mod_id == mod_id,
-                ModSummary.language == language,
-                ModSummary.summary_type.in_(["brief", "introduction"]),
-            )
-        ).all()
-        translated_summary = None
-        ai_introduction = None
-        for row in summary_rows:
-            if row.summary_type == "brief":
-                translated_summary = row.content
-            elif row.summary_type == "introduction":
-                ai_introduction = row.content
+        summary_by_mod = load_summary_map(self.session, [mod_id], language, "brief")
+        introduction_by_mod = load_summary_map(self.session, [mod_id], language, "introduction")
+        translated_summary = summary_by_mod.get(mod_id)
+        ai_introduction = introduction_by_mod.get(mod_id)
         return mod, language, translated_summary, ai_introduction
 
     def get_mod_display(self, mod_id: int) -> tuple[dict | None, str]:
@@ -600,26 +533,6 @@ class ModService:
     def get_mod_or_none(self, mod_id: int) -> Mod | None:
         """读取并返回对应的数据。"""
         return self.session.get(Mod, mod_id)
-
-    def delete_summary_if_exists(
-        self,
-        mod_id: int,
-        language: str,
-        summary_type: str,
-    ) -> bool:
-        """删除对应数据并返回处理结果。"""
-        existing = self.session.exec(
-            select(ModSummary).where(
-                ModSummary.mod_id == mod_id,
-                ModSummary.language == language,
-                ModSummary.summary_type == summary_type,
-            )
-        ).first()
-        if not existing:
-            return False
-        self.session.delete(existing)
-        self.session.commit()
-        return True
 
     def get_summary_content(
         self,
@@ -659,6 +572,44 @@ class ModService:
 
 
 ModSummariesForSearch = ModSummary
+
+
+def _normalize_sort_by(sort_by: str) -> str:
+    return sort_by if sort_by in SORT_WHITELIST else "first_seen_at"
+
+
+def _mod_sort_column(sort_by: str):
+    return MOD_SORT_COLUMNS[_normalize_sort_by(sort_by)]
+
+
+def _mod_sort_sql_column(sort_by: str) -> str:
+    return MOD_SORT_SQL_COLUMNS[_normalize_sort_by(sort_by)]
+
+
+def _mod_sort_sql_direction(sort_order: str) -> str:
+    return "DESC" if sort_order == "desc" else "ASC"
+
+
+def _build_mod_search_condition(terms: list[str]):
+    """Build the shared LIKE search condition for mod list queries."""
+    return or_(
+        *[
+            or_(
+                Mod.title.ilike(f"%{term}%"),
+                Mod.translated_title_zh.ilike(f"%{term}%"),
+                Mod.external_id.ilike(f"%{term}%"),
+                Mod.author.ilike(f"%{term}%"),
+                Mod.category.ilike(f"%{term}%"),
+                Mod.game.ilike(f"%{term}%"),
+                Mod.game_domain.ilike(f"%{term}%"),
+                Mod.url.ilike(f"%{term}%"),
+                Mod.tags_json.ilike(f"%{term}%"),
+                Mod.original_summary.ilike(f"%{term}%"),
+                ModSummariesForSearch.content.ilike(f"%{term}%"),
+            )
+            for term in terms
+        ]
+    )
 
 
 def _search_terms(search: str) -> list[str]:

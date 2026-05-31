@@ -7,8 +7,15 @@ from sqlalchemy import event, inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import settings
-from app.services.agent.retrievers.sqlite_fts_retriever import ensure_mods_fts, rebuild_mods_fts
+from app.rule_constants import DEFAULT_RULE_INTERVAL_MINUTES
+from app.services.agent.retrievers.sqlite_fts_retriever import (
+    ensure_mods_fts,
+    mods_fts_needs_rebuild,
+    rebuild_mods_fts,
+)
 from app.services.source_identity import canonical_external_id
+from app.utils.boolean import parse_bool
+from app.utils.json import json_array
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +88,17 @@ def _ensure_sqlite_fts() -> None:
     if engine.dialect.name != "sqlite":
         return
     with Session(engine) as session:
-        if ensure_mods_fts(session):
+        ensure_mods_fts(session)
+
+
+def rebuild_sqlite_fts_if_needed() -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    with Session(engine) as session:
+        if ensure_mods_fts(session) and mods_fts_needs_rebuild(session):
+            logger.info("Rebuilding SQLite FTS index in deferred startup maintenance")
             rebuild_mods_fts(session)
+            logger.info("SQLite FTS index rebuild completed")
 
 
 def _ensure_performance_indexes() -> None:
@@ -117,7 +133,9 @@ def _apply_lightweight_migrations() -> None:
         cols = conn.execute(text("PRAGMA table_info('watch_rules')")).fetchall()
         col_names = {str(row[1]) for row in cols}
         if "interval_minutes" not in col_names:
-            conn.execute(text("ALTER TABLE watch_rules ADD COLUMN interval_minutes INTEGER DEFAULT 360"))
+            conn.execute(
+                text(f"ALTER TABLE watch_rules ADD COLUMN interval_minutes INTEGER DEFAULT {DEFAULT_RULE_INTERVAL_MINUTES}")
+            )
 
         notification_cols = conn.execute(text("PRAGMA table_info('notifications')")).fetchall()
         notification_col_names = {str(row[1]) for row in notification_cols}
@@ -385,9 +403,9 @@ def _merge_favorites_for_mod(conn, keeper_mod_id: int, duplicate_mod_id: int) ->
 def _merge_favorite_values(keeper: dict, duplicate: dict) -> dict[str, object]:
     merged: dict[str, object] = {}
     if "tracking_enabled" in keeper and "tracking_enabled" in duplicate:
-        merged["tracking_enabled"] = bool(keeper["tracking_enabled"]) or bool(duplicate["tracking_enabled"])
+        merged["tracking_enabled"] = parse_bool(keeper["tracking_enabled"]) or parse_bool(duplicate["tracking_enabled"])
     if "notify_on_update" in keeper and "notify_on_update" in duplicate:
-        merged["notify_on_update"] = bool(keeper["notify_on_update"]) or bool(duplicate["notify_on_update"])
+        merged["notify_on_update"] = parse_bool(keeper["notify_on_update"]) or parse_bool(duplicate["notify_on_update"])
 
     if _is_blank(keeper.get("user_note")) and not _is_blank(duplicate.get("user_note")):
         merged["user_note"] = duplicate.get("user_note")
@@ -414,30 +432,13 @@ def _merge_json_array_strings(first: object, second: object) -> str | None:
     for value in (first, second):
         if not isinstance(value, str) or not value.strip():
             continue
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            parsed = []
-        if isinstance(parsed, list):
-            for item in parsed:
-                text_value = str(item).strip()
-                if text_value:
-                    merged.append(text_value)
+        for item in json_array(value):
+            text_value = str(item).strip()
+            if text_value:
+                merged.append(text_value)
     if not merged:
         return None
     return json.dumps(list(dict.fromkeys(merged)), ensure_ascii=False)
-
-
-def _pick_mod_keeper(group: list[dict[str, str | int | None]]) -> dict[str, str | int | None]:
-    return sorted(
-        group,
-        key=lambda row: (
-            1 if str(row["external_id"]) == str(row["canonical_external_id"]) else 0,
-            1 if str(row.get("game_domain") or "").strip() else 0,
-            str(row.get("last_seen_at") or ""),
-            int(row["id"]),
-        ),
-    )[-1]
 
 
 def _is_blank(value: object) -> bool:

@@ -43,3 +43,30 @@ def test_build_resolved_aliases_ignores_alias_targets_not_in_database():
     )
 
     assert aliases == {"星刃": ["Stellar Blade"]}
+
+
+def test_load_game_aliases_tolerates_malformed_file_content():
+    alias_file = _alias_file("malformed")
+
+    try:
+        alias_file.write_text("[]", encoding="utf-8")
+        assert load_game_aliases(alias_file) == {}
+
+        alias_file.write_text(
+            json.dumps({"aliases": {"星刃": ["Stellar Blade", "Stellar Blade", ""], "": "bad"}}),
+            encoding="utf-8",
+        )
+        assert load_game_aliases(alias_file) == {"星刃": ["Stellar Blade"]}
+    finally:
+        alias_file.unlink(missing_ok=True)
+
+
+def test_load_game_aliases_accepts_direct_alias_map_config():
+    alias_file = _alias_file("direct-map")
+
+    try:
+        alias_file.write_text(json.dumps({"星刃": "Stellar Blade"}), encoding="utf-8")
+
+        assert load_game_aliases(alias_file) == {"星刃": ["Stellar Blade"]}
+    finally:
+        alias_file.unlink(missing_ok=True)

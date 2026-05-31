@@ -4,6 +4,7 @@ from app.adapters.nexusmods import NexusModsAdapter
 from app.db import engine
 from app.services.discovery_service import DiscoveryService
 from app.services.settings_service import SettingsService
+from app.utils.numeric import safe_nonnegative_int
 
 
 async def import_nexusmods_game(
@@ -35,8 +36,8 @@ async def import_nexusmods_game(
         batches += 1
         with Session(engine) as session:
             result = DiscoveryService(session).upsert_mod_items(items)
-        total_created += int(result["created"])
-        total_updated += int(result["updated"])
+        total_created += safe_nonnegative_int(result.get("created"))
+        total_updated += safe_nonnegative_int(result.get("updated"))
 
     if expected_total is None:
         expected_total = 0

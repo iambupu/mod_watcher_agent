@@ -64,3 +64,22 @@ def test_updated_within_days_parse_failure_passes_in_assist_only_with_hint() -> 
 
     assert len(result) == 1
     assert svc.rejected_reasons.get("updated_within_days_parse_failed") == 1
+
+
+def test_updated_within_days_accepts_z_suffix_timestamps() -> None:
+    svc = FilterService()
+    mods = [
+        {
+            "source": "nexusmods",
+            "external_id": "1",
+            "title": "Z Date",
+            "original_summary": "",
+            "url": "https://example.com",
+            "updated_at_remote": "2999-05-30T00:00:00Z",
+        }
+    ]
+    with _build_session() as session:
+        result = svc.apply_filters(_Rule("must_pass"), mods, session)
+
+    assert len(result) == 1
+    assert svc.rejected_reasons.get("updated_within_days_parse_failed") is None

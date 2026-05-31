@@ -8,8 +8,10 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.adapters.base import BaseAdapter
+from app.models.favorite import Favorite
 from app.models.mod import Mod
 from app.models.mod_item import ModItem
+from app.models.update_event import ModUpdateEvent
 from app.models.watch_rule import WatchRule
 from app.services.discovery_service import DiscoveryService
 
@@ -287,6 +289,252 @@ class TestDiscoverNexusmodsRule:
         assert existing is not None
         assert existing.title == "Sword Mod"
         assert existing.last_seen_at != "2025-01-01T00:00:00+00:00"
+
+    def test_upsert_existing_mod_does_not_erase_metadata_when_discovery_value_missing(self, session):
+        existing = Mod(
+            source="nexusmods",
+            external_id="skyrimspecialedition:2001",
+            game="Skyrim Special Edition",
+            game_domain="skyrimspecialedition",
+            title="Old Sword Mod",
+            url="https://www.nexusmods.com/skyrimspecialedition/mods/2001",
+            category="Armor",
+            original_summary="Existing summary",
+            version="1.0.0",
+            downloads=12,
+            adult_content=False,
+            first_seen_at="2025-01-01T00:00:00+00:00",
+            last_seen_at="2025-01-01T00:00:00+00:00",
+        )
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+
+        result = DiscoveryService(session).upsert_mod_dicts([
+            {
+                "source": "nexusmods",
+                "external_id": "2001",
+                "title": "Updated Sword Mod",
+                "game": "Skyrim Special Edition",
+                "game_domain": None,
+                "url": "https://www.nexusmods.com/skyrimspecialedition/mods/2001",
+                "author": None,
+                "category": None,
+                "version": None,
+                "created_at_remote": None,
+                "updated_at_remote": None,
+                "published_at_remote": None,
+                "downloads": None,
+                "unique_downloads": None,
+                "endorsements": None,
+                "views": None,
+                "likes": None,
+                "adult_content": None,
+                "thumbnail_url": "",
+                "original_summary": None,
+            }
+        ])
+
+        refreshed = session.get(Mod, existing.id)
+
+        assert result["created"] == 0
+        assert result["updated"] == 1
+        assert refreshed.title == "Updated Sword Mod"
+        assert refreshed.game_domain == "skyrimspecialedition"
+        assert refreshed.category == "Armor"
+        assert refreshed.original_summary == "Existing summary"
+        assert refreshed.version == "1.0.0"
+        assert refreshed.downloads == 12
+        assert refreshed.adult_content is False
+
+    def test_upsert_existing_favorite_records_metadata_update_event(self, session):
+        existing = Mod(
+            source="nexusmods",
+            external_id="skyrimspecialedition:2005",
+            game="Skyrim Special Edition",
+            game_domain="skyrimspecialedition",
+            title="Tracked Mod",
+            url="https://www.nexusmods.com/skyrimspecialedition/mods/2005",
+            version="1.0.0",
+            updated_at_remote="2025-01-01T00:00:00Z",
+            first_seen_at="2025-01-01T00:00:00+00:00",
+            last_seen_at="2025-01-01T00:00:00+00:00",
+        )
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        favorite = Favorite(
+            mod_id=existing.id,
+            tracking_enabled=True,
+            notify_on_update=True,
+            last_known_version="1.0.0",
+            last_known_updated_at="2025-01-01T00:00:00Z",
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+        )
+        session.add(favorite)
+        session.commit()
+        session.refresh(favorite)
+
+        result = DiscoveryService(session).upsert_mod_dicts([
+            {
+                "source": "nexusmods",
+                "external_id": "2005",
+                "title": "Tracked Mod",
+                "game": "Skyrim Special Edition",
+                "game_domain": "skyrimspecialedition",
+                "url": "https://www.nexusmods.com/skyrimspecialedition/mods/2005",
+                "author": None,
+                "category": None,
+                "tags_json": [],
+                "version": "1.1.0",
+                "created_at_remote": None,
+                "updated_at_remote": "2025-02-01T00:00:00Z",
+                "published_at_remote": None,
+                "downloads": None,
+                "unique_downloads": None,
+                "endorsements": None,
+                "views": None,
+                "likes": None,
+                "adult_content": None,
+                "thumbnail_url": "",
+                "original_summary": None,
+            }
+        ])
+
+        event = session.exec(select(ModUpdateEvent).where(ModUpdateEvent.favorite_id == favorite.id)).one()
+        refreshed_favorite = session.get(Favorite, favorite.id)
+        assert result["updated"] == 1
+        assert event.old_version == "1.0.0"
+        assert event.new_version == "1.1.0"
+        assert event.old_updated_at == "2025-01-01T00:00:00Z"
+        assert event.new_updated_at == "2025-02-01T00:00:00Z"
+        assert refreshed_favorite.last_known_version == "1.1.0"
+        assert refreshed_favorite.last_known_updated_at == "2025-02-01T00:00:00Z"
+
+    def test_upsert_mod_dicts_normalizes_string_metrics_booleans_and_tags(self, session):
+        result = DiscoveryService(session).upsert_mod_dicts([
+            {
+                "source": "nexusmods",
+                "external_id": "2002",
+                "title": "String Metrics Mod",
+                "game": "Skyrim Special Edition",
+                "game_domain": "skyrimspecialedition",
+                "url": "https://www.nexusmods.com/skyrimspecialedition/mods/2002",
+                "author": "Author",
+                "category": None,
+                "tags_json": ["armor", "cbbe"],
+                "version": None,
+                "created_at_remote": None,
+                "updated_at_remote": None,
+                "published_at_remote": None,
+                "downloads": "1,200",
+                "unique_downloads": "800",
+                "endorsements": "-5",
+                "views": "many",
+                "likes": "12",
+                "adult_content": "false",
+                "thumbnail_url": "",
+                "original_summary": "Summary",
+            }
+        ])
+
+        mod = session.exec(select(Mod).where(Mod.source == "nexusmods")).one()
+
+        assert result["created"] == 1
+        assert mod.downloads == 1200
+        assert mod.unique_downloads == 800
+        assert mod.endorsements == 0
+        assert mod.views is None
+        assert mod.likes == 12
+        assert mod.adult_content is False
+        assert mod.tags_json == '["armor", "cbbe"]'
+
+    def test_upsert_mod_dicts_rejects_boolean_metric_values(self, session):
+        result = DiscoveryService(session).upsert_mod_dicts([
+            {
+                "source": "nexusmods",
+                "external_id": "2004",
+                "title": "Boolean Metrics Mod",
+                "game": "Skyrim Special Edition",
+                "game_domain": "skyrimspecialedition",
+                "url": "https://www.nexusmods.com/skyrimspecialedition/mods/2004",
+                "author": "Author",
+                "category": None,
+                "tags_json": [],
+                "version": None,
+                "created_at_remote": None,
+                "updated_at_remote": None,
+                "published_at_remote": None,
+                "downloads": True,
+                "unique_downloads": False,
+                "endorsements": True,
+                "views": False,
+                "likes": True,
+                "adult_content": "false",
+                "thumbnail_url": "",
+                "original_summary": "Summary",
+            }
+        ])
+
+        mod = session.exec(select(Mod).where(Mod.source == "nexusmods")).one()
+
+        assert result["created"] == 1
+        assert mod.downloads is None
+        assert mod.unique_downloads is None
+        assert mod.endorsements is None
+        assert mod.views is None
+        assert mod.likes is None
+
+    def test_upsert_existing_mod_preserves_values_when_incoming_strings_are_invalid(self, session):
+        existing = Mod(
+            source="nexusmods",
+            external_id="skyrimspecialedition:2003",
+            game="Skyrim Special Edition",
+            game_domain="skyrimspecialedition",
+            title="Existing",
+            url="https://www.nexusmods.com/skyrimspecialedition/mods/2003",
+            downloads=99,
+            adult_content=True,
+            tags_json='["old"]',
+            first_seen_at="2025-01-01T00:00:00+00:00",
+            last_seen_at="2025-01-01T00:00:00+00:00",
+        )
+        session.add(existing)
+        session.commit()
+
+        result = DiscoveryService(session).upsert_mod_dicts([
+            {
+                "source": "nexusmods",
+                "external_id": "2003",
+                "title": "Existing Updated",
+                "game": "Skyrim Special Edition",
+                "game_domain": "skyrimspecialedition",
+                "url": "https://www.nexusmods.com/skyrimspecialedition/mods/2003",
+                "author": None,
+                "category": None,
+                "tags_json": [],
+                "version": None,
+                "created_at_remote": None,
+                "updated_at_remote": None,
+                "published_at_remote": None,
+                "downloads": "unknown",
+                "unique_downloads": None,
+                "endorsements": None,
+                "views": None,
+                "likes": None,
+                "adult_content": "maybe",
+                "thumbnail_url": "",
+                "original_summary": None,
+            }
+        ])
+        refreshed = session.get(Mod, existing.id)
+
+        assert result["updated"] == 1
+        assert refreshed.title == "Existing Updated"
+        assert refreshed.downloads == 99
+        assert refreshed.adult_content is True
+        assert refreshed.tags_json == "[]"
 
     def test_nexusmods_same_numeric_id_different_games_create_separate_rows(self, session):
         service = DiscoveryService(session)

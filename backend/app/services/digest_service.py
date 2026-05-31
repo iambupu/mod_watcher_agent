@@ -16,6 +16,8 @@ from app.services.notification_service import NotificationService
 from app.services.settings_service import SettingsService
 from app.services.summary_report_service import REPORT_LANGUAGE_NAMES
 from app.services.system_notification_service import SystemNotificationService
+from app.utils.boolean import parse_bool
+from app.utils.time import parse_utc_datetime
 
 DigestPeriod = Literal["daily", "weekly"]
 DigestTextGenerator = Callable[
@@ -30,24 +32,6 @@ WEEKLY_LAST_RUN_KEY = "digest_weekly_last_window_end"
 def local_now() -> datetime:
     """处理当前模块的业务逻辑并返回结果。"""
     return datetime.now().astimezone()
-
-
-def parse_iso(value: str | None) -> datetime | None:
-    """解析输入内容并返回结构化结果。"""
-    if not value:
-        return None
-    raw = value.strip()
-    if not raw:
-        return None
-    if raw.endswith("Z"):
-        raw = raw[:-1] + "+00:00"
-    try:
-        parsed = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
 
 
 def scheduled_window(period: DigestPeriod, now: datetime | None = None) -> tuple[datetime, datetime] | None:
@@ -84,7 +68,7 @@ def should_run_digest(settings_svc: SettingsService, period: DigestPeriod, windo
     """判断流程是否需要继续执行。"""
     if force:
         return True
-    last_run = parse_iso(settings_svc.get(last_run_key(period)))
+    last_run = parse_utc_datetime(settings_svc.get(last_run_key(period)))
     return last_run is None or last_run < window_end.astimezone(UTC)
 
 
@@ -232,8 +216,8 @@ async def send_digest_for_window(
         message=f"新 Mod {len(mods)} 个，收藏更新 {len(updates)} 个。{report[:160]}",
     )
     desktop_enabled = (
-        settings_svc.get("notifications_enabled") != "false"
-        and settings_svc.get("system_notifications_enabled") != "false"
+        parse_bool(settings_svc.get("notifications_enabled"), default=True)
+        and parse_bool(settings_svc.get("system_notifications_enabled"), default=True)
     )
     if desktop_enabled and desktop_event.seen:
         channel = "desktop"
@@ -272,23 +256,4 @@ async def send_digest_for_window(
         "desktop_ok": desktop_event.seen,
         "items_scanned": len(mods) + len(updates),
         "items_matched": len(mods) + len(updates),
-    }
-
-
-async def run_digest_catchup_impl(session: Session, trigger: str) -> dict:
-    """执行任务流程并返回结果。"""
-    results: list[dict] = []
-    for period in ("daily", "weekly"):
-        window = scheduled_window(period)
-        if window is None:
-            continue
-        result = await send_digest_for_window(session, period, window[0], window[1])
-        if result.get("generated") or result.get("reason") != "already_sent":
-            results.append(result)
-    return {
-        "checked": True,
-        "trigger": trigger,
-        "results": results,
-        "items_scanned": sum(int(item.get("items_scanned", 0) or 0) for item in results),
-        "items_matched": sum(int(item.get("items_matched", 0) or 0) for item in results),
     }

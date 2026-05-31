@@ -23,6 +23,7 @@ class LoversLabAdapter(BaseAdapter):
 
     def __init__(self, **kwargs: Any) -> None:
         """初始化实例并保存运行所需的依赖。"""
+        _ = kwargs
         self._feed = LoversLabFeedAdapter()
         self._page = LoversLabPageAdapter()
 
@@ -40,13 +41,12 @@ class LoversLabAdapter(BaseAdapter):
             results.extend(page_results)
 
         if config.accessMode == "both":
-            seen: set[str] = set()
-            deduped: list[ModItem] = []
+            seen: dict[str, ModItem] = {}
             for item in results:
-                if item.source_id not in seen:
-                    seen.add(item.source_id)
-                    deduped.append(item)
-            return deduped
+                existing = seen.get(item.source_id)
+                if existing is None or _is_newer_loverslab_item(item, existing):
+                    seen[item.source_id] = item
+            return list(seen.values())
 
         return results
 
@@ -59,3 +59,11 @@ class LoversLabAdapter(BaseAdapter):
     def normalize(self, raw_item: dict) -> ModItem:
         """规范化输入数据，供后续流程使用。"""
         return self._page.normalize(raw_item)
+
+
+def _is_newer_loverslab_item(candidate: ModItem, existing: ModItem) -> bool:
+    if candidate.updated_at is None:
+        return False
+    if existing.updated_at is None:
+        return True
+    return candidate.updated_at > existing.updated_at

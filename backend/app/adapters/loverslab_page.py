@@ -1,18 +1,26 @@
 import asyncio
 import logging
 import random
-import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 import httpx
 from selectolax.parser import HTMLParser
 
 from app.adapters.base import BaseAdapter
-from app.adapters.loverslab_common import loverslab_mod_item_from_raw
+from app.adapters.loverslab_common import (
+    is_allowed_loverslab_url,
+    loverslab_mod_item_from_raw,
+    validate_loverslab_url,
+)
 from app.models.mod_item import ModItem
 from app.schemas.watch_rule import LoversLabRuleConfig
 from app.services.browser import BrowserPageFetcher
 from app.services.loverslab.category_parser import parse_category_items
+from app.services.loverslab.constants import LOVERSLAB_HOSTS
+from app.services.loverslab.url_utils import (
+    extract_loverslab_file_id_from_external_id,
+    extract_loverslab_file_id_from_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +33,7 @@ USER_AGENT = (
 REQUEST_TIMEOUT = 30.0
 MIN_DELAY = 1.0
 MAX_DELAY = 3.0
-ALLOWED_HOSTS = {"www.loverslab.com", "loverslab.com"}
+ALLOWED_HOSTS = LOVERSLAB_HOSTS
 
 
 class LoversLabPageAdapter(BaseAdapter):
@@ -56,7 +64,7 @@ class LoversLabPageAdapter(BaseAdapter):
 
     async def _get_allowed_url(self, url: str) -> httpx.Response:
         """读取内部状态或派生结果。"""
-        current_url = self._validate_loverslab_url(url)
+        current_url = validate_loverslab_url(url, kind="page", allowed_hosts=ALLOWED_HOSTS)
         client = await self._get_client()
         for _ in range(5):
             response = await client.get(current_url)
@@ -65,12 +73,12 @@ class LoversLabPageAdapter(BaseAdapter):
                 await response.aclose()
                 if not location:
                     raise ValueError("Redirect response missing Location header")
-                current_url = self._validate_loverslab_url(urljoin(current_url, location))
+                current_url = validate_loverslab_url(urljoin(current_url, location), kind="page", allowed_hosts=ALLOWED_HOSTS)
                 continue
             final_url = str(getattr(response, "url", "") or current_url)
             if not final_url.startswith(("http://", "https://")):
                 final_url = current_url
-            if not self._is_allowed_loverslab_url(final_url):
+            if not is_allowed_loverslab_url(final_url, ALLOWED_HOSTS):
                 await response.aclose()
                 raise ValueError(f"Redirected to disallowed host: {final_url}")
             return response
@@ -109,7 +117,7 @@ class LoversLabPageAdapter(BaseAdapter):
                     f"LoversLab browser fetch failed for {page_url}: {result.status}"
                     + (f" ({result.error})" if result.error else "")
                 )
-            if not self._is_allowed_loverslab_url(result.final_url or page_url):
+            if not is_allowed_loverslab_url(result.final_url or page_url, ALLOWED_HOSTS):
                 raise ValueError(f"Redirected to disallowed host: {result.final_url}")
 
             html = result.html
@@ -156,7 +164,7 @@ class LoversLabPageAdapter(BaseAdapter):
         Returns:
             A ModItem, or None if the page is unrecoverable.
         """
-        file_id = self._extract_file_id_from_external_id(external_id)
+        file_id = extract_loverslab_file_id_from_external_id(external_id)
         url = BASE_URL.format(ext_id=file_id)
 
         try:
@@ -217,7 +225,7 @@ class LoversLabPageAdapter(BaseAdapter):
 
         Args:
             html: Raw HTML of the listing page.
-            base_url: The listing page URL (unused, kept for API compatibility).
+            base_url: The listing page URL used to resolve relative links.
 
         Returns:
             List of external_id strings found on the page.
@@ -579,39 +587,7 @@ class LoversLabPageAdapter(BaseAdapter):
     @staticmethod
     def _extract_external_id_from_url(url: str) -> str | None:
         """从原始内容中提取目标字段。"""
-        parsed = urlsplit(url)
-        host = (parsed.hostname or "").lower()
-        if host and host not in ALLOWED_HOSTS:
-            return None
-        matched = re.search(r"^/files/file/(\d+)(?:[-/]|$)", parsed.path)
-        if not matched:
-            return None
-        return matched.group(1)
-
-    @staticmethod
-    def _extract_file_id_from_external_id(external_id: str) -> str:
-        value = str(external_id or "").strip()
-        matched = re.fullmatch(r"[a-z0-9][a-z0-9_-]*:(\d+)", value, flags=re.IGNORECASE)
-        if matched:
-            return matched.group(1)
-        return value
-
-    @classmethod
-    def _validate_loverslab_url(cls, url: str) -> str:
-        """校验内部输入是否符合业务约束。"""
-        normalized = (url or "").strip()
-        parsed = urlsplit(normalized)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("LoversLab page URL must be an absolute http(s) URL")
-        if not cls._is_allowed_loverslab_url(normalized):
-            raise ValueError(f"LoversLab page URL host is not allowed: {normalized}")
-        return normalized
-
-    @staticmethod
-    def _is_allowed_loverslab_url(url: str) -> bool:
-        """判断内部条件是否成立。"""
-        host = (urlsplit(url).hostname or "").lower()
-        return host in ALLOWED_HOSTS
+        return extract_loverslab_file_id_from_url(url, ALLOWED_HOSTS)
 
     @staticmethod
     def _is_cloudflare_challenge_html(html: str) -> bool:

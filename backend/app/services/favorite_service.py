@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from html import unescape
 
@@ -16,9 +17,12 @@ from app.services.agent.memory.preference_service import AgentPreferenceService
 from app.services.settings_service import SettingsService
 from app.services.source_identity import canonical_external_id, find_existing_mod_by_identity
 from app.services.summary_service import SummaryService
+from app.services.update_tracking_service import record_favorite_metadata_update
+from app.utils.numeric import safe_nonnegative_int
 
 SUPPORTED_IMPORT_SOURCES = {"nexusmods", "loverslab"}
 GENERIC_GAME_LABELS = {"", "loverslab", "nexusmods", "nexus mods"}
+logger = logging.getLogger(__name__)
 
 
 class FavoriteService:
@@ -125,6 +129,13 @@ class FavoriteService:
         if mod is None:
             mod = Mod(first_seen_at=now, **mod_fields)
         else:
+            record_favorite_metadata_update(
+                self.session,
+                mod,
+                new_version=data.version or mod.version,
+                new_updated_at=data.updated_at_remote or mod.updated_at_remote,
+                detected_at=now,
+            )
             for key, value in mod_fields.items():
                 if value is not None:
                     setattr(mod, key, value)
@@ -138,7 +149,7 @@ class FavoriteService:
             update_fields["tracking_enabled"] = data.tracking_enabled
         if data.notify_on_update is not None:
             update_fields["notify_on_update"] = data.notify_on_update
-        if data.user_tags_json:
+        if data.user_tags_json is not None:
             update_fields["user_tags_json"] = data.user_tags_json
         if data.user_note is not None:
             update_fields["user_note"] = data.user_note
@@ -180,13 +191,35 @@ class FavoriteService:
         if fav is None:
             raise ValueError(f"Favorite id={favorite_id} not found")
         for key, value in fields.items():
-            if hasattr(fav, key) and value is not None:
+            if hasattr(fav, key):
                 setattr(fav, key, value)
         fav.updated_at = datetime.now(UTC).isoformat()
         self.session.add(fav)
         self.session.commit()
         self.session.refresh(fav)
         return fav
+
+    def reconcile_local_metadata_updates(self) -> int:
+        """Backfill update events when local mod metadata advanced outside the tracker."""
+        now = datetime.now(UTC).isoformat()
+        favorites = self.session.exec(select(Favorite)).all()
+        created = 0
+        for favorite in favorites:
+            mod = self.session.get(Mod, favorite.mod_id)
+            if mod is None:
+                continue
+            event = record_favorite_metadata_update(
+                self.session,
+                mod,
+                new_version=mod.version,
+                new_updated_at=mod.updated_at_remote,
+                detected_at=now,
+            )
+            if event is not None:
+                created += 1
+        if created:
+            self.session.commit()
+        return created
 
     async def check_update(self, favorite_id: int) -> ModUpdateEvent | None:
         """处理当前模块的业务逻辑并返回结果。"""
@@ -252,10 +285,14 @@ class FavoriteService:
                 summary_type="brief",
             )
 
+        notification_sent = False
         if fav.notify_on_update:
             from app.services.notification_service import NotificationService
             notifier = NotificationService(self.session)
-            await notifier.notify_updates([event])
+            notification_result = await notifier.notify_updates([event])
+            if isinstance(notification_result, dict):
+                notification_sent = safe_nonnegative_int(notification_result.get("notified_count")) > 0
+        object.__setattr__(event, "notification_sent", notification_sent)
 
         return event
 
@@ -271,6 +308,8 @@ class FavoriteService:
                 if event is not None:
                     events.append(event)
             except Exception:
+                self.session.rollback()
+                logger.exception("Failed to check favorite update for favorite_id=%s", fav.id)
                 continue
         return events
 

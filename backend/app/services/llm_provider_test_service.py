@@ -1,15 +1,18 @@
-import json
 import time
 from typing import Any
 
 from app.security import validate_outbound_url
 from app.services.llm_client import create_llm_client
 from app.services.llm_provider_config import (
+    SUPPORTED_PROVIDERS,
     provider_config_has_credentials,
+    provider_priority,
     resolve_provider_config,
 )
 from app.services.settings_payload_service import restore_masked_provider_api_keys
 from app.services.settings_service import SettingsService
+from app.utils.boolean import parse_bool
+from app.utils.json import json_array
 
 
 async def test_llm_provider(provider_config: dict, *, create_client=create_llm_client) -> dict:
@@ -57,11 +60,14 @@ async def test_llm_providers(
     body = body or {}
     providers = body.get("providers")
     if not isinstance(providers, list):
-        try:
-            providers = json.loads(service.get("llm_providers_json") or "[]")
-        except json.JSONDecodeError:
-            providers = []
+        providers = json_array(service.get("llm_providers_json"))
     providers = restore_masked_provider_api_keys(providers, service.get("llm_providers_json"))
-    enabled = [provider for provider in providers if isinstance(provider, dict) and provider.get("enabled")]
-    enabled.sort(key=lambda provider: int(provider.get("priority") or 999))
+    enabled = [
+        provider
+        for provider in providers
+        if isinstance(provider, dict)
+        and parse_bool(provider.get("enabled"))
+        and str(provider.get("provider") or "").strip().lower() in SUPPORTED_PROVIDERS
+    ]
+    enabled.sort(key=provider_priority)
     return {"results": [await test_llm_provider(provider, create_client=create_client) for provider in enabled]}

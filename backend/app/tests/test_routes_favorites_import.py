@@ -10,6 +10,56 @@ from app.models.favorite import Favorite
 from app.models.mod import Mod
 
 
+def test_create_favorite_can_clear_existing_tags_with_explicit_empty_array() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        mod = Mod(
+            source="nexusmods",
+            external_id="skyrimspecialedition:1001",
+            game="Skyrim Special Edition",
+            title="Test Mod",
+            url="https://www.nexusmods.com/skyrimspecialedition/mods/1001",
+            first_seen_at="2026-01-01T00:00:00Z",
+            last_seen_at="2026-01-01T00:00:00Z",
+        )
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        session.add(
+            Favorite(
+                mod_id=mod.id,
+                user_tags_json='["old"]',
+                created_at="2026-01-01T00:00:00Z",
+                updated_at="2026-01-01T00:00:00Z",
+            )
+        )
+        session.commit()
+        mod_id = mod.id
+
+    def override_get_session():
+        with Session(engine) as session:
+            yield session
+
+    fastapi_app.dependency_overrides[get_session] = override_get_session
+    try:
+        client = TestClient(fastapi_app)
+        response = client.post(
+            "/api/favorites",
+            json={"mod_id": mod_id, "user_tags_json": "[]", "user_note": None},
+        )
+
+        assert response.status_code == 201
+        assert response.json()["user_tags_json"] == "[]"
+        assert response.json()["user_note"] is None
+    finally:
+        fastapi_app.dependency_overrides.clear()
+
+
 def test_import_favorite_creates_mod_and_favorite() -> None:
     engine = create_engine(
         "sqlite://",
@@ -53,6 +103,64 @@ def test_import_favorite_creates_mod_and_favorite() -> None:
             favorites = session.exec(select(Favorite)).all()
         assert len(mods) == 1
         assert len(favorites) == 1
+    finally:
+        fastapi_app.dependency_overrides.clear()
+
+
+def test_import_favorite_can_clear_existing_tags_with_explicit_empty_string() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        mod = Mod(
+            source="nexusmods",
+            external_id="skyrimspecialedition:1001",
+            game="Skyrim Special Edition",
+            game_domain="skyrimspecialedition",
+            title="Test Mod",
+            url="https://www.nexusmods.com/skyrimspecialedition/mods/1001",
+            first_seen_at="2026-01-01T00:00:00Z",
+            last_seen_at="2026-01-01T00:00:00Z",
+        )
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        session.add(
+            Favorite(
+                mod_id=mod.id,
+                user_tags_json='["old"]',
+                created_at="2026-01-01T00:00:00Z",
+                updated_at="2026-01-01T00:00:00Z",
+            )
+        )
+        session.commit()
+
+    def override_get_session():
+        with Session(engine) as session:
+            yield session
+
+    fastapi_app.dependency_overrides[get_session] = override_get_session
+    try:
+        client = TestClient(fastapi_app)
+        response = client.post(
+            "/api/favorites/import",
+            json={
+                "source": "nexusmods",
+                "external_id": "1001",
+                "game": "Skyrim Special Edition",
+                "game_domain": "skyrimspecialedition",
+                "title": "Test Mod",
+                "url": "https://www.nexusmods.com/skyrimspecialedition/mods/1001",
+                "user_tags_json": "",
+            },
+        )
+
+        assert response.status_code == 201
+        assert response.json()["user_tags_json"] == ""
     finally:
         fastapi_app.dependency_overrides.clear()
 

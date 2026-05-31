@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,7 +24,7 @@ from app.api import (
     routes_updates,
 )
 from app.config import settings
-from app.db import engine, init_db
+from app.db import engine, init_db, rebuild_sqlite_fts_if_needed
 from app.jobs.scheduler import setup_scheduler
 from app.jobs.tracked_jobs import mark_interrupted_jobs_failed
 from app.logger import setup_logging
@@ -33,8 +34,15 @@ from app.services.settings_service import SettingsService
 logger = logging.getLogger(__name__)
 
 
+async def _run_deferred_startup_maintenance() -> None:
+    try:
+        await asyncio.to_thread(rebuild_sqlite_fts_if_needed)
+    except Exception:
+        logger.exception("Deferred startup maintenance failed")
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     """处理当前模块的业务逻辑并返回结果。"""
     require_safe_bind_host()
     setup_logging()
@@ -49,6 +57,7 @@ async def lifespan(app: FastAPI):
             logger.info("Scheduler started successfully")
         except Exception as e:
             logger.error("Failed to start scheduler: %s", e)
+    asyncio.create_task(_run_deferred_startup_maintenance())
     yield
     from app.jobs.scheduler import scheduler
     if scheduler.running:

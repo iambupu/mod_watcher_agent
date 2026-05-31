@@ -2,12 +2,14 @@ import hashlib
 import re
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 from selectolax.parser import HTMLParser
 
 from app.models.mod_item import ModItem
 from app.services.loverslab.constants import LOVERSLAB_HOSTS
+from app.services.loverslab.url_utils import extract_loverslab_file_id_from_url
+from app.utils.time import parse_utc_datetime
 
 
 def parse_category_items(
@@ -82,12 +84,7 @@ def parse_category_items(
 
 def extract_file_id(url: str) -> str | None:
     """从输入内容中提取目标字段。"""
-    parsed = urlsplit(url)
-    host = (parsed.hostname or "").lower()
-    if host and host not in LOVERSLAB_HOSTS:
-        return None
-    matched = re.search(r"^/files/file/(\d+)(?:[-/]|$)", parsed.path)
-    return matched.group(1) if matched else None
+    return extract_loverslab_file_id_from_url(url, LOVERSLAB_HOSTS)
 
 
 def parse_datetime(value: str | None) -> datetime | None:
@@ -95,12 +92,9 @@ def parse_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
     text = value.strip()
-    for candidate in (text, text.replace("Z", "+00:00")):
-        try:
-            parsed = datetime.fromisoformat(candidate)
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-        except ValueError:
-            pass
+    parsed = parse_utc_datetime(text)
+    if parsed is not None:
+        return parsed
     for fmt in ("%b %d, %Y %H:%M", "%b %d, %Y", "%B %d, %Y %H:%M", "%B %d, %Y"):
         try:
             return datetime.strptime(text, fmt).replace(tzinfo=UTC)

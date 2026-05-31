@@ -3,17 +3,20 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictInt
 from sqlmodel import Session, func, select
 
 from app.db import get_session
 from app.models.notification import Notification
+from app.utils.ids import positive_integer_ids
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
+PositiveId = Annotated[StrictInt, Field(ge=1)]
+
 
 class MarkReadRequest(BaseModel):
-    ids: list[int]
+    ids: list[PositiveId] = Field(min_length=1, max_length=200)
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -43,7 +46,7 @@ def mark_notifications_read(
     body: Annotated[MarkReadRequest, Body()],
 ):
     """Mark one or more notifications as read."""
-    ids = list(dict.fromkeys(body.ids))
+    ids = positive_integer_ids(body.ids)
     if not ids:
         return {"updated": 0}
     rows = session.exec(select(Notification).where(Notification.id.in_(ids))).all()

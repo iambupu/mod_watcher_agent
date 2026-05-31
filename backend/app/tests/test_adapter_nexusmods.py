@@ -159,6 +159,27 @@ class TestNexusModsAdapter:
         assert mod.updated_at is None
         assert mod.is_adult is False
 
+    def test_normalize_tolerates_invalid_external_values(self, adapter):
+        node = _make_mod_node(
+            downloads="not-a-number",
+            endorsements="-5",
+        )
+        node["updatedAt"] = "not-a-date"
+
+        mod = adapter.normalize(node)
+
+        assert mod.downloads == 0
+        assert mod.endorsements == 0
+        assert mod.updated_at is None
+
+    def test_normalize_parses_string_adult_content(self, adapter):
+        node = _make_mod_node()
+        node["adultContent"] = "false"
+
+        mod = adapter.normalize(node)
+
+        assert mod.is_adult is False
+
     def test_source_config_parsed(self, adapter):
         import app.adapters.nexusmods as nxmod
 
@@ -243,6 +264,29 @@ class TestNexusModsAdapter:
         assert mod.source_id == f"{FAKE_GAME_DOMAIN}:{FAKE_MOD_ID}"
         adapter._fetch_mod_detail_rest.assert_awaited_once_with(FAKE_GAME_DOMAIN, FAKE_MOD_ID)
 
+    @pytest.mark.asyncio
+    async def test_fetch_mod_detail_returns_none_for_invalid_external_id(self, adapter):
+        adapter._graphql_query = AsyncMock()
+        adapter._fetch_mod_detail_rest = AsyncMock()
+
+        mod = await adapter.fetch_mod_detail("skyrimspecialedition:not-a-number")
+
+        assert mod is None
+        adapter._graphql_query.assert_not_awaited()
+        adapter._fetch_mod_detail_rest.assert_not_awaited()
+
+    @pytest.mark.parametrize("external_id", ["0", "-1", "skyrimspecialedition:0", "skyrimspecialedition:-1"])
+    @pytest.mark.asyncio
+    async def test_fetch_mod_detail_returns_none_for_non_positive_external_id(self, adapter, external_id):
+        adapter._graphql_query = AsyncMock()
+        adapter._fetch_mod_detail_rest = AsyncMock()
+
+        mod = await adapter.fetch_mod_detail(external_id)
+
+        assert mod is None
+        adapter._graphql_query.assert_not_awaited()
+        adapter._fetch_mod_detail_rest.assert_not_awaited()
+
     def test_normalize_rest_detail_maps_v1_payload(self, adapter):
         payload = {
             "mod_id": FAKE_MOD_ID,
@@ -291,3 +335,36 @@ class TestNexusModsAdapter:
         mod = adapter._normalize_rest_detail(payload, game_domain=FAKE_GAME_DOMAIN, mod_id=FAKE_MOD_ID)
 
         assert mod.updated_at == datetime(2025, 12, 18, 18, 18, 18, tzinfo=UTC)
+
+    def test_normalize_rest_detail_tolerates_invalid_external_values(self, adapter):
+        payload = {
+            "mod_id": FAKE_MOD_ID,
+            "name": "REST Mod",
+            "summary": "REST summary",
+            "author": "REST Author",
+            "game_name": "Skyrim Special Edition",
+            "updated_time": "not-a-date-or-timestamp",
+            "mod_downloads": "many",
+            "endorsement_count": "-1",
+            "likes": "unknown",
+            "contains_adult_content": False,
+        }
+
+        mod = adapter._normalize_rest_detail(payload, game_domain=FAKE_GAME_DOMAIN, mod_id=FAKE_MOD_ID)
+
+        assert mod.downloads == 0
+        assert mod.endorsements == 0
+        assert mod.likes == 0
+        assert mod.updated_at is None
+
+    def test_normalize_rest_detail_parses_string_adult_content(self, adapter):
+        payload = {
+            "mod_id": FAKE_MOD_ID,
+            "name": "REST Mod",
+            "game_name": "Skyrim Special Edition",
+            "contains_adult_content": "false",
+        }
+
+        mod = adapter._normalize_rest_detail(payload, game_domain=FAKE_GAME_DOMAIN, mod_id=FAKE_MOD_ID)
+
+        assert mod.is_adult is False

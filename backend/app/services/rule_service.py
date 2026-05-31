@@ -1,18 +1,22 @@
-import json
 from datetime import UTC, datetime
 
 from sqlalchemy import and_
 from sqlmodel import Session, select
 
 from app.models.watch_rule import WatchRule
+from app.rule_constants import (
+    DEFAULT_RULE_INTERVAL_MINUTES,
+    MAX_RULE_INTERVAL_MINUTES,
+    MIN_RULE_INTERVAL_MINUTES,
+)
 from app.schemas.watch_rule import (
     WatchRuleCreate,
     WatchRuleRead,
     WatchRuleUpdate,
     _validate_source_config_pair,
 )
-
-DEFAULT_RULE_INTERVAL_MINUTES = 360
+from app.utils.json import json_object
+from app.utils.numeric import bounded_int
 
 
 class RuleServiceError(Exception):
@@ -23,39 +27,75 @@ class RuleServiceError(Exception):
         self.detail = detail
 
 
-def safe_interval_minutes(value: int | None) -> int:
+def safe_interval_minutes(value: object) -> int:
     """处理当前模块的业务逻辑并返回结果。"""
-    if value is None or value < 1:
-        return DEFAULT_RULE_INTERVAL_MINUTES
-    return value
+    return bounded_int(
+        value,
+        default=DEFAULT_RULE_INTERVAL_MINUTES,
+        minimum=MIN_RULE_INTERVAL_MINUTES,
+        maximum=MAX_RULE_INTERVAL_MINUTES,
+        default_when_below_minimum=True,
+    )
 
 
 def model_to_read(rule: WatchRule) -> WatchRuleRead:
     """处理当前模块的业务逻辑并返回结果。"""
-    return WatchRuleRead(
-        id=rule.id,
-        name=rule.name,
-        enabled=rule.enabled,
-        intervalMinutes=rule.interval_minutes or DEFAULT_RULE_INTERVAL_MINUTES,
-        source=rule.source,
-        sourceConfig=json.loads(rule.source_config_json),
-        filters=json.loads(rule.filters_json),
-        notification=json.loads(rule.notification_json),
-        created_at=rule.created_at,
-        updated_at=rule.updated_at,
-    )
+    return WatchRuleRead(**_rule_payload(rule))
+
+
+def _rule_payload(rule: WatchRule) -> dict:
+    """构造前端和导入导出共用的规则 payload。"""
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "enabled": rule.enabled,
+        "intervalMinutes": safe_interval_minutes(rule.interval_minutes),
+        "source": rule.source,
+        "sourceConfig": _stored_source_config(rule.source, rule.source_config_json),
+        "filters": json_object(rule.filters_json),
+        "notification": json_object(rule.notification_json),
+        "created_at": rule.created_at,
+        "updated_at": rule.updated_at,
+    }
 
 
 def rule_to_create_payload(rule: WatchRule) -> dict:
     """处理当前模块的业务逻辑并返回结果。"""
+    payload = _rule_payload(rule)
     return {
-        "name": rule.name,
-        "enabled": rule.enabled,
-        "intervalMinutes": rule.interval_minutes or DEFAULT_RULE_INTERVAL_MINUTES,
-        "source": rule.source,
-        "sourceConfig": json.loads(rule.source_config_json),
-        "filters": json.loads(rule.filters_json),
-        "notification": json.loads(rule.notification_json),
+        key: payload[key]
+        for key in (
+            "name",
+            "enabled",
+            "intervalMinutes",
+            "source",
+            "sourceConfig",
+            "filters",
+            "notification",
+        )
+    }
+
+
+def _stored_source_config(source: str, raw: str | None) -> dict:
+    parsed = json_object(raw)
+    if parsed:
+        return parsed
+    if source == "loverslab":
+        return {
+            "gameLabel": "LoversLab",
+            "accessMode": "rss",
+            "feedUrls": ["https://www.loverslab.com/files/rss/"],
+            "pageUrls": [],
+            "maxItemsPerRun": 50,
+            "updateDetection": "published_time",
+        }
+    return {
+        "gameDomainName": "skyrimspecialedition",
+        "updatedSinceDays": 7,
+        "queryMode": "updated",
+        "categoryNames": [],
+        "tags": [],
+        "sortBy": "updatedAt_desc",
     }
 
 

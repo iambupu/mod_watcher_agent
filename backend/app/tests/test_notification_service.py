@@ -4,7 +4,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models.notification import Notification
-from app.services.notification_service import NotificationService
+from app.services.notification_service import DeliveryResult, NotificationService
 
 
 @pytest.fixture
@@ -49,6 +49,19 @@ async def test_send_telegram_disabled_reports_skipped(service, session):
     from app.services.settings_service import SettingsService
 
     SettingsService(session).set("telegram_enabled", "false")
+
+    result = await service.send_telegram_message_result("test")
+
+    assert result.ok is False
+    assert result.skipped is True
+    assert result.reason == "Telegram notification is disabled"
+
+
+@pytest.mark.asyncio
+async def test_send_telegram_parses_numeric_disabled_toggle(service, session):
+    from app.services.settings_service import SettingsService
+
+    SettingsService(session).set("telegram_enabled", "0")
 
     result = await service.send_telegram_message_result("test")
 
@@ -138,12 +151,19 @@ def test_notification_no_json_config_default():
     assert nc.channels == []
 
 
+def test_notification_malformed_json_shape_defaults():
+    nc = NotificationService.parse_notification_config(FakeRule("[]"))
+    assert nc.enabled is False
+    assert nc.mode == "daily_digest"
+    assert nc.channels == []
+
+
 @pytest.mark.asyncio
 async def test_notify_new_mods_respects_telegram_channel(service, session, monkeypatch):
-    telegram = AsyncMock(return_value=True)
-    discord = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, "send_telegram_message", telegram)
-    monkeypatch.setattr(service, "send_discord_webhook", discord)
+    telegram = AsyncMock(return_value=DeliveryResult(True))
+    discord = AsyncMock(return_value=DeliveryResult(True))
+    monkeypatch.setattr(service, "send_telegram_message_result", telegram)
+    monkeypatch.setattr(service, "send_discord_webhook_result", discord)
     nc = NotificationService.parse_notification_config(
         FakeRule('{"enabled": true, "mode": "instant", "channels": ["telegram"]}')
     )
@@ -161,10 +181,10 @@ async def test_notify_new_mods_respects_telegram_channel(service, session, monke
 
 @pytest.mark.asyncio
 async def test_notify_new_mods_escapes_html_message(service, monkeypatch):
-    telegram = AsyncMock(return_value=True)
-    discord = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, "send_telegram_message", telegram)
-    monkeypatch.setattr(service, "send_discord_webhook", discord)
+    telegram = AsyncMock(return_value=DeliveryResult(True))
+    discord = AsyncMock(return_value=DeliveryResult(True))
+    monkeypatch.setattr(service, "send_telegram_message_result", telegram)
+    monkeypatch.setattr(service, "send_discord_webhook_result", discord)
     nc = NotificationService.parse_notification_config(
         FakeRule('{"enabled": true, "mode": "instant", "channels": ["telegram"]}')
     )
@@ -195,10 +215,10 @@ async def test_notify_new_mods_escapes_html_message(service, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_notify_new_mods_respects_discord_channel(service, session, monkeypatch):
-    telegram = AsyncMock(return_value=True)
-    discord = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, "send_telegram_message", telegram)
-    monkeypatch.setattr(service, "send_discord_webhook", discord)
+    telegram = AsyncMock(return_value=DeliveryResult(True))
+    discord = AsyncMock(return_value=DeliveryResult(True))
+    monkeypatch.setattr(service, "send_telegram_message_result", telegram)
+    monkeypatch.setattr(service, "send_discord_webhook_result", discord)
     nc = NotificationService.parse_notification_config(
         FakeRule('{"enabled": true, "mode": "instant", "channels": ["discord"]}')
     )
@@ -216,10 +236,10 @@ async def test_notify_new_mods_respects_discord_channel(service, session, monkey
 
 @pytest.mark.asyncio
 async def test_notify_new_mods_desktop_only_skips_external_channels(service, session, monkeypatch):
-    telegram = AsyncMock(return_value=True)
-    discord = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, "send_telegram_message", telegram)
-    monkeypatch.setattr(service, "send_discord_webhook", discord)
+    telegram = AsyncMock(return_value=DeliveryResult(True))
+    discord = AsyncMock(return_value=DeliveryResult(True))
+    monkeypatch.setattr(service, "send_telegram_message_result", telegram)
+    monkeypatch.setattr(service, "send_discord_webhook_result", discord)
     nc = NotificationService.parse_notification_config(
         FakeRule('{"enabled": true, "mode": "instant", "channels": ["desktop"]}')
     )
@@ -233,3 +253,74 @@ async def test_notify_new_mods_desktop_only_skips_external_channels(service, ses
     telegram.assert_not_awaited()
     discord.assert_not_awaited()
     assert records == []
+
+
+@pytest.mark.asyncio
+async def test_notify_new_mods_records_skipped_channel_reason(service, session, monkeypatch):
+    telegram = AsyncMock(return_value=DeliveryResult(False, "Telegram notification is disabled", skipped=True))
+    discord = AsyncMock(return_value=DeliveryResult(True))
+    monkeypatch.setattr(service, "send_telegram_message_result", telegram)
+    monkeypatch.setattr(service, "send_discord_webhook_result", discord)
+    nc = NotificationService.parse_notification_config(
+        FakeRule('{"enabled": true, "mode": "instant", "channels": ["telegram"]}')
+    )
+
+    result = await service.notify_new_mods([{"title": "New A", "url": "https://example.com/a"}], "Rule A", nc)
+    records = session.exec(select(Notification)).all()
+
+    assert result["telegram_ok"] is False
+    assert result["discord_ok"] is True
+    assert result["notified_count"] == 0
+    assert len(records) == 1
+    assert records[0].status == "skipped"
+    assert records[0].error_message == "Telegram notification is disabled"
+
+
+@pytest.mark.asyncio
+async def test_notify_updates_does_not_count_skipped_channels_as_sent(service, session, monkeypatch):
+    from app.models.favorite import Favorite
+    from app.models.mod import Mod
+    from app.models.update_event import ModUpdateEvent
+
+    mod = Mod(
+        source="nexusmods",
+        external_id="1001",
+        game="skyrim",
+        title="Updated Mod",
+        url="https://example.com/mod",
+        first_seen_at="2025-01-01T00:00:00+00:00",
+        last_seen_at="2025-01-01T00:00:00+00:00",
+    )
+    session.add(mod)
+    session.commit()
+    session.refresh(mod)
+    favorite = Favorite(
+        mod_id=mod.id,
+        notify_on_update=True,
+        created_at="2025-01-01T00:00:00+00:00",
+        updated_at="2025-01-01T00:00:00+00:00",
+    )
+    session.add(favorite)
+    session.commit()
+    session.refresh(favorite)
+    event = ModUpdateEvent(
+        mod_id=mod.id,
+        favorite_id=favorite.id,
+        old_version="1.0",
+        new_version="2.0",
+        detected_at="2025-01-02T00:00:00+00:00",
+        seen=False,
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    telegram = AsyncMock(return_value=DeliveryResult(False, "Telegram disabled", skipped=True))
+    discord = AsyncMock(return_value=DeliveryResult(False, "Discord disabled", skipped=True))
+    monkeypatch.setattr(service, "send_telegram_message_result", telegram)
+    monkeypatch.setattr(service, "send_discord_webhook_result", discord)
+
+    result = await service.notify_updates([event])
+
+    assert result["telegram_ok"] is False
+    assert result["discord_ok"] is False
+    assert result["notified_count"] == 0
