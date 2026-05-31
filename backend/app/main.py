@@ -66,7 +66,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="Mod Watcher Agent",
-    version="0.2.0",
+    version="0.2.1",
     lifespan=lifespan,
 )
 
@@ -143,4 +143,4 @@ else:
     @app.get("/")
     async def root():
         """处理当前模块的业务逻辑并返回结果。"""
-        return {"service": "Mod Watcher Agent", "version": "0.2.0"}
+        return {"service": "Mod Watcher Agent", "version": "0.2.1"}
