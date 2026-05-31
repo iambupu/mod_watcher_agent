@@ -202,7 +202,7 @@ Release 包会包含 `chrome-extension/`。它用于在 Nexus Mods 或 LoversLab
 ## 开发与贡献
 
 - 代码风格、依赖请参阅 [DEPENDENCIES.md](./DEPENDENCIES.md) 和 [CODE_STYLE.md](./CODE_STYLE.md)。
-- Agent 当前实现请参阅 [Agent 模块技术实现文档](./docs/agent-technical-implementation.md)；语义大脑改造的演进记录与任务拆解请参阅 [Agent 语义大脑三批迭代技术方案](./docs/agent-semantic-brain-iteration-plan.md) 和 [Agent 语义大脑迭代任务清单](./docs/agent-semantic-brain-tasks.md)。
+- 项目文档入口请参阅 [docs/README.md](./docs/README.md)，其中包含 Agent 当前实现、语义大脑迭代方案和配套回归入口。
 - 欢迎贡献：fork → 新分支 → 提交 PR，并在 PR 描述中说明变更。
 
 ### 打包 Release
