@@ -72,6 +72,30 @@ async def test_llm_candidate_validator_runs_injected_validator(caplog):
 
 
 @pytest.mark.asyncio
+async def test_llm_candidate_validator_skips_open_discovery_for_semantic_judge(caplog):
+    caplog.set_level(logging.INFO)
+    match = _match("Bimbo Roleplay Framework")
+
+    async def fake_validator(**kwargs):  # pragma: no cover - must not be called
+        raise AssertionError("open discovery should use candidate semantic judge")
+
+    output = await LlmCandidateValidatorTool(validator=fake_validator).run(
+        LlmCandidateValidatorInput(
+            query="天际有什么 bimbo MOD",
+            matches=[match],
+            llm_available=True,
+            query_plan={"open_discovery": True, "retrieval_mode": "fuzzy"},
+            evidence_id="ev_test",
+        )
+    )
+
+    assert output.matches == [match]
+    assert output.status == "skipped"
+    assert output.reason == "semantic_judge_primary"
+    assert any("agent.tool name=llm_candidate_validator status=skipped reason=semantic_judge_primary" in item.message for item in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_llm_candidate_validator_degrades_to_original_matches_on_error(caplog):
     caplog.set_level(logging.INFO)
     match = _match("Bimbo Roleplay Framework")

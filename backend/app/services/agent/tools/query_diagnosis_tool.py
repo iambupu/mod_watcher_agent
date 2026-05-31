@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.agent.planning.query_diagnosis import QueryDiagnosis, diagnose_query
+from app.utils.numeric import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class QueryDiagnosisInput:
 
 
 class QueryDiagnosisTool:
-    """Agent tool for converting a user turn and context into task understanding."""
+    """把当前轮问题和上下文转换成意图、槽位和语义信号。"""
 
     name = "query_diagnosis"
 
@@ -35,7 +36,7 @@ class QueryDiagnosisTool:
         logger.info(
             "agent.tool name=query_diagnosis status=succeeded intent=%s confidence=%.2f should_clarify=%s known_slots=%s evidence_id=%s",
             diagnosis.get("intent"),
-            float(diagnosis.get("confidence") or 0),
+            safe_float(diagnosis.get("confidence")),
             diagnosis.get("should_clarify"),
             sorted((diagnosis.get("known_slots") or {}).keys()),
             evidence_id,

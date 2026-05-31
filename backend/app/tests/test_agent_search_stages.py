@@ -15,6 +15,8 @@ class _RankingOutput:
     evidence = [{"tool": "ranker"}]
     match_count = 1
     validator_status = "skipped"
+    query_plan = {"keywords": ["bimbo"], "_agent_candidate_semantic_judge": {"status": "skipped"}}
+    semantic_judge_status = "skipped"
 
 
 class _AnswerOutput:
@@ -87,6 +89,8 @@ async def test_rank_candidates_stage_maps_llm_config_and_output(monkeypatch):
     assert seen["input"].evidence_id == "ev_rank"
     assert update["ranking_summary"]["match_count"] == 1
     assert update["ranking_summary"]["validator_status"] == "skipped"
+    assert update["ranking_summary"]["semantic_judge_status"] == "skipped"
+    assert update["query_plan"] == {"keywords": ["bimbo"], "_agent_candidate_semantic_judge": {"status": "skipped"}}
     assert update["matches"] == ["match"]
 
 

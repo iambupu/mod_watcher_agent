@@ -44,3 +44,8 @@ def source_aliases_by_source() -> dict[str, list[str]]:
     for alias, source in SOURCE_ALIASES.items():
         grouped[source].append(alias)
     return dict(grouped)
+
+
+def normalize_source_alias(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return SOURCE_ALIASES.get(text, text)

@@ -10,6 +10,7 @@ from app.services.agent.reflection.audit_service import (
     annotate_action_evidence_consistency,
     apply_consistency_guard,
     audit_contract_violations,
+    build_standard_audit,
     classify_retrieval_reason_group,
     expected_reason_for_action,
 )
@@ -24,6 +25,7 @@ from app.services.agent.schemas import (
 )
 from app.services.agent.tools.mod_detail_answer_tool import ModDetailAnswerTool
 from app.services.agent.workflows.mod_search_graph import (
+    _event_duration_ms,
     generate_detail_answer_step,
     run_agent_graph,
 )
@@ -31,6 +33,36 @@ from app.services.agent.workflows.mod_search_graph import (
 
 def _response(answer: str) -> AgentChatResponse:
     return AgentChatResponse(answer=answer, used_llm=False, matches=[], response_cards=None)
+
+
+def test_standard_audit_keeps_string_tool_policy_fields_as_single_items():
+    audit = build_standard_audit(
+        AgentChatResponse(
+            answer="ok",
+            used_llm=False,
+            matches=[],
+            response_cards={"next_steps": []},
+            understanding={"intent": "search", "evidence": []},
+        ),
+        {
+            "tool_policy_evidence": {
+                "score": 0.4,
+                "strategy": "local_first",
+                "expand_online_candidates": "loverslab_google",
+                "online_tools": "nexusmods_search",
+            }
+        },
+    )
+
+    tool_policy = audit["evidence"]["tool_policy"]
+    assert tool_policy["expand_online_candidates"] == ["loverslab_google"]
+    assert tool_policy["online_tools"] == ["nexusmods_search"]
+
+
+def test_graph_event_duration_tolerates_invalid_values():
+    assert _event_duration_ms({"duration_ms": "bad"}) == 0
+    assert _event_duration_ms({"duration_ms": -5}) == 0
+    assert _event_duration_ms({"duration_ms": "12"}) == 12
 
 
 def _trace_steps(trace: list[dict]) -> list[str]:
@@ -220,6 +252,42 @@ async def test_agent_runtime_mod_detail_returns_detail_tool_response(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_agent_runtime_chat_detail_phrase_routes_to_mod_detail_by_title(monkeypatch):
+    expected = _response("detail response")
+    seen = {}
+
+    async def fake_detail(self, tool_input):
+        seen["tool_input"] = tool_input
+        return expected
+
+    monkeypatch.setattr(ModDetailAnswerTool, "run", fake_detail)
+    with _session() as session:
+        mod = Mod(
+            source="loverslab",
+            external_id="bimbolips-131",
+            game="skyrimspecialedition",
+            game_domain="skyrimspecialedition",
+            title="Bimbos of Skyrim - BimboLips 1.3.1",
+            url="https://example.com/bimbolips",
+            original_summary="Adds BimboLips progression changes.",
+            first_seen_at="2026-05-28T00:00:00+00:00",
+            last_seen_at="2026-05-28T00:00:00+00:00",
+        )
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+
+        response = await AgentRuntime(session).chat(
+            AgentChatRequest(message="请详细解析这个 Mod：Bimbos of Skyrim - BimboLips 1.3.1"),
+            object(),
+        )
+
+    assert response is expected
+    assert seen["tool_input"].mod_id == mod.id
+    assert seen["tool_input"].question == "请详细解析这个 Mod：Bimbos of Skyrim - BimboLips 1.3.1"
+
+
+@pytest.mark.asyncio
 async def test_agent_graph_trace_records_minimum_steps(monkeypatch):
     with _session() as session:
         state = await run_agent_graph(
@@ -384,9 +452,9 @@ async def test_runtime_adds_memory_conflict_evidence_and_links_related_fragments
                     },
                 },
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.71,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 1,
                     "should_clarify": False,
                     "local_tools": ["structured_sql", "sqlite_fts"],
@@ -433,8 +501,8 @@ async def test_runtime_adds_memory_conflict_evidence_and_links_related_fragments
     assert response.audit["evidence"]["conflict_count"] >= 1
     assert "game" in response.audit["evidence"]["conflict_fields"]
     assert response.audit["evidence"]["hard_conflict_count"] >= 1
-    assert response.audit["evidence"]["tool_planning"]["strategy"] == "local_first_with_online_fallback"
-    assert response.audit["evidence"]["tool_planning"]["score"] == 0.71
+    assert response.audit["evidence"]["tool_policy"]["strategy"] == "local_first_with_online"
+    assert response.audit["evidence"]["tool_policy"]["score"] == 0.71
     coverage = response.audit["evidence"]["analysis_evidence_coverage"]
     assert coverage["coverage_ratio"] <= 1.0
     assert "slots" in coverage["required_fields"]
@@ -442,7 +510,7 @@ async def test_runtime_adds_memory_conflict_evidence_and_links_related_fragments
 
 
 @pytest.mark.asyncio
-async def test_runtime_sets_narrow_scope_action_when_planning_confidence_is_low(monkeypatch):
+async def test_runtime_sets_narrow_scope_action_when_tool_policy_confidence_is_low(monkeypatch):
     async def fake_run_agent_graph(session, state):
         return {
             "response": AgentChatResponse(
@@ -465,9 +533,9 @@ async def test_runtime_sets_narrow_scope_action_when_planning_confidence_is_low(
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.33,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 0,
                     "should_clarify": False,
                     "local_tools": ["structured_sql", "sqlite_fts"],
@@ -482,14 +550,14 @@ async def test_runtime_sets_narrow_scope_action_when_planning_confidence_is_low(
     response = await runtime.chat(AgentChatRequest(message="test"), object())
 
     assert response.audit["conclusion"]["consistency_risk"] == "low"
-    assert response.audit["conclusion"]["planning_confidence"] == "low"
+    assert response.audit["conclusion"]["tool_policy_confidence"] == "low"
     assert response.audit["conclusion"]["evidence_sufficiency"] in {"partial", "sufficient", "insufficient"}
     assert response.audit["evidence"]["action_evidence_consistent"] is True
     assert response.audit["conclusion"]["recommended_action"] == "narrow_query_scope"
-    assert response.audit["conclusion"]["recommended_action_reason"] == "low_planning_confidence"
+    assert response.audit["conclusion"]["recommended_action_reason"] == "low_tool_policy_confidence"
     assert response.audit["conclusion"]["action_payload"]["narrow_scope_fields"] == ["game", "source", "keywords"]
     assert response.audit["conclusion"]["requires_clarification"] is False
-    assert response.response_cards["next_steps"][0].startswith("当前需求范围较宽或证据不足")
+    assert response.response_cards["next_steps"][0] == "我想补充游戏、来源和关键词后再查一次"
 
 
 @pytest.mark.asyncio
@@ -508,7 +576,7 @@ async def test_runtime_sets_expand_sources_action_when_online_adaptation_signal_
                         "tool": "online_strategy",
                         "status": "suggested",
                         "count": 0,
-                        "reason": "conservative_online_zero_result_expand_sources",
+                        "reason": "narrow_online_zero_result_expand_sources",
                     }
                 ],
             ),
@@ -526,12 +594,12 @@ async def test_runtime_sets_expand_sources_action_when_online_adaptation_signal_
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.32,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 0,
                     "should_clarify": False,
-                    "conservative_mode": True,
+                    "online_recall_mode": "narrow",
                     "local_tools": ["structured_sql", "sqlite_fts"],
                     "online_tools": ["nexusmods_search"],
                     "degraded_reasons": [],
@@ -543,9 +611,9 @@ async def test_runtime_sets_expand_sources_action_when_online_adaptation_signal_
     runtime = AgentRuntime(session="session")
     response = await runtime.chat(AgentChatRequest(message="test"), object())
 
-    assert response.audit["conclusion"]["planning_confidence"] == "low"
+    assert response.audit["conclusion"]["tool_policy_confidence"] == "low"
     assert response.audit["conclusion"]["recommended_action"] == "expand_online_sources_and_narrow_scope"
-    assert response.audit["conclusion"]["recommended_action_reason"] == "conservative_online_zero_result_expand_sources"
+    assert response.audit["conclusion"]["recommended_action_reason"] == "narrow_online_zero_result_expand_sources"
     assert response.audit["conclusion"]["expand_online_candidates"] == ["loverslab_google"]
     assert response.audit["conclusion"]["expand_online_candidates_detail"] == [
         {"id": "loverslab_google", "label": "LoversLab"}
@@ -560,12 +628,11 @@ async def test_runtime_sets_expand_sources_action_when_online_adaptation_signal_
     assert response.audit["evidence"]["web_search"]["tool_statuses"] == {"online_gate": "skipped"}
     assert response.audit["evidence"]["web_search"]["tool_result_counts"] == {"online_gate": 0}
     assert response.audit["evidence"]["web_search"]["queried"] is False
-    assert "conservative_online_zero_result_expand_sources" in response.audit["evidence"]["web_search"]["trigger_reasons"]
+    assert "narrow_online_zero_result_expand_sources" in response.audit["evidence"]["web_search"]["trigger_reasons"]
     assert response.audit["evidence"]["retrieval_decision"]["mode"] == "web_adaptation_only"
-    assert "conservative_online_zero_result_expand_sources" in response.audit["evidence"]["retrieval_decision"]["reasons"]
-    assert "conservative_online_zero_result_expand_sources" in response.audit["evidence"]["retrieval_decision"]["reason_groups"]["web"]
-    assert response.response_cards["next_steps"][0].startswith("当前在线来源召回不足")
-    assert "loverslab_google" in response.response_cards["next_steps"][0]
+    assert "narrow_online_zero_result_expand_sources" in response.audit["evidence"]["retrieval_decision"]["reasons"]
+    assert "narrow_online_zero_result_expand_sources" in response.audit["evidence"]["retrieval_decision"]["reason_groups"]["web"]
+    assert response.response_cards["next_steps"][0] == "继续查 LoversLab 来源，并放宽关键词再试"
 
 
 @pytest.mark.asyncio
@@ -600,7 +667,7 @@ async def test_runtime_records_web_search_query_evidence_when_online_tools_run(m
                 },
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
-            "tool_plan": {"planning_evidence": {"score": 0.76, "strategy": "local_first_with_online_fallback"}},
+            "tool_plan": {"tool_policy_evidence": {"score": 0.76, "strategy": "local_first_with_online"}},
         }
 
     monkeypatch.setattr(runtime_module, "run_agent_graph", fake_run_agent_graph)
@@ -619,6 +686,50 @@ async def test_runtime_records_web_search_query_evidence_when_online_tools_run(m
     assert decision["web_enabled"] is True
     assert decision["web_queried"] is True
     assert decision["reason_groups"]["web"] == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_web_search_evidence_does_not_count_bool_as_result_count(monkeypatch):
+    async def fake_run_agent_graph(session, state):
+        return {
+            "response": AgentChatResponse(
+                answer="ok",
+                used_llm=False,
+                matches=[],
+                response_cards={"next_steps": ["继续筛选"]},
+                retrieval_evidence=[
+                    {
+                        "fragment_id": "r_1",
+                        "stage": "online_retrieval",
+                        "tool": "nexusmods_search",
+                        "status": "succeeded",
+                        "count": True,
+                    }
+                ],
+            ),
+            "trace": [],
+            "query_plan": {"evidence_id": "ev_web_bool_count"},
+            "query_diagnosis": {
+                "intent": "search",
+                "understanding": {
+                    "intent": "search",
+                    "slots": {},
+                    "confidence": 0.72,
+                    "followup": False,
+                    "evidence": [{"fragment_id": "u_query_plan_intent", "field": "intent", "source": "query_plan", "value": "search"}],
+                },
+            },
+            "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
+            "tool_plan": {"tool_policy_evidence": {"score": 0.76, "strategy": "local_first_with_online"}},
+        }
+
+    monkeypatch.setattr(runtime_module, "run_agent_graph", fake_run_agent_graph)
+    runtime = AgentRuntime(session="session")
+    response = await runtime.chat(AgentChatRequest(message="test"), object())
+
+    web = response.audit["evidence"]["web_search"]
+    assert web["tool_result_counts"] == {"nexusmods_search": 0}
+    assert web["online_result_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -676,7 +787,7 @@ async def test_runtime_web_search_evidence_keeps_per_tool_statuses(monkeypatch):
                 },
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
-            "tool_plan": {"planning_evidence": {"score": 0.76, "strategy": "local_first_with_online_fallback"}},
+            "tool_plan": {"tool_policy_evidence": {"score": 0.76, "strategy": "local_first_with_online"}},
         }
 
     monkeypatch.setattr(runtime_module, "run_agent_graph", fake_run_agent_graph)
@@ -725,7 +836,7 @@ async def test_runtime_retrieval_decision_includes_semantic_anchor_evidence(monk
                 },
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
-            "tool_plan": {"planning_evidence": {"score": 0.76, "strategy": "local_first_with_online_fallback"}},
+            "tool_plan": {"tool_policy_evidence": {"score": 0.76, "strategy": "local_first_with_online"}},
         }
 
     monkeypatch.setattr(runtime_module, "run_agent_graph", fake_run_agent_graph)
@@ -878,12 +989,12 @@ async def test_runtime_sets_review_memory_action_payload_for_medium_risk(monkeyp
                 "merged": {},
             },
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.66,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 1,
                     "should_clarify": False,
-                    "conservative_mode": False,
+                    "online_recall_mode": "broad",
                     "local_tools": ["structured_sql", "sqlite_fts"],
                     "online_tools": ["nexusmods_search"],
                     "degraded_reasons": [],
@@ -956,12 +1067,12 @@ async def test_runtime_upgrades_to_medium_risk_for_low_quality_inherited_context
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.76,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 0,
                     "should_clarify": False,
-                    "conservative_mode": False,
+                    "online_recall_mode": "broad",
                     "local_tools": ["structured_sql", "sqlite_fts"],
                     "online_tools": ["nexusmods_search"],
                     "degraded_reasons": [],
@@ -1040,12 +1151,12 @@ async def test_runtime_uses_review_memory_action_for_high_risk_without_explicit_
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.74,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 0,
                     "should_clarify": False,
-                    "conservative_mode": False,
+                    "online_recall_mode": "broad",
                     "local_tools": ["structured_sql", "sqlite_fts"],
                     "online_tools": ["nexusmods_search"],
                     "degraded_reasons": [],
@@ -1093,12 +1204,12 @@ async def test_runtime_collects_more_evidence_when_analysis_coverage_is_low(monk
             },
             "memory_context": {"short_term": {}, "long_term": {}, "merged": {}},
             "tool_plan": {
-                "planning_evidence": {
+                "tool_policy_evidence": {
                     "score": 0.8,
-                    "strategy": "local_first_with_online_fallback",
+                    "strategy": "local_first_with_online",
                     "known_slot_count": 0,
                     "should_clarify": False,
-                    "conservative_mode": False,
+                    "online_recall_mode": "broad",
                     "local_tools": ["structured_sql", "sqlite_fts"],
                     "online_tools": ["nexusmods_search"],
                     "degraded_reasons": [],
@@ -1123,7 +1234,7 @@ async def test_runtime_collects_more_evidence_when_analysis_coverage_is_low(monk
     assert response.audit["evidence"]["audit_contract_passed"] is True
     assert response.audit["evidence"]["audit_contract_violations"] == []
     assert "analysis_evidence" in response.audit["conclusion"]["action_payload"]["review_targets"]
-    assert response.response_cards["next_steps"][0].startswith("当前任务理解证据不足")
+    assert response.response_cards["next_steps"][0] == "我想补充目标游戏和关键词后再查一次"
 
 
 def test_audit_contract_violations_flags_collect_more_evidence_mismatch():
@@ -1234,12 +1345,12 @@ def test_consistency_guard_handles_agent_audit_model_without_dropping_evidence()
                 "evidence": {
                     "conflict_count": 0,
                     "analysis_evidence_coverage": {"coverage_ratio": 0.5, "missing_fields": ["slots"]},
-                    "tool_planning": {"score": 0.8, "strategy": "local_first_with_online_fallback"},
+                    "tool_policy": {"score": 0.8, "strategy": "local_first_with_online"},
                 },
                 "conclusion": {
                     "consistency_risk": "low",
                     "evidence_sufficiency": "insufficient",
-                    "planning_confidence": "high",
+                    "tool_policy_confidence": "high",
                 },
             }
         ),
@@ -1256,14 +1367,40 @@ def test_consistency_guard_handles_agent_audit_model_without_dropping_evidence()
     assert response.audit["conclusion"]["recommended_action"] == "collect_more_evidence"
     assert response.audit["conclusion"]["recommended_action_reason"] == "insufficient_analysis_evidence"
     assert response.audit["evidence"]["audit_contract_passed"] is True
-    assert response.response_cards["next_steps"][0].startswith("当前任务理解证据不足")
+    assert response.response_cards["next_steps"][0] == "我想补充目标游戏和关键词后再查一次"
+
+
+def test_consistency_guard_tolerates_invalid_count_evidence():
+    response = AgentChatResponse(
+        answer="ok",
+        used_llm=False,
+        matches=[],
+        response_cards={"next_steps": []},
+    )
+    response.audit = {
+        "analysis": {"intent": "search", "confidence": 0.8, "slots": {}, "evidence_id": "ev_bad_counts"},
+        "evidence": {
+            "conflict_count": "bad",
+            "analysis_evidence_coverage": {"coverage_ratio": 0.5, "missing_fields": ["slots"]},
+            "tool_policy": {"score": 0.8, "strategy": "local_first_with_online"},
+        },
+        "conclusion": {
+            "consistency_risk": "low",
+            "evidence_sufficiency": "insufficient",
+            "tool_policy_confidence": "high",
+        },
+    }
+
+    apply_consistency_guard(response)
+
+    assert response.audit["conclusion"]["recommended_action"] == "collect_more_evidence"
 
 
 def test_audit_contract_violations_flags_missing_semantic_trace_when_semantic_anchors_exist():
     violations = audit_contract_violations(
         conclusion={
             "recommended_action": "narrow_query_scope",
-            "recommended_action_reason": "low_planning_confidence",
+            "recommended_action_reason": "low_tool_policy_confidence",
             "evidence_sufficiency": "partial",
             "consistency_risk": "low",
         },
@@ -1276,8 +1413,30 @@ def test_audit_contract_violations_flags_missing_semantic_trace_when_semantic_an
     assert "semantic_trace_missing_for_semantic_query" in violations
 
 
+def test_audit_contract_violations_rejects_bool_semantic_trace_counts():
+    violations = audit_contract_violations(
+        conclusion={
+            "recommended_action": "narrow_query_scope",
+            "recommended_action_reason": "low_tool_policy_confidence",
+            "evidence_sufficiency": "partial",
+            "consistency_risk": "low",
+        },
+        evidence={
+            "analysis_evidence_coverage": {"coverage_ratio": 1.0},
+            "retrieval_decision": {"semantic_anchors": ["bimbo"]},
+            "semantic_trace": {
+                "anchors": ["bimbo"],
+                "domains": ["content_type"],
+                "memory_fragment_count": True,
+            },
+        },
+    )
+
+    assert "semantic_trace_memory_fragment_count_invalid" in violations
+
+
 def test_classify_retrieval_reason_group_routes_context_memory_and_web():
     assert classify_retrieval_reason_group("memory_context_alignment_low") == "memory"
     assert classify_retrieval_reason_group("low_quality_context_with_high_inherit") == "context"
-    assert classify_retrieval_reason_group("conservative_online_zero_result_expand_sources") == "web"
+    assert classify_retrieval_reason_group("narrow_online_zero_result_expand_sources") == "web"
     assert classify_retrieval_reason_group("semantic_anchors_detected") == "semantic"

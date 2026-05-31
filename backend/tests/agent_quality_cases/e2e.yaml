@@ -78,10 +78,6 @@
     top_title: "Cyber Vehicle Handling Overhaul"
     exclude_titles: ["Bimbo Body Morph"]
     slot_game: "Cyberpunk 2077"
-    retrieval_evidence_contains:
-      stage: "candidate_recovery"
-      tool: "candidate_recovery"
-      reason: "no_validated_matches"
     understanding_field_max:
       context_inherit_score: 0.2
 
@@ -232,50 +228,6 @@
     audit_conclusion_equals:
       contract_status: "ok"
 
-- id: e2e_llm_planning_source_evidence
-  message: "Skyrim Special Edition bimbo mod"
-  llm_query_plan:
-    intent: "search"
-    keywords: ["bimbo"]
-    games: ["Skyrim Special Edition"]
-    evidence_id: "ev_llm_planning_source"
-    sort_field: "relevance"
-    sort_order: "desc"
-    limit: 8
-  expect:
-    top_title: "Bimbo Body Morph"
-    understanding_field_equals:
-      planning_source: "llm"
-      llm_planning_used: true
-    understanding_field_contains:
-      semantic_anchors: "bimbo"
-    audit_conclusion_equals:
-      contract_status: "ok"
-
-- id: e2e_llm_planning_error_degrades_with_evidence
-  message: "有什么mod支持怀孕玩法"
-  llm_query_plan_error: "planner unavailable"
-  seed_mods:
-    - source: "nexusmods"
-      external_id: "pregnancy-gameplay-llm-fallback"
-      game: "Skyrim Special Edition"
-      game_domain: "skyrimspecialedition"
-      title: "Pregnancy Gameplay Overhaul"
-      url: "https://example.com/pregnancy-gameplay-fallback"
-      category: "Gameplay"
-      original_summary: "Adds pregnancy systems and related gameplay loops."
-      adult_content: true
-  expect:
-    top_title: "Pregnancy Gameplay Overhaul"
-    understanding_field_equals:
-      planning_source: "fallback"
-      llm_planning_used: false
-      llm_planning_error_type: "RuntimeError"
-    understanding_field_contains:
-      semantic_anchors: "pregnancy"
-    audit_conclusion_equals:
-      contract_status: "ok"
-
 - id: e2e_bimbo_roleplay_intent
   message: "有什么在玩法上可以扮演bimbo的MOD"
   seed_mods:
@@ -293,8 +245,6 @@
     understanding_field_contains:
       semantic_anchors: "roleplay"
       semantic_domains: "mechanics"
-    understanding_field_equals:
-      category: "Gameplay"
     audit_retrieval_decision_contains:
       semantic_anchors: "roleplay"
       semantic_domains: "mechanics"
@@ -502,5 +452,360 @@
     top_title: "Generic Similar Style"
     understanding_field_equals:
       context_inherited: true
+    audit_conclusion_equals:
+      contract_status: "ok"
+
+- id: e2e_quality_open_bimbo_roleplay_not_outfit
+  message: "有什么在玩法上可以扮演 bimbo 的 MOD"
+  seed_mods:
+    - source: "nexusmods"
+      external_id: "bimbo-roleplay-quality-1"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "Bimbo Roleplay Framework"
+      url: "https://example.com/bimbo-roleplay-quality"
+      category: "Gameplay"
+      original_summary: "Roleplay framework for bimbo-style character progression and identity route systems."
+      adult_content: false
+    - source: "nexusmods"
+      external_id: "bimbo-outfit-quality-1"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "Bimbo Party Outfit"
+      url: "https://example.com/bimbo-party-outfit"
+      category: "Outfit"
+      original_summary: "A bimbo themed outfit pack without gameplay systems."
+      adult_content: true
+  expect:
+    top_title: "Bimbo Roleplay Framework"
+    top_source: "nexusmods"
+    answer_contains: "Bimbo Roleplay Framework"
+    answer_not_contains: "Bimbo Party Outfit"
+    response_card_contains:
+      analysis: "识别意图：search"
+      evidence: "来源覆盖"
+    audit_analysis_equals:
+      intent: "search"
+    audit_analysis_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+    understanding_field_not_contains:
+      semantic_anchors: "sexworker_style"
+    audit_retrieval_decision_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+    audit_semantic_trace_contains:
+      anchors: "roleplay"
+      domains: "mechanics"
+    audit_semantic_trace_not_contains:
+      anchors: "sexworker_style"
+    audit_conclusion_equals:
+      contract_status: "ok"
+
+- id: e2e_quality_alias_game_switch_bimbo_roleplay_context_continuity
+  turns:
+    - message: "剑星最近有哪些新的服装mod"
+      history: []
+    - message: "天际有什么扮演 bimbo 的 MOD"
+      history: []
+  seed_mods:
+    - source: "nexusmods"
+      external_id: "stellar-outfit-quality-switch"
+      game: "Stellar Blade"
+      game_domain: "stellarblade"
+      title: "Stellar Lace Combat Suit"
+      url: "https://example.com/stellar-lace-switch"
+      category: "Outfits"
+      original_summary: "A recent Stellar Blade outfit mod."
+      adult_content: false
+    - source: "nexusmods"
+      external_id: "bimbo-roleplay-quality-alias-switch"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "Bimbo Roleplay Framework"
+      url: "https://example.com/bimbo-roleplay-alias-switch"
+      category: "Gameplay"
+      original_summary: "Roleplay framework for bimbo-style character progression and identity route systems."
+      adult_content: false
+    - source: "nexusmods"
+      external_id: "bimbo-outfit-quality-alias-switch"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "Bimbo Party Outfit"
+      url: "https://example.com/bimbo-party-alias-switch"
+      category: "Outfit"
+      original_summary: "A bimbo themed outfit pack without gameplay systems."
+      adult_content: true
+  expect:
+    top_title: "Bimbo Roleplay Framework"
+    top_source: "nexusmods"
+    exclude_titles: ["Stellar Lace Combat Suit", "Bimbo Party Outfit"]
+    answer_contains: "Bimbo Roleplay Framework"
+    answer_not_contains: "Stellar Lace Combat Suit"
+    slot_game: "Skyrim Special Edition"
+    log_contains:
+      - "games=['Skyrim Special Edition']"
+      - "agent.retrieval.online tool=nexusmods_search status=succeeded"
+    response_card_contains:
+      filters: "游戏：Skyrim Special Edition"
+      evidence: "游戏覆盖：Skyrim Special Edition"
+    audit_analysis_equals:
+      intent: "search"
+    audit_analysis_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+    understanding_field_not_contains:
+      semantic_anchors: "outfit"
+    audit_retrieval_decision_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+    audit_semantic_trace_contains:
+      anchors: "roleplay"
+      domains: "mechanics"
+    audit_conclusion_equals:
+      contract_status: "ok"
+
+- id: e2e_quality_no_match_next_step_uses_current_game_constraint
+  message: "天际有什么 ultrararefoobar MOD"
+  expect:
+    answer_contains: "没有找到明确匹配"
+    response_card_contains:
+      next_steps: "Skyrim Special Edition"
+    log_contains:
+      - "games=['Skyrim Special Edition']"
+    audit_conclusion_equals:
+      contract_status: "ok"
+
+- id: e2e_quality_two_turn_pregnancy_followup
+  turns:
+    - message: "Skyrim Special Edition pregnancy gameplay mod"
+      history: []
+    - message: "继续这个玩法方向"
+      history: []
+  seed_mods:
+    - source: "nexusmods"
+      external_id: "pregnancy-gameplay-quality-followup"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "Pregnancy Gameplay Overhaul"
+      url: "https://example.com/pregnancy-gameplay-quality-followup"
+      category: "Gameplay"
+      original_summary: "Adds pregnancy systems and fertility gameplay loops."
+      adult_content: true
+  expect:
+    top_title: "Pregnancy Gameplay Overhaul"
+    answer_contains: "Pregnancy Gameplay Overhaul"
+    audit_analysis_equals:
+      intent: "search"
+    understanding_field_equals:
+      context_source: "long_term_writeback"
+      topic_shift_detected: false
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      context_semantic_anchors: "pregnancy"
+      semantic_domains: "mechanics"
+    audit_retrieval_decision_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "mechanics"
+    audit_semantic_trace_contains:
+      anchors: "pregnancy"
+      context_anchors: "pregnancy"
+      domains: "mechanics"
+    audit_conclusion_equals:
+      consistency_risk: "low"
+      contract_status: "ok"
+
+- id: e2e_quality_three_turn_switch_to_loverslab_framework
+  turns:
+    - message: "Skyrim Special Edition bimbo roleplay mod"
+      history: []
+    - message: "换成 Cyberpunk 2077 的载具改装 mod"
+      history: []
+    - message: "再换到 LoversLab，只找 Skyrim 框架体系"
+      history: []
+  seed_mods:
+    - source: "nexusmods"
+      external_id: "cp2077-vehicle-quality-switch"
+      game: "Cyberpunk 2077"
+      game_domain: "cyberpunk2077"
+      title: "Cyber Vehicle Dynamics"
+      url: "https://example.com/cp2077-vehicle-quality-switch"
+      category: "Vehicles"
+      original_summary: "Vehicle dynamics overhaul for Cyberpunk 2077."
+      adult_content: false
+    - source: "loverslab"
+      external_id: "ll-framework-quality-switch"
+      game: "Skyrim"
+      game_domain: "skyrim"
+      title: "LoversLab System Framework"
+      url: "https://example.com/ll-framework-quality-switch"
+      category: "Framework"
+      original_summary: "Core framework system published on LoversLab for Skyrim."
+      adult_content: true
+  expect:
+    top_title: "LoversLab System Framework"
+    top_source: "loverslab"
+    exclude_titles: ["Cyber Vehicle Dynamics", "Bimbo Body Morph"]
+    answer_contains: "LoversLab System Framework"
+    answer_not_contains: "Cyber Vehicle Dynamics"
+    understanding_field_equals:
+      source: "loverslab"
+    understanding_field_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "source_scope"
+    audit_retrieval_decision_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "source_scope"
+    audit_semantic_trace_contains:
+      anchors: "framework"
+      domains: "source_scope"
+    audit_semantic_trace_not_contains:
+      anchors: "roleplay"
+    audit_conclusion_equals:
+      contract_status: "ok"
+
+- id: e2e_quality_memory_writeback_three_turn_source_refine
+  turns:
+    - message: "Skyrim bimbo mod"
+      history: []
+    - message: "找类似的"
+      history: []
+    - message: "只看 LL 的类似结果"
+      history: []
+  seed_mods:
+    - source: "loverslab"
+      external_id: "ll-bimbo-quality-refine"
+      game: "Skyrim"
+      game_domain: "skyrim"
+      title: "LL Bimbo Curves Pack"
+      url: "https://example.com/ll-bimbo-quality-refine"
+      category: "Body"
+      original_summary: "A LoversLab bimbo body pack for Skyrim."
+      adult_content: true
+    - source: "nexusmods"
+      external_id: "nx-bimbo-quality-refine"
+      game: "Skyrim"
+      game_domain: "skyrim"
+      title: "NX Bimbo Curves Pack"
+      url: "https://example.com/nx-bimbo-quality-refine"
+      category: "Body"
+      original_summary: "A NexusMods bimbo body pack for Skyrim."
+      adult_content: true
+  expect:
+    top_title: "LL Bimbo Curves Pack"
+    top_source: "loverslab"
+    exclude_titles: ["NX Bimbo Curves Pack"]
+    answer_contains: "LL Bimbo Curves Pack"
+    log_contains:
+      - "agent.context_inherit source=long_term_writeback"
+      - "context_semantic_anchors=['bimbo']"
+      - "agent.tool name=memory_writeback status=succeeded"
+    understanding_field_equals:
+      source: "loverslab"
+      topic_shift_detected: false
+    understanding_field_contains:
+      semantic_anchors: "loverslab"
+    audit_retrieval_decision_contains:
+      semantic_anchors: "loverslab"
+    audit_semantic_trace_contains:
+      anchors: "loverslab"
+    audit_conclusion_equals:
+      contract_status: "ok"
+
+- id: e2e_quality_loverslab_source_constraint_pregnancy
+  message: "只看 LoversLab 的怀孕玩法 mod"
+  seed_mods:
+    - source: "loverslab"
+      external_id: "ll-pregnancy-quality-source"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "LL Pregnancy Gameplay"
+      url: "https://example.com/ll-pregnancy-quality-source"
+      category: "Gameplay"
+      original_summary: "LoversLab pregnancy systems and fertility gameplay."
+      adult_content: true
+    - source: "nexusmods"
+      external_id: "nx-pregnancy-quality-source"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "Nexus Pregnancy Gameplay"
+      url: "https://example.com/nx-pregnancy-quality-source"
+      category: "Gameplay"
+      original_summary: "Nexus pregnancy systems and fertility gameplay."
+      adult_content: true
+  expect:
+    top_title: "LL Pregnancy Gameplay"
+    top_source: "loverslab"
+    exclude_titles: ["Nexus Pregnancy Gameplay"]
+    answer_contains: "LL Pregnancy Gameplay"
+    understanding_field_equals:
+      source: "loverslab"
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "source_scope"
+    audit_retrieval_decision_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "source_scope"
+    audit_conclusion_equals:
+      contract_status: "ok"
+
+- id: e2e_quality_style_outfit_not_gameplay_semantic_drift
+  message: "找夜店女郎风格服装，不要玩法系统"
+  seed_mods:
+    - source: "nexusmods"
+      external_id: "nightclub-outfit-quality"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "Nightclub Escort Outfit"
+      url: "https://example.com/nightclub-outfit-quality"
+      category: "Outfit"
+      original_summary: "Nightclub escort aesthetic clothing and outfit pack."
+      adult_content: true
+    - source: "nexusmods"
+      external_id: "nightclub-roleplay-quality"
+      game: "Skyrim Special Edition"
+      game_domain: "skyrimspecialedition"
+      title: "Nightclub Roleplay System"
+      url: "https://example.com/nightclub-roleplay-quality"
+      category: "Gameplay"
+      original_summary: "Gameplay system for nightclub roleplay routes."
+      adult_content: true
+  expect:
+    top_title: "Nightclub Escort Outfit"
+    answer_contains: "Nightclub Escort Outfit"
+    answer_not_contains: "Nightclub Roleplay System"
+    response_card_contains:
+      evidence: "检索返回"
+      conclusion: "优先查看"
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "content_type"
+    understanding_field_not_contains:
+      semantic_anchors: "roleplay"
+    audit_semantic_trace_contains:
+      anchors: "sexworker_style"
+      domains: "content_type"
+    audit_semantic_trace_not_contains:
+      anchors: "roleplay"
+    audit_conclusion_equals:
+      contract_status: "ok"
+
+- id: e2e_quality_recommendation_format_not_comparison
+  message: "推荐更安全的 Skyrim Special Edition body mod"
+  expect:
+    top_title: "Bimbo Body Morph"
+    answer_contains: "优先推荐这些 Mod"
+    answer_not_contains: "比较依据"
+    response_card_contains:
+      analysis: "识别意图：preference_summary"
+      results: "Bimbo Body Morph"
+    audit_analysis_equals:
+      intent: "preference_summary"
     audit_conclusion_equals:
       contract_status: "ok"

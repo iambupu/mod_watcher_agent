@@ -11,6 +11,7 @@ from app.services.agent.answer_service import (
     build_recommendation_fallback,
 )
 from app.services.agent.schemas import AgentHistoryItem, AgentModMatch
+from app.services.agent.tools.llm_output import is_empty_or_error_content
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class AnswerGenerationOutput:
 
 
 class AnswerGenerationTool:
-    """Agent tool for answer generation with deterministic fallback behavior."""
+    """生成用户可见回答；LLM 不可用时回退到确定性回答。"""
 
     name = "answer_generation"
 
@@ -60,7 +61,7 @@ class AnswerGenerationTool:
             model=tool_input.model,
             history=tool_input.history,
         )
-        if _is_empty_or_error_content(content):
+        if is_empty_or_error_content(content):
             return self._fallback(tool_input, reason="llm_empty_or_error", answer=fallback_answer)
 
         answer = content.strip()
@@ -116,17 +117,3 @@ def _fallback_answer_for_intent(intent: object, matches: list[AgentModMatch]) ->
     if intent == "preference_summary":
         return build_recommendation_fallback(matches)
     return build_fallback_answer(matches)
-
-
-def _is_empty_or_error_content(content: str) -> bool:
-    value = (content or "").strip()
-    if not value:
-        return True
-    lowered = value.lower()
-    return lowered in {
-        "error",
-        "provider error",
-        "llm error",
-        "network error",
-        "networkerror when attempting to fetch resource.",
-    }

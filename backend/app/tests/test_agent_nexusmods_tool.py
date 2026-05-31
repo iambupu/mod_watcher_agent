@@ -5,7 +5,9 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.adapters.nexusmods import NexusModsAdapter
+from app.models.favorite import Favorite
 from app.models.mod import Mod
+from app.models.update_event import ModUpdateEvent
 from app.services.agent.tools.nexusmods_search_tool import (
     NexusModsSearchInput,
     NexusModsSearchTool,
@@ -106,6 +108,71 @@ async def test_nexusmods_search_tool_builds_graphql_filter_and_persists_results(
 
 
 @pytest.mark.asyncio
+async def test_nexusmods_search_tool_records_update_for_existing_favorite(monkeypatch):
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+
+    async def fake_graphql(self, query, variables):
+        return {
+            "data": {
+                "mods": {
+                    "nodes": [_node(mod_id=9001, name="Hot Armor Pack") | {
+                        "version": "1.1",
+                        "updatedAt": "2026-05-25T00:00:00Z",
+                    }],
+                    "nodesCount": 1,
+                    "totalCount": 1,
+                }
+            }
+        }
+
+    monkeypatch.setattr(NexusModsAdapter, "_graphql_query", fake_graphql)
+    with Session(engine) as session:
+        SettingsService(session).set("nexus_api_key", "test-key")
+        mod = Mod(
+            source="nexusmods",
+            external_id="skyrimspecialedition:9001",
+            game="Skyrim Special Edition",
+            game_domain="skyrimspecialedition",
+            title="Hot Armor Pack",
+            url="https://www.nexusmods.com/skyrimspecialedition/mods/9001",
+            version="1.0",
+            updated_at_remote="2026-05-20T00:00:00+00:00",
+            first_seen_at="2026-05-20T00:00:00+00:00",
+            last_seen_at="2026-05-20T00:00:00+00:00",
+        )
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        favorite = Favorite(
+            mod_id=mod.id,
+            tracking_enabled=True,
+            notify_on_update=True,
+            last_known_version="1.0",
+            last_known_updated_at="2026-05-20T00:00:00+00:00",
+            created_at="2026-05-20T00:00:00+00:00",
+            updated_at="2026-05-20T00:00:00+00:00",
+        )
+        session.add(favorite)
+        session.commit()
+        session.refresh(favorite)
+
+        results = await NexusModsSearchTool(session).run(
+            NexusModsSearchInput(query="hot armor", game_domain="skyrimspecialedition", limit=8)
+        )
+
+        event = session.exec(select(ModUpdateEvent).where(ModUpdateEvent.favorite_id == favorite.id)).one()
+        refreshed_favorite = session.get(Favorite, favorite.id)
+
+    assert len(results) == 1
+    assert event.old_version == "1.0"
+    assert event.new_version == "1.1"
+    assert event.old_updated_at == "2026-05-20T00:00:00+00:00"
+    assert event.new_updated_at == "2026-05-25T00:00:00+00:00"
+    assert refreshed_favorite.last_known_version == "1.1"
+
+
+@pytest.mark.asyncio
 async def test_nexusmods_search_tool_returns_empty_without_api_key(monkeypatch):
     engine = _make_engine()
     SQLModel.metadata.create_all(engine)
@@ -153,6 +220,105 @@ def test_nexus_tool_input_respects_source_and_game_domain_plan():
     assert tool_input.updated_since_days == 7
     assert tool_input.sort_field == "endorsements"
     assert tool_input.limit == 5
+
+
+def test_nexus_tool_input_tolerates_invalid_limit():
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        tool_input = nexus_tool_input_from_plan(
+            session,
+            "热门护甲 Mod",
+            {"sources": ["nexusmods"], "game_domains": ["skyrimspecialedition"], "limit": "many"},
+        )
+
+    assert tool_input is not None
+    assert tool_input.limit == 8
+
+
+def test_nexusmods_search_tool_build_filter_tolerates_string_metric_values():
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        tool = NexusModsSearchTool(session)
+        graphql_filter = tool._build_filter(
+            NexusModsSearchInput(
+                query="armor",
+                game_domain="skyrimspecialedition",
+                min_downloads="many",
+                min_endorsements="25",
+                min_views="-10",
+                min_likes="6",
+            )
+        )
+
+    assert graphql_filter is not None
+    clauses = graphql_filter["filter"]
+    assert {"downloads": [{"op": "GTE", "value": 0}]} in clauses
+    assert {"endorsements": [{"op": "GTE", "value": 25}]} in clauses
+    assert {"views": [{"op": "GTE", "value": 0}]} in clauses
+    assert {"likes": [{"op": "GTE", "value": 6}]} in clauses
+
+
+def test_nexusmods_search_tool_score_and_sort_parses_string_fields():
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        clean_high = Mod(
+            source="nexusmods",
+            external_id="1",
+            game="Skyrim",
+            title="Clean High",
+            url="https://example.com/1",
+            downloads=100,
+            adult_content=False,
+            first_seen_at="2026-01-01T00:00:00+00:00",
+            last_seen_at="2026-01-01T00:00:00+00:00",
+        )
+        adult = Mod(
+            source="nexusmods",
+            external_id="2",
+            game="Skyrim",
+            title="Adult",
+            url="https://example.com/2",
+            downloads=200,
+            adult_content=True,
+            first_seen_at="2026-01-01T00:00:00+00:00",
+            last_seen_at="2026-01-01T00:00:00+00:00",
+        )
+        clean_low = Mod(
+            source="nexusmods",
+            external_id="3",
+            game="Skyrim",
+            title="Clean Low",
+            url="https://example.com/3",
+            downloads=0,
+            adult_content=False,
+            first_seen_at="2026-01-01T00:00:00+00:00",
+            last_seen_at="2026-01-01T00:00:00+00:00",
+        )
+        session.add_all([clean_low, clean_high, adult])
+        session.commit()
+        for mod in (clean_low, clean_high, adult):
+            session.refresh(mod)
+        clean_high.downloads = "100"
+        clean_high.adult_content = "false"
+        adult.downloads = "200"
+        adult.adult_content = "true"
+        clean_low.downloads = "not-a-number"
+
+        results = NexusModsSearchTool(session)._score_and_sort(
+            [clean_low, clean_high, adult],
+            NexusModsSearchInput(
+                query="",
+                adult_content=False,
+                sort_field="downloads",
+                sort_order="desc",
+                limit=8,
+            ),
+        )
+
+    assert [item.mod.title for item in results] == ["Clean High", "Clean Low"]
 
 
 @pytest.mark.asyncio

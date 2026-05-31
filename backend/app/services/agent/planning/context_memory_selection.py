@@ -3,10 +3,16 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.services.agent.context.context_inference import followup_decision, has_distinctive_keywords
+from app.services.agent.context.context_utils import (
+    has_query_context_signal as has_query_context_signal_base,
+)
+from app.services.agent.list_utils import string_list
 from app.services.agent.planning.context_result_reference import (
     is_contextual_query_followup,
     referenced_title_keywords,
 )
+from app.services.game_alias_service import DEFAULT_KNOWN_GAMES, alias_key, build_resolved_aliases
+from app.utils.numeric import safe_float
 
 
 @dataclass(frozen=True)
@@ -22,13 +28,13 @@ def backfill_query_context_for_planning(
     history: list | None,
 ) -> QueryContextBackfill:
     context = last_query_context if isinstance(last_query_context, dict) else {}
-    context_keywords = _string_list(context.get("keywords"))
+    context_keywords = string_list(context.get("keywords"))
     history_context = history_context_for_diagnosis(history)
     if is_contextual_query_followup(query) and history_context:
         merged_context = dict(context)
         if not context_keywords and history_context.get("keywords"):
             merged_context["keywords"] = history_context["keywords"]
-            context_keywords = _string_list(history_context.get("keywords"))
+            context_keywords = string_list(history_context.get("keywords"))
         for key in ("game", "source_name", "category", "adult_content", "sort_field", "sort_order"):
             if merged_context.get(key) is None and history_context.get(key) is not None:
                 merged_context[key] = history_context[key]
@@ -36,7 +42,7 @@ def backfill_query_context_for_planning(
             merged_context["source"] = context.get("source") or history_context.get("source") or "history_backfill"
             context = merged_context
 
-    context_quality = _as_float(context.get("quality_score"))
+    context_quality = safe_float(context.get("quality_score"))
     if context.get("source") == "current" and (not context_keywords or context_quality < 0.2):
         recovered_keywords = history_keywords(history)
         if recovered_keywords:
@@ -48,10 +54,7 @@ def backfill_query_context_for_planning(
 def has_query_context_signal(context: dict[str, Any], keywords: list[str]) -> bool:
     if str(context.get("source") or "").strip().lower() == "current":
         return False
-    return bool(keywords) or any(
-        context.get(key) is not None
-        for key in ("game", "source_name", "category", "adult_content", "sort_field", "sort_order")
-    )
+    return bool(keywords) or has_query_context_signal_base(context, include_source_current=False)
 
 
 def select_effective_last_query_context(query: str, short_context: dict | None, memory_context: dict | None) -> dict:
@@ -63,9 +66,9 @@ def select_effective_last_query_context(query: str, short_context: dict | None, 
             long = loaded["last_query_context"]
     if not long:
         return short
-    short_keywords = _string_list(short.get("keywords"))
-    short_anchors = _string_list(short.get("semantic_anchors"))
-    short_quality = _as_float(short.get("quality_score"))
+    short_keywords = string_list(short.get("keywords"))
+    short_anchors = string_list(short.get("semantic_anchors"))
+    short_quality = safe_float(short.get("quality_score"))
     followup = followup_decision(query)
     short_is_current = str(short.get("source") or "").strip().lower() == "current"
     if (
@@ -74,9 +77,9 @@ def select_effective_last_query_context(query: str, short_context: dict | None, 
         and not (short_is_current and (followup.is_followup or followup.low_signal))
     ):
         return short
-    long_keywords = _string_list(long.get("keywords"))
-    long_anchors = _string_list(long.get("semantic_anchors"))
-    long_quality = _as_float(long.get("quality_score"))
+    long_keywords = string_list(long.get("keywords"))
+    long_anchors = string_list(long.get("semantic_anchors"))
+    long_quality = safe_float(long.get("quality_score"))
     if not (long_keywords or long_anchors) or long_quality < 0.45:
         return short
     if not followup.is_followup and not followup.low_signal:
@@ -88,13 +91,13 @@ def select_effective_last_query_context(query: str, short_context: dict | None, 
 
 def diagnosis_context_from_last_query(last_query_context: dict | None, history: list | None) -> tuple[list[str], dict[str, Any]]:
     context = last_query_context if isinstance(last_query_context, dict) else {}
-    keywords = _string_list(context.get("keywords"))
+    keywords = string_list(context.get("keywords"))
     slots = dict(context)
     if str(context.get("source") or "").strip().lower() != "current":
         return keywords, slots
     history_context = history_context_for_diagnosis(history)
     if history_context.get("keywords"):
-        keywords = _string_list(history_context.get("keywords"))
+        keywords = string_list(history_context.get("keywords"))
         slots = history_context
     return keywords, slots
 
@@ -138,22 +141,14 @@ def history_context_for_diagnosis(history: list | None) -> dict[str, Any]:
     return {}
 
 
-def _string_list(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]
-
-
-def _as_float(value: object) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-
 def _known_game_from_text(text: str) -> str | None:
+    games = DEFAULT_KNOWN_GAMES
     lowered = str(text or "").lower()
-    for game in ("Skyrim Special Edition", "Skyrim", "Fallout 4", "Cyberpunk 2077", "Stellar Blade"):
+    for game in games:
         if game.lower() in lowered:
             return game
+    text_key = alias_key(str(text or ""))
+    for key, targets in build_resolved_aliases(games).items():
+        if key and key in text_key and targets:
+            return targets[0]
     return None

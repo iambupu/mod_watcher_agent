@@ -38,11 +38,12 @@ class ChatAnswerOutput:
 
 
 class ChatAnswerTool:
-    """Agent tool for composing the final chat response from answer and card tools."""
+    """把候选结果、检索证据和 LLM 配置组合成最终聊天响应。"""
 
     name = "chat_answer"
 
     async def run(self, tool_input: ChatAnswerInput) -> ChatAnswerOutput:
+        # 自然语言回答和结构化 response cards 分开生成，保持前端展示契约稳定。
         answer_output = await AnswerGenerationTool().run(
             AnswerGenerationInput(
                 query=tool_input.query,

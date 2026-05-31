@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 
 from sqlmodel import Session
 
-from app.models.mod import Mod
 from app.services.agent.mod_search_service import build_summary_map
+from app.services.agent.response_builder import match_from_mod
 from app.services.agent.schemas import AgentModMatch
 from app.services.agent.search_types import SearchResult
 
@@ -24,7 +24,7 @@ class MatchMaterializerOutput:
 
 
 class MatchMaterializerTool:
-    """Agent tool for converting ranked search results into response matches."""
+    """把排序后的检索结果转换为前端稳定消费的 `AgentModMatch`。"""
 
     name = "match_materializer"
 
@@ -37,7 +37,7 @@ class MatchMaterializerTool:
         summary_by_mod = build_summary_map(self.session, mod_ids)
         matches = []
         for item in top:
-            match = _match_from_mod(item.mod, item.score, summary_by_mod)
+            match = match_from_mod(item.mod, item.score, summary_by_mod)
             match.score_breakdown = item.score_breakdown
             match.rank_reason = item.rank_reason
             matches.append(match)
@@ -49,26 +49,3 @@ class MatchMaterializerTool:
             tool_input.evidence_id,
         )
         return MatchMaterializerOutput(matches=matches)
-
-
-def _match_from_mod(mod: Mod, score: int, summary_by_mod: dict[int, str]) -> AgentModMatch:
-    return AgentModMatch(
-        id=mod.id or 0,
-        title=mod.title,
-        translated_title_zh=mod.translated_title_zh,
-        source=mod.source,
-        game=mod.game,
-        game_domain=mod.game_domain,
-        category=mod.category,
-        author=mod.author,
-        version=mod.version,
-        url=mod.url,
-        updated_at_remote=mod.updated_at_remote,
-        downloads=mod.downloads,
-        endorsements=mod.endorsements,
-        likes=mod.likes,
-        adult_content=mod.adult_content,
-        score=score,
-        original_summary=mod.original_summary,
-        translated_summary=summary_by_mod.get(mod.id or 0),
-    )

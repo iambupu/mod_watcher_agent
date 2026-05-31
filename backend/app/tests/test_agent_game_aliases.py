@@ -5,10 +5,16 @@ from uuid import uuid4
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.api.routes_agent import _apply_query_plan, _normalize_query_plan, _query_mods_with_plan
 from app.models.mod import Mod
 from app.models.summary import ModSummary
-from app.services.agent.query_planner import build_fallback_query_plan, detect_query_intent
+from app.services.agent.mod_search_service import query_mods_with_plan as _query_mods_with_plan
+from app.services.agent.query_planner import (
+    build_executor_query_plan,
+    detect_query_intent,
+)
+from app.services.agent.query_planner import (
+    normalize_query_plan as _normalize_query_plan,
+)
 
 
 def _make_engine():
@@ -85,71 +91,6 @@ def test_agent_intent_does_not_treat_popular_or_recommendation_search_as_compari
     assert detect_query_intent("Skyrim Special Edition utility mod no script extender requirement") == "search"
 
 
-def test_apply_query_plan_fallback_filters_by_score_and_explicit_adult_constraint():
-    clean = _agent_mod("clean", "XXTB Prototype Suit", adult_content=False)
-    adult = _agent_mod("adult", "XXTB Adult Suit", adult_content=True)
-    unrelated = _agent_mod("other", "Kawaii War Dress", adult_content=False)
-
-    results = _apply_query_plan([clean, adult, unrelated], "XXTB 非成人 mod", None)
-
-    assert [mod.external_id for _, mod in results] == ["clean"]
-
-
-def test_apply_query_plan_recent_sorts_by_remote_update_then_first_seen():
-    older = _agent_mod(
-        "older",
-        "Stellar Armor",
-        updated_at_remote="2026-05-20T00:00:00",
-        first_seen_at="2026-05-21T00:00:00",
-    )
-    newest_seen_later = _agent_mod(
-        "newer-b",
-        "Stellar Armor B",
-        updated_at_remote="2026-05-22T00:00:00",
-        first_seen_at="2026-05-22T02:00:00",
-    )
-    newest_seen_earlier = _agent_mod(
-        "newer-a",
-        "Stellar Armor A",
-        updated_at_remote="2026-05-22T00:00:00",
-        first_seen_at="2026-05-22T01:00:00",
-    )
-
-    results = _apply_query_plan(
-        [older, newest_seen_earlier, newest_seen_later],
-        "最近有什么 mod 更新",
-        {"intent": "recent", "limit": 8},
-    )
-
-    assert [mod.external_id for _, mod in results] == ["newer-b", "newer-a", "older"]
-
-
-def test_apply_query_plan_explicit_constraints_return_empty_without_match():
-    unrelated = _agent_mod("skyrim", "Skyrim Armor", game="Skyrim Special Edition")
-
-    results = _apply_query_plan(
-        [unrelated],
-        "Stellar Blade armor",
-        {"intent": "search", "game": "Stellar Blade", "keywords": ["armor"], "limit": 8},
-    )
-
-    assert results == []
-
-
-def test_apply_query_plan_keywords_match_extra_text_and_increase_score():
-    plain = _agent_mod("plain", "Generic Outfit")
-    translated = _agent_mod("translated", "Generic Dress")
-
-    results = _apply_query_plan(
-        [plain, translated],
-        "玻尿酸",
-        {"intent": "search", "keywords": ["玻尿酸"], "limit": 8},
-        extra_text_by_mod={translated.id or 0: "玻尿酸化面部网格"},
-    )
-
-    assert [mod.external_id for _, mod in results] == ["translated"]
-
-
 def test_agent_scope_constraints_override_source_game_domain_and_sort():
     slot_options = {
         "games": ["Skyrim Special Edition"],
@@ -202,7 +143,7 @@ def test_agent_fallback_plan_infers_source_constraints_without_source_keywords()
         "sources": ["nexusmods", "loverslab"],
     }
 
-    raw_plan = build_fallback_query_plan("排除 LoversLab，只看 Nexus bimbo mod")
+    raw_plan = build_executor_query_plan("排除 LoversLab，只看 Nexus bimbo mod")
     plan = _normalize_query_plan(raw_plan, "排除 LoversLab，只看 Nexus bimbo mod", slot_options)
 
     assert plan["keywords"] == ["bimbo"]
@@ -218,8 +159,8 @@ def test_agent_source_aliases_are_shared_by_source_and_identity_inference():
         "sources": ["nexusmods", "loverslab"],
     }
 
-    source_plan = _normalize_query_plan(build_fallback_query_plan("只看 ll bimbo mod"), "只看 ll bimbo mod", slot_options)
-    identity_plan = _normalize_query_plan(build_fallback_query_plan("ll file 48837"), "ll file 48837", slot_options)
+    source_plan = _normalize_query_plan(build_executor_query_plan("只看 ll bimbo mod"), "只看 ll bimbo mod", slot_options)
+    identity_plan = _normalize_query_plan(build_executor_query_plan("ll file 48837"), "ll file 48837", slot_options)
 
     assert source_plan["sources"] == ["loverslab"]
     assert identity_plan["sources"] == ["loverslab"]
@@ -234,7 +175,7 @@ def test_agent_fallback_plan_infers_popularity_sort_without_sort_keywords():
         "sources": ["nexusmods", "loverslab"],
     }
 
-    raw_plan = build_fallback_query_plan("下载最多的 Skyrim Special Edition bimbo mod")
+    raw_plan = build_executor_query_plan("下载最多的 Skyrim Special Edition bimbo mod")
     plan = _normalize_query_plan(raw_plan, "下载最多的 Skyrim Special Edition bimbo mod", slot_options)
 
     assert plan["keywords"] == ["bimbo"]
@@ -251,7 +192,7 @@ def test_agent_fallback_plan_infers_download_threshold_without_threshold_keyword
         "sources": ["nexusmods", "loverslab"],
     }
 
-    raw_plan = build_fallback_query_plan("Skyrim Special Edition bimbo mod 下载至少 1000")
+    raw_plan = build_executor_query_plan("Skyrim Special Edition bimbo mod 下载至少 1000")
     plan = _normalize_query_plan(raw_plan, "Skyrim Special Edition bimbo mod 下载至少 1000", slot_options)
 
     assert plan["keywords"] == ["bimbo"]
@@ -267,7 +208,7 @@ def test_agent_fallback_plan_infers_explicit_time_window_without_time_keywords()
         "sources": ["nexusmods", "loverslab"],
     }
 
-    raw_plan = build_fallback_query_plan("最近7天的 Skyrim Special Edition bimbo mod")
+    raw_plan = build_executor_query_plan("最近7天的 Skyrim Special Edition bimbo mod")
     plan = _normalize_query_plan(raw_plan, "最近7天的 Skyrim Special Edition bimbo mod", slot_options)
 
     assert plan["keywords"] == ["bimbo"]
@@ -285,7 +226,7 @@ def test_agent_fallback_plan_infers_absolute_updated_after_date_without_date_key
     }
     query = "2024\u5e74\u4ee5\u540e\u66f4\u65b0\u7684 Skyrim Special Edition body mod"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["games"] == ["Skyrim Special Edition"]
@@ -304,7 +245,7 @@ def test_agent_fallback_plan_infers_published_year_range_without_date_keywords()
     }
     query = "2024\u5e74\u53d1\u5e03\u7684 Skyrim Special Edition body mod"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["games"] == ["Skyrim Special Edition"]
@@ -323,7 +264,7 @@ def test_agent_fallback_plan_infers_explicit_tag_filter_without_tag_keywords():
         "sources": ["nexusmods", "loverslab"],
     }
 
-    raw_plan = build_fallback_query_plan("Skyrim Special Edition body mod with CBBE tag")
+    raw_plan = build_executor_query_plan("Skyrim Special Edition body mod with CBBE tag")
     plan = _normalize_query_plan(raw_plan, "Skyrim Special Edition body mod with CBBE tag", slot_options)
 
     assert plan["games"] == ["Skyrim Special Edition"]
@@ -339,14 +280,14 @@ def test_agent_fallback_plan_infers_chinese_explicit_tag_filter():
     }
     query = "\u5e26 CBBE \u6807\u7b7e\u7684 Skyrim Special Edition body mod"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["games"] == ["Skyrim Special Edition"]
     assert plan["tags"] == ["CBBE"]
 
 
-def test_agent_normalizer_does_not_trust_implicit_llm_tags_as_hard_filters():
+def test_agent_normalizer_does_not_trust_implicit_tags_as_hard_filters():
     slot_options = {
         "games": ["Skyrim Special Edition"],
         "game_domains": ["skyrimspecialedition"],
@@ -376,7 +317,7 @@ def test_agent_fallback_plan_infers_exact_title_from_named_query():
         "sources": ["nexusmods", "loverslab"],
     }
 
-    raw_plan = build_fallback_query_plan('Skyrim Special Edition mod named "Bimbo Body Morph"')
+    raw_plan = build_executor_query_plan('Skyrim Special Edition mod named "Bimbo Body Morph"')
     plan = _normalize_query_plan(raw_plan, 'Skyrim Special Edition mod named "Bimbo Body Morph"', slot_options)
 
     assert plan["games"] == ["Skyrim Special Edition"]
@@ -391,7 +332,7 @@ def test_agent_fallback_plan_infers_explicit_version_without_version_keywords():
         "sources": ["nexusmods", "loverslab"],
     }
 
-    raw_plan = build_fallback_query_plan("Skyrim Special Edition bimbo preset version 1.2.0")
+    raw_plan = build_executor_query_plan("Skyrim Special Edition bimbo preset version 1.2.0")
     plan = _normalize_query_plan(raw_plan, "Skyrim Special Edition bimbo preset version 1.2.0", slot_options)
 
     assert plan["games"] == ["Skyrim Special Edition"]
@@ -409,7 +350,7 @@ def test_agent_fallback_plan_infers_source_url_identity_without_url_keywords():
     }
     query = "看看 https://www.nexusmods.com/skyrimspecialedition/mods/1001?tab=files"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["sources"] == ["nexusmods"]
@@ -427,7 +368,7 @@ def test_agent_fallback_plan_canonicalizes_nexus_numeric_id_with_game_domain():
     }
     query = "Nexus Skyrim Special Edition mod id 1001"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["sources"] == ["nexusmods"]
@@ -444,7 +385,7 @@ def test_agent_fallback_plan_infers_loverslab_file_identity():
         "sources": ["nexusmods", "loverslab"],
     }
 
-    raw_plan = build_fallback_query_plan("LoversLab file 48837")
+    raw_plan = build_executor_query_plan("LoversLab file 48837")
     plan = _normalize_query_plan(raw_plan, "LoversLab file 48837", slot_options)
 
     assert plan["sources"] == ["loverslab"]
@@ -461,7 +402,7 @@ def test_agent_fallback_plan_infers_requirement_terms_without_requirement_keywor
     }
     query = "需要 SKSE 前置的 Skyrim Special Edition utility mod"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["intent"] == "search"
@@ -480,7 +421,7 @@ def test_agent_fallback_plan_infers_compatibility_terms_without_compatibility_ke
     }
     query = "\u652f\u6301 AE \u7684 Skyrim Special Edition body mod"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["intent"] == "search"
@@ -500,7 +441,7 @@ def test_agent_fallback_plan_treats_gameplay_support_as_search_keyword_not_compa
     }
     query = "有什么mod支持怀孕玩法"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["intent"] == "search"
@@ -508,7 +449,7 @@ def test_agent_fallback_plan_treats_gameplay_support_as_search_keyword_not_compa
     assert "怀孕" in plan["keywords"] or "pregnancy" in plan["keywords"]
 
 
-def test_agent_normalize_plan_rejects_llm_gameplay_support_as_compatibility():
+def test_agent_normalize_plan_rejects_gameplay_support_as_compatibility():
     slot_options = {
         "games": ["Skyrim Special Edition"],
         "game_domains": ["skyrimspecialedition"],
@@ -529,8 +470,8 @@ def test_agent_normalize_plan_rejects_llm_gameplay_support_as_compatibility():
 
 
 def test_agent_fallback_plan_keeps_explicit_risk_question_as_install_risk():
-    assert build_fallback_query_plan("这个安装风险高吗，会不会有前置依赖冲突？")["intent"] == "install_risk"
-    assert build_fallback_query_plan("SKSE 前置安装风险怎么样？")["intent"] == "install_risk"
+    assert build_executor_query_plan("这个安装风险高吗，会不会有前置依赖冲突？")["intent"] == "install_risk"
+    assert build_executor_query_plan("SKSE 前置安装风险怎么样？")["intent"] == "install_risk"
 
 
 def test_agent_fallback_plan_infers_summary_language_without_language_keywords():
@@ -542,7 +483,7 @@ def test_agent_fallback_plan_infers_summary_language_without_language_keywords()
     }
     query = "\u6709\u4e2d\u6587\u6458\u8981\u7684 Skyrim Special Edition body mod"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["games"] == ["Skyrim Special Edition"]
@@ -560,7 +501,7 @@ def test_agent_fallback_plan_infers_author_without_author_keywords():
         "sources": ["nexusmods", "loverslab"],
     }
 
-    raw_plan = build_fallback_query_plan("作者 Ousnius 的 Skyrim Special Edition body mod")
+    raw_plan = build_executor_query_plan("作者 Ousnius 的 Skyrim Special Edition body mod")
     plan = _normalize_query_plan(raw_plan, "作者 Ousnius 的 Skyrim Special Edition body mod", slot_options)
 
     assert plan["author"] == "Ousnius"
@@ -578,7 +519,7 @@ def test_agent_fallback_plan_infers_excluded_content_keywords():
         "sources": ["nexusmods", "loverslab"],
     }
 
-    raw_plan = build_fallback_query_plan("Skyrim Special Edition body mod 不要 armor")
+    raw_plan = build_executor_query_plan("Skyrim Special Edition body mod 不要 armor")
     plan = _normalize_query_plan(raw_plan, "Skyrim Special Edition body mod 不要 armor", slot_options)
 
     assert plan["games"] == ["Skyrim Special Edition"]
@@ -596,7 +537,7 @@ def test_agent_fallback_plan_treats_negative_requirement_as_exclusion():
     }
     query = "不需要 SKSE 前置的 Skyrim Special Edition utility mod"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["intent"] == "search"
@@ -616,7 +557,7 @@ def test_agent_fallback_plan_treats_negative_compatibility_as_exclusion():
     }
     query = "不支持 AE 的 Skyrim Special Edition body mod"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["intent"] == "search"
@@ -636,7 +577,7 @@ def test_agent_fallback_plan_infers_views_and_likes_thresholds_without_metric_ke
     }
     query = "\u6d4f\u89c8\u91cf\u81f3\u5c11 1000\u3001\u559c\u6b22\u6570\u81f3\u5c11 20 \u7684 Skyrim Special Edition body mod"
 
-    raw_plan = build_fallback_query_plan(query)
+    raw_plan = build_executor_query_plan(query)
     plan = _normalize_query_plan(raw_plan, query, slot_options)
 
     assert plan["min_views"] == 1000
@@ -649,7 +590,7 @@ def test_agent_fallback_plan_infers_views_and_likes_thresholds_without_metric_ke
     assert "Armor" not in plan["categories"]
 
 
-def test_agent_ignores_llm_adult_guess_without_explicit_user_marker():
+def test_agent_ignores_adult_guess_without_explicit_user_marker():
     slot_options = {
         "games": ["Stellar Blade"],
         "game_domains": [],
@@ -703,6 +644,32 @@ def test_chinese_semantic_query_infers_existing_categories_and_keywords():
     assert "outfit" in plan["keywords"]
 
 
+def test_open_discovery_category_guess_becomes_soft_hint():
+    slot_options = {
+        "games": ["Skyrim Special Edition"],
+        "game_domains": ["skyrimspecialedition"],
+        "categories": ["Quests and Adventures", "Body, Face, and Hair"],
+        "sources": ["nexusmods", "loverslab"],
+    }
+
+    plan = _normalize_query_plan(
+        {
+            "intent": "search",
+            "keywords": ["bimbo"],
+            "categories": ["Quests and Adventures"],
+            "semantic_anchors": ["bimbo", "roleplay"],
+            "semantic_domains": ["identity_style", "mechanics"],
+        },
+        "天际有什么扮演bimbo的MOD",
+        slot_options,
+    )
+
+    assert plan["categories"] == []
+    assert "Quests and Adventures" in plan["category_hints"]
+    assert "Body, Face, and Hair" in plan["category_hints"]
+    assert plan["keywords"] == ["bimbo", "roleplay", "character progression", "scenario", "quest"]
+
+
 def test_chinese_weapon_query_infers_existing_weapon_category():
     slot_options = {
         "games": ["Skyrim Special Edition"],
@@ -721,7 +688,7 @@ def test_chinese_weapon_query_infers_existing_weapon_category():
     assert "weapon" in plan["keywords"]
 
 
-def test_semantic_query_filters_unrelated_llm_categories_against_db_values():
+def test_semantic_query_filters_unrelated_categories_against_db_values():
     slot_options = {
         "games": ["Skyrim Special Edition"],
         "game_domains": ["skyrimspecialedition"],
@@ -738,7 +705,7 @@ def test_semantic_query_filters_unrelated_llm_categories_against_db_values():
     assert plan["categories"] == ["Outfits", "Clothing and Accessories"]
 
 
-def test_specific_keyword_query_drops_broad_llm_category_guess():
+def test_specific_keyword_query_drops_broad_category_guess():
     slot_options = {
         "games": ["Skyrim Special Edition"],
         "game_domains": ["skyrimspecialedition"],
@@ -862,7 +829,7 @@ def test_agent_query_matches_translated_summary_text():
     assert [mod.external_id for _, mod in results] == ["botox-1"]
 
 
-def test_llm_discovered_game_alias_is_persisted_and_used(monkeypatch):
+def test_discovered_game_alias_is_persisted_and_used(monkeypatch):
     alias_file = _alias_file("learned")
     monkeypatch.setattr("app.services.game_alias_service.settings.GAME_ALIAS_FILE", str(alias_file))
     slot_options = {
@@ -946,7 +913,7 @@ def test_chinese_game_alias_query_returns_stellar_blade_mods(monkeypatch):
 
 
 def test_agent_fallback_plan_infers_thumbnail_filter_without_media_keywords():
-    plan = build_fallback_query_plan(
+    plan = build_executor_query_plan(
         "\u6709\u9884\u89c8\u56fe\u7684 Skyrim Special Edition body mod"
     )
 
@@ -957,7 +924,7 @@ def test_agent_fallback_plan_infers_thumbnail_filter_without_media_keywords():
 
 
 def test_agent_fallback_plan_infers_negative_thumbnail_filter():
-    plan = build_fallback_query_plan("\u65e0\u56fe Skyrim Special Edition body mod")
+    plan = build_executor_query_plan("\u65e0\u56fe Skyrim Special Edition body mod")
 
     assert plan["has_thumbnail"] is False
     assert "body" in [keyword.lower() for keyword in plan["keywords"]]

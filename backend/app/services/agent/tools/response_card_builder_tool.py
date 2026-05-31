@@ -23,7 +23,7 @@ class ResponseCardBuilderOutput:
 
 
 class ResponseCardBuilderTool:
-    """Agent tool for standardized response card construction."""
+    """构建标准 response cards，保持前端展示和质量门契约一致。"""
 
     name = "response_card_builder"
 

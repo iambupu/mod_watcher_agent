@@ -4,7 +4,10 @@ from typing import Any
 
 from sqlmodel import Session
 
+from app.services.agent.list_utils import string_list
 from app.services.settings_service import SettingsService
+from app.utils.boolean import parse_bool
+from app.utils.json import json_object
 
 PREFERENCES_KEY = "agent_preferences_json"
 PREFERENCES_DIRTY_KEY = "agent_preferences_dirty"
@@ -15,14 +18,8 @@ class AgentPreferenceService:
         self.settings = SettingsService(session)
 
     def load_preferences(self) -> dict[str, Any]:
-        raw = self.settings.get(PREFERENCES_KEY)
-        if not raw:
-            return _empty_preferences()
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return _empty_preferences()
-        if not isinstance(data, dict):
+        data = json_object(self.settings.get(PREFERENCES_KEY))
+        if not data:
             return _empty_preferences()
         return {**_empty_preferences(), **data}
 
@@ -43,7 +40,7 @@ class AgentPreferenceService:
         self.settings.set(PREFERENCES_DIRTY_KEY, "true")
 
     def is_dirty(self) -> bool:
-        return (self.settings.get(PREFERENCES_DIRTY_KEY) or "false").strip().lower() == "true"
+        return parse_bool(self.settings.get(PREFERENCES_DIRTY_KEY))
 
 
 def _empty_preferences() -> dict[str, Any]:
@@ -61,9 +58,9 @@ def _clean_context(context: dict[str, Any]) -> dict[str, Any]:
         if not name:
             continue
         if isinstance(value, list):
-            values = [str(item).strip() for item in value if str(item).strip()]
+            values = string_list(value, limit=12)
             if values:
-                cleaned[name] = values[:12]
+                cleaned[name] = values
             continue
         if isinstance(value, bool):
             cleaned[name] = value

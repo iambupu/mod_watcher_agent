@@ -9,6 +9,9 @@ from app.services.agent.context.context_inference import (
     has_distinctive_keywords,
     semantic_continuity_score,
 )
+from app.services.agent.context.context_utils import merge_context_terms
+from app.services.agent.list_utils import string_list
+from app.utils.numeric import safe_float
 
 
 @dataclass(frozen=True)
@@ -39,8 +42,8 @@ def evaluate_context_diagnosis(
     context_slots: dict[str, Any],
 ) -> ContextDiagnosisSignal:
     followup = followup_decision(query)
-    context_semantic_anchors = _string_list(context_slots.get("semantic_anchors"))
-    effective_context_terms = merge_terms(context_keywords, context_semantic_anchors)
+    context_semantic_anchors = string_list(context_slots.get("semantic_anchors"), limit=12)
+    effective_context_terms = merge_context_terms(context_keywords, context_semantic_anchors)
     continuity = 0.0
     inherit_score = 0.0
     topic_shift = False
@@ -62,7 +65,7 @@ def evaluate_context_diagnosis(
         inherit_score=float(inherit_score),
         topic_shift=bool(topic_shift),
         context_source=str(context_slots.get("source") or "unknown"),
-        context_quality_score=float(context_slots.get("quality_score") or 0.0),
+        context_quality_score=safe_float(context_slots.get("quality_score")),
         promote_followup_from_context=(
             (not followup.is_followup)
             and bool(context_semantic_anchors)
@@ -87,14 +90,14 @@ def decide_preference_memory_gate(
     if isinstance(memory_meta, dict) and bool(memory_meta.get("preference_stale")):
         return PreferenceMemoryGate(allow=False, reason="stale_preference_memory")
     followup = followup_decision(query)
-    plan_keywords = _string_list(query_plan.get("keywords"))
-    context_semantic_anchors = _string_list(context_slots.get("semantic_anchors"))
-    effective_context_terms = merge_terms(context_keywords, context_semantic_anchors)
+    plan_keywords = string_list(query_plan.get("keywords"), limit=12)
+    context_semantic_anchors = string_list(context_slots.get("semantic_anchors"), limit=12)
+    effective_context_terms = merge_context_terms(context_keywords, context_semantic_anchors)
     inherit_decision = decide_context_inheritance(
         query=query,
         current_keywords=plan_keywords,
         context_keywords=effective_context_terms,
-        context_quality=float(context_slots.get("quality_score") or 0.0),
+        context_quality=safe_float(context_slots.get("quality_score")),
         has_refinement_constraints=False,
         context_has_semantic_anchors=bool(context_semantic_anchors),
     )
@@ -117,20 +120,3 @@ def decide_preference_memory_gate(
     if has_strong_current_signal:
         return PreferenceMemoryGate(allow=False, reason="strong_current_signal")
     return PreferenceMemoryGate(allow=True, reason="weak_current_signal")
-
-
-def merge_terms(primary: list[str], secondary: list[str]) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    for value in [*primary, *secondary]:
-        token = str(value).strip().lower()
-        if token and token not in seen:
-            merged.append(token)
-            seen.add(token)
-    return merged
-
-
-def _string_list(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()][:12]

@@ -7,7 +7,10 @@ from app.services.agent.context.context_inference import (
     has_distinctive_keywords,
     semantic_continuity_score,
 )
+from app.services.agent.context.context_utils import has_query_context_signal as has_context_signal
+from app.services.agent.list_utils import string_list
 from app.services.agent.semantic_search import base_keywords
+from app.utils.numeric import safe_float
 
 
 @dataclass(frozen=True)
@@ -47,7 +50,7 @@ def select_history_query_context(
     for idx, context in enumerate(candidates):
         if not has_context_signal(context):
             continue
-        candidate_keywords = _string_list(context.get("keywords"))
+        candidate_keywords = string_list(context.get("keywords"))
         continuity = semantic_continuity_score(current_text, current_keywords, candidate_keywords)
         quality = context_quality_score(context)
         structural_bonus = 0.0
@@ -68,7 +71,7 @@ def select_history_query_context(
     if not scored_candidates:
         return None
     best_score, _best_idx, best_context = max(scored_candidates, key=lambda item: (item[0], -item[1]))
-    best_quality = float(best_context.get("quality_score") or 0.0)
+    best_quality = safe_float(best_context.get("quality_score"))
     if (best_score >= 0.18 and best_quality >= 0.2) or (followup.low_signal and best_quality >= 0.12):
         return QueryContextSelection(
             selected_context=best_context,
@@ -80,16 +83,9 @@ def select_history_query_context(
     return None
 
 
-def has_context_signal(context: dict[str, Any]) -> bool:
-    return bool(context.get("keywords")) or any(
-        context.get(key) is not None
-        for key in ["game", "source_name", "category", "adult_content", "sort_field"]
-    )
-
-
 def context_quality_score(context: dict[str, Any]) -> float:
-    keywords = _string_list(context.get("keywords"))
-    semantic_anchors = _string_list(context.get("semantic_anchors"))
+    keywords = string_list(context.get("keywords"))
+    semantic_anchors = string_list(context.get("semantic_anchors"))
     score = 0.0
     if keywords:
         score += min(len(keywords), 4) * 0.18
@@ -106,9 +102,3 @@ def context_quality_score(context: dict[str, Any]) -> float:
     if context.get("sort_field"):
         score += 0.08
     return round(min(score, 1.0), 3)
-
-
-def _string_list(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]

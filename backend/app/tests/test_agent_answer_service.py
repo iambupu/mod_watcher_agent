@@ -29,6 +29,27 @@ def test_parse_next_steps_accepts_json_array():
     assert steps == ["想看 XXTB Suit 的安装风险吗？", "要按下载量重排这些 Stellar Blade 结果吗？"]
 
 
+def test_parse_next_steps_accepts_wrapped_json_array():
+    steps = parse_next_steps(
+        """```json
+        ["继续看安装风险", "只看最近更新"]
+        ```
+        """
+    )
+
+    assert steps == ["继续看安装风险", "只看最近更新"]
+
+
+def test_parse_next_steps_accepts_json_array_with_trailing_text():
+    steps = parse_next_steps('["继续看安装风险"]\n补充说明：以上是建议。')
+
+    assert steps == ["继续看安装风险"]
+
+
+def test_parse_next_steps_keeps_empty_json_array_empty():
+    assert parse_next_steps("[]") == []
+
+
 def test_parse_next_steps_accepts_numbered_lines():
     steps = parse_next_steps("1. 展开 MGO 的兼容性说明\n2. 只看 NexusMods 的最近更新结果")
 

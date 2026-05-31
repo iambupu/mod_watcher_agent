@@ -1,12 +1,13 @@
 import re
 
-from app.services.agent.semantic_search import semantic_query
+from app.services.agent.list_utils import merge_unique_text as _merge_unique
+from app.services.agent.semantic_search import semantic_query, strip_scope
 from app.services.game_alias_service import alias_key
 
 
 def infer_title_constraint(query: str) -> dict[str, str]:
-    """Infer an exact title phrase when the user explicitly names a mod."""
-    text = (query or "").split("[scope]", 1)[0].strip()
+    """在用户明确点名 MOD 时推断精确标题约束。"""
+    text = strip_scope(query)
     for pattern in [
         r"[\"“”']([^\"“”']{2,120})[\"“”']",
         r"(?:called|named|titled|title)\s*[:：=]?\s*[\"“']?([^\"“”'，,。？?\n]{2,120})",
@@ -22,8 +23,8 @@ def infer_title_constraint(query: str) -> dict[str, str]:
 
 
 def infer_version_constraint(query: str) -> dict[str, str]:
-    """Infer an explicit version filter such as "version 1.2.0" or "v1.5"."""
-    text = (query or "").split("[scope]", 1)[0].strip()
+    """推断 `version 1.2.0` 或 `v1.5` 之类的显式版本过滤条件。"""
+    text = strip_scope(query)
     patterns = [
         r"(?:version|版本)\s*[:：=]?\s*v?\s*([0-9]+(?:\.[0-9A-Za-z]+){0,4}(?:[-_][0-9A-Za-z]+)?)",
         r"\bv\s*([0-9]+(?:\.[0-9A-Za-z]+){1,4}(?:[-_][0-9A-Za-z]+)?)\b",
@@ -41,8 +42,8 @@ def infer_version_constraint(query: str) -> dict[str, str]:
 
 
 def infer_requirement_terms(query: str) -> dict[str, list[str]]:
-    """Infer explicit dependency/requirement names from install-risk questions."""
-    text = (query or "").split("[scope]", 1)[0].strip()
+    """从安装风险问题中推断明确的依赖或前置名称。"""
+    text = strip_scope(query)
     terms: list[str] = []
     patterns = [
         r"(?:需要|依赖|前置|要求)\s*([A-Za-z0-9][A-Za-z0-9_\-+ .]{1,80})(?:\s*(?:前置|依赖|要求))?",
@@ -60,8 +61,8 @@ def infer_requirement_terms(query: str) -> dict[str, list[str]]:
 
 
 def infer_compatibility_terms(query: str) -> dict[str, list[str]]:
-    """Infer explicit compatibility targets such as AE, VR, or game runtime versions."""
-    text = (query or "").split("[scope]", 1)[0].strip()
+    """推断 AE、VR 或游戏运行时版本等明确兼容目标。"""
+    text = strip_scope(query)
     terms: list[str] = []
     patterns = [
         r"(?:支持|兼容|适配)\s*([A-Za-z0-9][A-Za-z0-9_\-+ .]{0,80})",
@@ -87,8 +88,8 @@ def query_without_compatibility_terms(query: str) -> str:
 
 
 def infer_author_constraint(query: str) -> dict[str, str]:
-    """Infer author/modder name from common author-scoped search phrasing."""
-    text = (query or "").split("[scope]", 1)[0].strip()
+    """从常见作者限定表达中推断作者或 Modder 名称。"""
+    text = strip_scope(query)
     patterns = [
         r"(?:作者是|作者|创作者)\s*[:：=]?\s*([A-Za-z0-9][A-Za-z0-9_\- .]{1,80})",
         r"([A-Za-z0-9][A-Za-z0-9_\- .]{1,80})\s*(?:作者|创作者)\s*的?",
@@ -106,8 +107,8 @@ def infer_author_constraint(query: str) -> dict[str, str]:
 
 
 def infer_excluded_keywords(query: str) -> dict[str, list[str]]:
-    """Infer negative content terms such as "不要护甲" or "without armor"."""
-    text = (query or "").split("[scope]", 1)[0].strip()
+    """推断“不要护甲”或 `without armor` 之类的排除关键词。"""
+    text = strip_scope(query)
     text = query_without_adult_markers(text)
     phrases: list[str] = []
     for pattern in [
@@ -322,15 +323,3 @@ def expand_compatibility_term(term: str) -> list[str]:
     )
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .:-_")
     return [cleaned] if cleaned else []
-
-
-def _merge_unique(values: list[str], additions: list[str]) -> list[str]:
-    merged = list(values)
-    seen = {value.lower() for value in merged}
-    for item in additions:
-        value = str(item or "").strip()
-        key = value.lower()
-        if value and key not in seen:
-            merged.append(value)
-            seen.add(key)
-    return merged

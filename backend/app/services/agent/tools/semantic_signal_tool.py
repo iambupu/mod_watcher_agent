@@ -18,7 +18,7 @@ class SemanticSignalOutput:
 
 
 class SemanticSignalTool:
-    """Agent tool for extracting semantic anchors and domains from a user turn."""
+    """抽取语义锚点和语义域，避免只按表面关键词理解用户问题。"""
 
     name = "semantic_signal_extractor"
 

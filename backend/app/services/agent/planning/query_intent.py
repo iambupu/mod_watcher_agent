@@ -1,5 +1,6 @@
 import re
 
+from app.services.agent.list_utils import merge_unique_text as _merge_unique
 from app.services.agent.slot_aliases import SOURCE_ALIASES
 from app.services.agent.slot_text_inference import (
     infer_compatibility_terms,
@@ -9,7 +10,7 @@ from app.services.agent.slot_text_inference import (
 
 
 def is_recent_query(query: str) -> bool:
-    """Return whether the query asks for recent/updated mod results."""
+    """判断用户是否在请求最近更新或最新结果。"""
     q = query.lower()
     recent_words = [
         "最近",
@@ -26,8 +27,32 @@ def is_recent_query(query: str) -> bool:
     return has_recent and has_mod
 
 
+def is_open_discovery_query(query: str) -> bool:
+    """判断用户问题是否属于开放发现型检索。"""
+    text = str(query or "").lower()
+    return any(
+        marker in text
+        for marker in [
+            "有什么",
+            "有哪些",
+            "有没有",
+            "推荐",
+            "怎么搭",
+            "扮演",
+            "角色扮演",
+            "路线",
+            "what",
+            "which",
+            "recommend",
+            "roleplay",
+            "play as",
+            "rp",
+        ]
+    )
+
+
 def detect_query_intent(query: str) -> str:
-    """Classify high-level user intent before slot normalization."""
+    """在槽位标准化前识别用户的高层意图。"""
     q = (query or "").lower()
     comparison_markers = [
         "哪个",
@@ -123,7 +148,7 @@ def detect_query_intent(query: str) -> str:
 
 
 def detect_adult_constraint(query: str) -> bool | None:
-    """Infer an explicit adult-content constraint from query text."""
+    """从自然语言中识别显式成人内容约束。"""
     q = (query or "").lower()
     if not q:
         return None
@@ -156,7 +181,7 @@ def detect_adult_constraint(query: str) -> bool | None:
 
 
 def infer_source_constraints(query: str) -> dict[str, list[str]]:
-    """Infer source include/exclude constraints from natural language."""
+    """从自然语言中识别来源包含和排除约束。"""
     q = (query or "").lower()
     included: list[str] = []
     excluded: list[str] = []
@@ -176,7 +201,7 @@ def infer_source_constraints(query: str) -> dict[str, list[str]]:
 
 
 def infer_sort_preference(query: str) -> dict[str, str]:
-    """Infer sort field/order from common natural-language ranking requests."""
+    """从常见排序表达中识别排序字段和方向。"""
     q = (query or "").lower()
     ascending = any(marker in q for marker in ["最少", "最低", "least", "lowest", "fewest", "ascending", "asc"])
     sort_order = "asc" if ascending else "desc"
@@ -324,15 +349,3 @@ def _source_alias_pattern(alias: str) -> str:
     if re.fullmatch(r"[a-z0-9]+", alias):
         return rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])"
     return re.escape(alias)
-
-
-def _merge_unique(values: list[str], additions: list[str]) -> list[str]:
-    result = list(values)
-    seen = {str(value).strip().lower() for value in result}
-    for value in additions:
-        token = str(value).strip()
-        key = token.lower()
-        if token and key not in seen:
-            result.append(token)
-            seen.add(key)
-    return result

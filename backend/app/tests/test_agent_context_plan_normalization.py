@@ -45,7 +45,7 @@ def test_normalize_context_query_plan_replaces_context_game_when_query_has_new_g
         lambda session: {"games": [], "sources": [], "categories": []},
     )
     monkeypatch.setattr(
-        "app.services.agent.planning.context_plan_normalization.build_fallback_query_plan",
+        "app.services.agent.planning.context_plan_normalization.build_executor_query_plan",
         lambda query: {"keywords": ["cyberpunk"], "games": ["Cyberpunk 2077"]},
     )
 

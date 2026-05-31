@@ -2,7 +2,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from app.services.agent.planning.fallback_query_plan import build_fallback_query_plan
+from app.services.agent.list_utils import string_list as _string_list
+from app.services.agent.planning.executor_query_plan import build_executor_query_plan
 from app.services.agent.planning.query_diagnosis import diagnose_query
 from app.services.agent.planning.tool_planner import build_tool_plan
 from app.services.agent.quality._checks import (
@@ -14,6 +15,7 @@ from app.services.agent.quality._checks import (
     expect_field_type_summary as build_expect_field_type_summary,
 )
 from app.services.agent.query_planner import normalize_query_plan
+from app.utils.numeric import safe_float, safe_nonnegative_int
 
 _EXPECT_FIELD_TYPES = {
     "adult_content": "bool",
@@ -155,7 +157,7 @@ def _case_passes(case: dict[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
         )
         return False, checks
 
-    plan = build_fallback_query_plan(query)
+    plan = build_executor_query_plan(query)
     if isinstance(case.get("slot_options"), dict):
         plan = normalize_query_plan(plan, query, _quality_slot_options(case["slot_options"]))
     if "intent" in expected and not check("plan.intent", plan.get("intent") == expected["intent"], actual=plan.get("intent"), expected_value=expected["intent"]):
@@ -338,26 +340,25 @@ def _diagnosis_expectations_pass(
     ):
         return False, checks
     inherit_score = _evidence_field_value(evidence, "context_inherit_score")
-    try:
-        inherit_score_value = float(inherit_score) if inherit_score is not None else None
-    except (TypeError, ValueError):
-        inherit_score_value = None
+    inherit_score_value = safe_float(inherit_score) if inherit_score is not None else None
     if "context_inherit_score_min" in expected:
-        ok = inherit_score_value is not None and inherit_score_value >= float(expected["context_inherit_score_min"])
+        expected_min = safe_float(expected["context_inherit_score_min"])
+        ok = inherit_score_value is not None and inherit_score_value >= expected_min
         if not check(
             "diagnosis.context_inherit_score_min",
             ok,
             actual=inherit_score_value,
-            expected_value=float(expected["context_inherit_score_min"]),
+            expected_value=expected_min,
         ):
             return False, checks
     if "context_inherit_score_max" in expected:
-        ok = inherit_score_value is not None and inherit_score_value <= float(expected["context_inherit_score_max"])
+        expected_max = safe_float(expected["context_inherit_score_max"])
+        ok = inherit_score_value is not None and inherit_score_value <= expected_max
         if not check(
             "diagnosis.context_inherit_score_max",
             ok,
             actual=inherit_score_value,
-            expected_value=float(expected["context_inherit_score_max"]),
+            expected_value=expected_max,
         ):
             return False, checks
     pref_reason = _evidence_field_value(evidence, "preference_memory_reason")
@@ -385,11 +386,12 @@ def _diagnosis_expectations_pass(
     ):
         return False, checks
     pref_age = _evidence_field_value(evidence, "preference_memory_age_days")
+    pref_age_value = safe_nonnegative_int(pref_age)
     if "diagnosis_preference_memory_age_days" in expected and not check(
         "diagnosis.preference_memory_age_days",
-        int(pref_age or 0) == int(expected["diagnosis_preference_memory_age_days"]),
-        actual=int(pref_age or 0),
-        expected_value=int(expected["diagnosis_preference_memory_age_days"]),
+        pref_age_value == safe_nonnegative_int(expected["diagnosis_preference_memory_age_days"]),
+        actual=pref_age_value,
+        expected_value=safe_nonnegative_int(expected["diagnosis_preference_memory_age_days"]),
     ):
         return False, checks
     return True, checks
@@ -419,13 +421,3 @@ def _quality_slot_options(raw: dict[str, Any]) -> dict[str, list[str]]:
         "categories": _string_list(raw.get("categories")),
         "sources": _string_list(raw.get("sources")),
     }
-
-
-def _string_list(value: Any) -> list[str]:
-    if isinstance(value, str):
-        values = [value]
-    elif isinstance(value, list | tuple | set):
-        values = list(value)
-    else:
-        values = []
-    return [str(item).strip() for item in values if str(item).strip()]

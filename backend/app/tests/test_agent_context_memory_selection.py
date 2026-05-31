@@ -51,6 +51,24 @@ def test_select_effective_context_uses_long_term_when_short_context_is_weak_foll
     assert selected["source"] == "long_term_writeback"
 
 
+def test_select_effective_context_tolerates_invalid_quality_scores():
+    selected = select_effective_last_query_context(
+        "有什么相关风格的mod",
+        {"source": "current", "keywords": [], "quality_score": "bad"},
+        {
+            "long_term": {
+                "last_query_context": {
+                    "keywords": ["bimbo"],
+                    "semantic_anchors": ["roleplay"],
+                    "quality_score": "0.82",
+                }
+            }
+        },
+    )
+
+    assert selected["source"] == "long_term_writeback"
+
+
 def test_select_effective_context_does_not_use_long_term_for_strong_new_question():
     selected = select_effective_last_query_context(
         "换成 Skyrim 的正常服装 mod",
@@ -98,6 +116,18 @@ def test_backfill_query_context_uses_recent_user_history_for_followup():
     assert backfill.context["source"] == "history_backfill"
     assert "bimbo" in backfill.keywords
     assert backfill.context["game"] == "Skyrim Special Edition"
+
+
+def test_history_context_recognizes_game_alias_from_recent_user_turn():
+    context = history_context_for_diagnosis(
+        [
+            _HistoryItem("user", "天际有什么扮演 bimbo 的 MOD"),
+            _HistoryItem("assistant", "ok"),
+        ]
+    )
+
+    assert context["game"] == "Skyrim Special Edition"
+    assert "bimbo" in context["keywords"]
 
 
 def test_diagnosis_context_replaces_current_low_value_context_with_recent_user():

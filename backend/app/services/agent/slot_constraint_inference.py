@@ -1,9 +1,11 @@
 import re
 
+from app.services.agent.semantic_search import strip_scope
+
 
 def infer_numeric_constraints(query: str) -> dict[str, int]:
-    """Infer metric threshold filters from natural-language search requests."""
-    text = (query or "").split("[scope]", 1)[0]
+    """从自然语言搜索请求中推断数值阈值过滤条件。"""
+    text = strip_scope(query)
     constraints: dict[str, int] = {}
     for field, metric_patterns in {
         "min_downloads": [
@@ -46,8 +48,8 @@ def query_without_metric_terms(query: str) -> str:
 
 
 def infer_time_window(query: str) -> dict[str, int]:
-    """Infer explicit recent time windows such as "最近7天" or "last 2 weeks"."""
-    text = (query or "").split("[scope]", 1)[0]
+    """推断“最近 7 天”或“last 2 weeks”等显式时间窗口。"""
+    text = strip_scope(query)
     lower_text = text.lower()
     patterns = [
         r"(?:最近|近|过去|过去的)\s*([0-9一二两三四五六七八九十]+)\s*(天|日|周|星期|个月|月)",
@@ -74,8 +76,8 @@ def infer_time_window(query: str) -> dict[str, int]:
 
 
 def infer_absolute_date_constraints(query: str) -> dict[str, str]:
-    """Infer absolute date/year range filters such as updated after 2024."""
-    text = (query or "").split("[scope]", 1)[0]
+    """推断“2024 后更新”等绝对日期或年份范围过滤条件。"""
+    text = strip_scope(query)
     lower_text = text.lower()
     field = _date_field_from_text(lower_text)
     constraints: dict[str, str] = {}

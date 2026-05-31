@@ -1,4 +1,3 @@
-import json
 from collections import Counter
 from typing import Any
 
@@ -9,12 +8,13 @@ from app.models.mod import Mod
 from app.services.agent.memory.favorite_preference_summarizer import summarize_favorite_preferences
 from app.services.agent.memory.preference_service import AgentPreferenceService
 from app.services.agent.planning.query_intent import detect_adult_constraint
+from app.utils.json import json_array
 
 CONVERSATION_MESSAGE_LIMIT = 200
 
 
 def refresh_agent_preferences(session: Session) -> dict[str, Any]:
-    """Refresh the persisted user profile from favorites and agent conversation history."""
+    """根据收藏和 Agent 对话历史刷新持久化用户画像。"""
     favorite_summary = summarize_favorite_preferences(session)
     conversation_summary = summarize_conversation_preferences(session)
     preferences = AgentPreferenceService(session).save_preferences(
@@ -32,7 +32,7 @@ def refresh_agent_preferences(session: Session) -> dict[str, Any]:
 
 
 def summarize_conversation_preferences(session: Session) -> dict[str, Any]:
-    """Build deterministic preference signals from recent agent messages."""
+    """从最近 Agent 消息中构建确定性偏好信号。"""
     messages = session.exec(
         select(AgentMessage)
         .order_by(AgentMessage.id.desc())
@@ -61,7 +61,7 @@ def summarize_conversation_preferences(session: Session) -> dict[str, Any]:
             elif adult_constraint is False:
                 sfw_requests += 1
 
-        matches = _safe_json_list(message.matches_json)
+        matches = [item for item in json_array(message.matches_json) if isinstance(item, dict)]
         matched_mod_count += len(matches)
         for item in matches:
             _count_match_value(item.get("game"), game_counter)
@@ -107,18 +107,6 @@ def _load_slot_values(session: Session) -> dict[str, list[str]]:
         "categories": values(Mod.category),
         "sources": ["nexusmods", "nexus mods", "loverslab", *values(Mod.source)],
     }
-
-
-def _safe_json_list(raw: str | None) -> list[dict[str, Any]]:
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [item for item in parsed if isinstance(item, dict)]
 
 
 def _count_text_mentions(text: str, values: list[str], counter: Counter[str]) -> None:

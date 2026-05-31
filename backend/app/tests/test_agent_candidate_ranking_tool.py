@@ -20,8 +20,9 @@ from app.services.agent.tools.result_fusion_ranker_tool import (
 
 
 def _match(title: str) -> AgentModMatch:
+    mod_id = sum(ord(ch) for ch in title) % 10000
     return AgentModMatch(
-        id=1,
+        id=mod_id,
         title=title,
         source="nexusmods",
         game="Skyrim Special Edition",
@@ -40,6 +41,7 @@ async def test_candidate_ranking_merges_evidence_and_recovers_when_validator_dro
     def fake_fusion_run(self, tool_input):
         captured["fusion_query"] = tool_input.query
         captured["fusion_evidence_id"] = tool_input.evidence_id
+        captured["fusion_apply_distinctive_filter"] = tool_input.apply_distinctive_filter
         return ResultFusionRankerOutput(
             results=["ranked"],
             evidence=[{"fragment_id": "r_fusion_1", "stage": "final_ranking", "evidence_id": tool_input.evidence_id}],
@@ -75,7 +77,13 @@ async def test_candidate_ranking_merges_evidence_and_recovers_when_validator_dro
     output = await CandidateRankingTool(session=object(), validator=fake_validator).run(
         CandidateRankingInput(
             query="有什么相关风格的mod",
-            query_plan={"keywords": ["bimbo"], "limit": 5, "evidence_id": "ev_rank"},
+            query_plan={
+                "keywords": ["bimbo"],
+                "open_discovery": False,
+                "retrieval_mode": "filtered",
+                "limit": 5,
+                "evidence_id": "ev_rank",
+            },
             prior_evidence=[{"fragment_id": "r_exec_1", "stage": "local_retrieval", "evidence_id": "ev_rank"}],
             llm_available=True,
         )
@@ -86,6 +94,7 @@ async def test_candidate_ranking_merges_evidence_and_recovers_when_validator_dro
     assert output.validator_status == "succeeded"
     assert captured["fusion_query"] == "有什么相关风格的mod"
     assert captured["fusion_evidence_id"] == "ev_rank"
+    assert captured["fusion_apply_distinctive_filter"] is True
     assert captured["materializer_results"] == ["ranked"]
     assert captured["materializer_evidence_id"] == "ev_rank"
     assert captured["validator_query_plan"]["keywords"] == ["bimbo"]
@@ -96,3 +105,203 @@ async def test_candidate_ranking_merges_evidence_and_recovers_when_validator_dro
         "r_fusion_1",
         "r_candidate_recovery_1",
     ]
+
+
+@pytest.mark.asyncio
+async def test_candidate_ranking_uses_semantic_judge_for_open_discovery(monkeypatch):
+    captured = {}
+
+    def fake_fusion_run(self, tool_input):
+        captured["fusion_apply_distinctive_filter"] = tool_input.apply_distinctive_filter
+        return ResultFusionRankerOutput(
+            results=["ranked"],
+            evidence=[{"fragment_id": "r_fusion_1", "stage": "final_ranking", "evidence_id": tool_input.evidence_id}],
+        )
+
+    roleplay = _match("Bimbo Roleplay Framework")
+    outfit = _match("Bimbo Outfit Preset")
+    off_topic = _match("Unrelated Armor")
+
+    def fake_materializer_run(self, tool_input):
+        captured["materializer_limit"] = tool_input.limit
+        return MatchMaterializerOutput(matches=[off_topic, outfit, roleplay])
+
+    async def fake_validator(**kwargs):
+        raise AssertionError("open discovery should let semantic judge see materialized candidates first")
+
+    async def fake_judge(tool_input):
+        captured["judge_titles"] = [item.title for item in tool_input.candidates]
+        return {
+            "judgements": [
+                {
+                    "candidate_id": roleplay.id,
+                    "relevance": "high",
+                    "group": "core_gameplay",
+                    "reason": "direct roleplay mechanics",
+                },
+                {
+                    "candidate_id": outfit.id,
+                    "relevance": "medium",
+                    "group": "visual_support",
+                    "reason": "supporting visual style",
+                },
+                {
+                    "candidate_id": off_topic.id,
+                    "relevance": "reject",
+                    "group": "off_topic",
+                    "reason": "not bimbo roleplay",
+                },
+            ],
+            "groups": [
+                {
+                    "name": "core_gameplay",
+                    "label": "核心玩法",
+                    "candidate_ids": [roleplay.id],
+                    "reason": "main mechanics",
+                },
+                {
+                    "name": "visual_support",
+                    "label": "外观配套",
+                    "candidate_ids": [outfit.id],
+                    "reason": "style support",
+                },
+            ],
+            "gaps": ["缺少安装风险证据"],
+            "rejected": [{"candidate_id": off_topic.id, "reason": "not relevant"}],
+        }
+
+    monkeypatch.setattr(ResultFusionRankerTool, "run", fake_fusion_run)
+    monkeypatch.setattr(MatchMaterializerTool, "run", fake_materializer_run)
+
+    output = await CandidateRankingTool(
+        session=object(),
+        validator=fake_validator,
+        semantic_judge=fake_judge,
+    ).run(
+        CandidateRankingInput(
+            query="天际有什么扮演 bimbo 的 MOD",
+            query_plan={
+                "keywords": ["bimbo"],
+                "open_discovery": True,
+                "retrieval_mode": "fuzzy",
+                "_agent_semantic_strategy": {
+                    "task_type": "open_discovery",
+                    "strategy": "broad_then_judge",
+                },
+                "limit": 5,
+                "candidate_pool_limit": 30,
+                "evidence_id": "ev_rank",
+            },
+            prior_evidence=[{"fragment_id": "r_exec_1", "stage": "local_retrieval", "evidence_id": "ev_rank"}],
+            llm_available=True,
+        )
+    )
+
+    assert [match.title for match in output.matches] == ["Bimbo Roleplay Framework", "Bimbo Outfit Preset"]
+    assert output.semantic_judge_status == "succeeded"
+    assert captured["fusion_apply_distinctive_filter"] is False
+    assert captured["materializer_limit"] == 30
+    assert captured["judge_titles"] == ["Unrelated Armor", "Bimbo Outfit Preset", "Bimbo Roleplay Framework"]
+    assert output.query_plan["_agent_candidate_semantic_judge"]["groups"][0]["label"] == "核心玩法"
+    assert "语义裁判：high / 核心玩法" in output.matches[0].rank_reason
+    assert [item["fragment_id"] for item in output.evidence] == [
+        "r_exec_1",
+        "r_fusion_1",
+        "r_candidate_semantic_judge_1",
+    ]
+    judge_evidence = output.evidence[-1]
+    assert judge_evidence["used_llm"] is True
+    assert judge_evidence["rejected_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_ranking_judges_pool_then_trims_to_display_limit(monkeypatch):
+    captured = {}
+    candidates = [_match(f"Candidate {index}") for index in range(1, 9)]
+
+    def fake_fusion_run(self, tool_input):
+        return ResultFusionRankerOutput(
+            results=["ranked"],
+            evidence=[{"fragment_id": "r_fusion_1", "stage": "final_ranking", "evidence_id": tool_input.evidence_id}],
+        )
+
+    def fake_materializer_run(self, tool_input):
+        captured["materializer_limit"] = tool_input.limit
+        return MatchMaterializerOutput(matches=candidates)
+
+    async def fake_validator(**kwargs):
+        raise AssertionError("semantic judge should run before deterministic validator for open discovery")
+
+    async def fake_judge(tool_input):
+        captured["judge_count"] = len(tool_input.candidates)
+        return {
+            "judgements": [
+                {"candidate_id": item.id, "relevance": "high", "group": "core_gameplay", "reason": f"rank {index}"}
+                for index, item in enumerate(reversed(candidates), start=1)
+            ],
+            "groups": [{"name": "core_gameplay", "label": "核心玩法", "candidate_ids": [item.id for item in candidates], "reason": "pool"}],
+            "gaps": [],
+            "rejected": [],
+        }
+
+    monkeypatch.setattr(ResultFusionRankerTool, "run", fake_fusion_run)
+    monkeypatch.setattr(MatchMaterializerTool, "run", fake_materializer_run)
+
+    output = await CandidateRankingTool(
+        session=object(),
+        validator=fake_validator,
+        semantic_judge=fake_judge,
+    ).run(
+        CandidateRankingInput(
+            query="天际有什么 bimbo MOD",
+            query_plan={
+                "keywords": ["bimbo"],
+                "open_discovery": True,
+                "retrieval_mode": "fuzzy",
+                "limit": 3,
+                "candidate_pool_limit": 8,
+                "evidence_id": "ev_pool",
+            },
+            llm_available=True,
+        )
+    )
+
+    assert captured["materializer_limit"] == 8
+    assert captured["judge_count"] == 8
+    assert len(output.matches) == 3
+    assert output.evidence[-1]["input_count"] == 8
+    assert output.evidence[-1]["output_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_candidate_ranking_keeps_existing_path_when_llm_unavailable(monkeypatch):
+    def fake_fusion_run(self, tool_input):
+        return ResultFusionRankerOutput(results=["ranked"], evidence=[])
+
+    def fake_materializer_run(self, tool_input):
+        return MatchMaterializerOutput(matches=[_match("Original Match")])
+
+    async def fake_validator(**kwargs):
+        return kwargs["matches"]
+
+    async def fake_judge(tool_input):  # pragma: no cover - must not be called
+        raise AssertionError("semantic judge should not run without llm")
+
+    monkeypatch.setattr(ResultFusionRankerTool, "run", fake_fusion_run)
+    monkeypatch.setattr(MatchMaterializerTool, "run", fake_materializer_run)
+
+    output = await CandidateRankingTool(
+        session=object(),
+        validator=fake_validator,
+        semantic_judge=fake_judge,
+    ).run(
+        CandidateRankingInput(
+            query="天际有什么扮演 bimbo 的 MOD",
+            query_plan={"open_discovery": True, "retrieval_mode": "fuzzy", "limit": 5},
+            llm_available=False,
+        )
+    )
+
+    assert [match.title for match in output.matches] == ["Original Match"]
+    assert output.semantic_judge_status == "skipped"
+    assert "_agent_candidate_semantic_judge" not in output.query_plan

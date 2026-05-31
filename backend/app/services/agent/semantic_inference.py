@@ -1,7 +1,9 @@
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
+from app.services.agent.list_utils import unique_text
 from app.services.agent.semantic_taxonomy import SEMANTIC_RULES
 from app.services.agent.slot_aliases import SOURCE_ALIASES
 
@@ -83,7 +85,7 @@ def semantic_signals_from_anchors(anchors: list[str]) -> SemanticSignals:
 
 
 def semantic_domains_for_anchors(anchors: list[str]) -> list[str]:
-    """Return semantic domains for canonical anchors without rematching query text."""
+    """基于规范锚点返回语义域，不重新匹配查询文本。"""
     anchor_set = {str(anchor).strip() for anchor in anchors if str(anchor).strip()}
     domains: list[str] = []
     for rule in SEMANTIC_RULES:
@@ -93,7 +95,7 @@ def semantic_domains_for_anchors(anchors: list[str]) -> list[str]:
 
 
 def canonical_semantic_token(value: object) -> str:
-    """Return the canonical semantic anchor/name for a single lexical token."""
+    """返回单个词项对应的规范语义锚点名称。"""
     token = re.sub(r"\s+", " ", str(value or "").strip().lower())
     if not token:
         return ""
@@ -248,11 +250,4 @@ def _marker_matches_text(marker: str, text: str) -> bool:
 
 
 def unique_terms(values: list[str]) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        token = re.sub(r"\s+", " ", str(value or "").strip().lower())
-        if token and token not in seen:
-            merged.append(token)
-            seen.add(token)
-    return merged
+    return unique_text(re.sub(r"\s+", " ", str(value or "").strip().lower()) for value in values)

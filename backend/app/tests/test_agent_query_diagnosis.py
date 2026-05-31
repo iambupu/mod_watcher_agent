@@ -46,6 +46,8 @@ def test_diagnosis_exposes_query_keywords_as_understanding_slots_without_known_s
         query="Skyrim bimbo mod",
         query_plan={
             "intent": "search",
+            "open_discovery": True,
+            "retrieval_mode": "fuzzy",
             "keywords": ["bimbo"],
             "evidence_id": "ev_keywords",
             "games": [],
@@ -60,6 +62,8 @@ def test_diagnosis_exposes_query_keywords_as_understanding_slots_without_known_s
 
     assert "keywords" not in diagnosis["known_slots"]
     assert diagnosis["understanding"]["slots"]["keywords"] == ["bimbo"]
+    assert diagnosis["understanding"]["slots"]["open_discovery"] is True
+    assert diagnosis["understanding"]["slots"]["retrieval_mode"] == "fuzzy"
     evidence = diagnosis["understanding"]["evidence"]
     assert all(item.get("evidence_id") == "ev_keywords" for item in evidence)
     assert any(
@@ -68,36 +72,85 @@ def test_diagnosis_exposes_query_keywords_as_understanding_slots_without_known_s
         and item["value"] == ["bimbo"]
         for item in evidence
     )
+    assert any(
+        item["field"] == "open_discovery"
+        and item["source"] == "query_plan"
+        and item["value"] is True
+        for item in evidence
+    )
+    assert any(
+        item["field"] == "retrieval_mode"
+        and item["source"] == "query_plan"
+        and item["value"] == "fuzzy"
+        for item in evidence
+    )
 
 
-def test_diagnosis_exposes_query_planning_source_as_evidence():
+def test_diagnosis_treats_string_false_open_discovery_as_false():
     diagnosis = diagnose_query(
         query="Skyrim bimbo mod",
         query_plan={
             "intent": "search",
+            "open_discovery": "false",
+            "retrieval_mode": "fuzzy",
             "keywords": ["bimbo"],
-            "_agent_planning_source": "llm",
-            "evidence_id": "ev_planning_source",
-            "games": [],
-            "sources": [],
-            "categories": [],
-            "adult_content": None,
-            "sort_field": "relevance",
-            "sort_order": "desc",
         },
         active_constraints={},
     )
 
-    evidence = diagnosis["understanding"]["evidence"]
-    planning_source = [item for item in evidence if item["field"] == "planning_source"]
-    llm_used = [item for item in evidence if item["field"] == "llm_planning_used"]
-    assert planning_source
-    assert planning_source[0]["source"] == "query_plan"
-    assert planning_source[0]["value"] == "llm"
-    assert llm_used
-    assert llm_used[0]["source"] == "query_plan"
-    assert llm_used[0]["value"] is True
-    assert all(item.get("evidence_id") == "ev_planning_source" for item in evidence)
+    assert diagnosis["understanding"]["slots"]["open_discovery"] is False
+    assert any(
+        item["field"] == "open_discovery"
+        and item["source"] == "query_plan"
+        and item["value"] is False
+        for item in diagnosis["understanding"]["evidence"]
+    )
+
+
+def test_diagnosis_keeps_semantic_adult_content_as_bool():
+    diagnosis = diagnose_query(
+        query="成人 bimbo MOD",
+        query_plan={
+            "intent": "search",
+            "keywords": ["bimbo"],
+            "_agent_semantic_strategy": {
+                "task_type": "open_discovery",
+                "hard_filters": {"adult_content": True},
+                "confidence": 0.8,
+            },
+            "_agent_semantic_strategy_used_llm": True,
+        },
+        active_constraints={},
+    )
+
+    assert diagnosis["known_slots"]["adult_content"] is True
+    assert diagnosis["understanding"]["slots"]["adult_content"] is True
+    assert any(
+        item["field"] == "adult_content"
+        and item["source"] == "semantic_strategy"
+        and item["value"] is True
+        for item in diagnosis["understanding"]["evidence"]
+    )
+
+
+def test_diagnosis_uses_shared_boolean_parser_for_semantic_adult_content():
+    diagnosis = diagnose_query(
+        query="成人 bimbo MOD",
+        query_plan={
+            "intent": "search",
+            "keywords": ["bimbo"],
+            "_agent_semantic_strategy": {
+                "task_type": "open_discovery",
+                "hard_filters": {"adult_content": "on"},
+                "confidence": 0.8,
+            },
+            "_agent_semantic_strategy_used_llm": True,
+        },
+        active_constraints={},
+    )
+
+    assert diagnosis["known_slots"]["adult_content"] is True
+    assert diagnosis["understanding"]["slots"]["adult_content"] is True
 
 
 def test_diagnosis_prefers_llm_semantic_signals_from_query_plan():
@@ -106,7 +159,6 @@ def test_diagnosis_prefers_llm_semantic_signals_from_query_plan():
         query_plan={
             "intent": "search",
             "keywords": [],
-            "_agent_planning_source": "llm",
             "_agent_semantic_anchors": ["custom_llm_anchor"],
             "_agent_semantic_domains": ["custom_llm_domain"],
             "_agent_semantic_source": "llm",
@@ -125,10 +177,10 @@ def test_diagnosis_prefers_llm_semantic_signals_from_query_plan():
     anchor_items = [item for item in evidence if item["field"] == "semantic_anchors"]
     domain_items = [item for item in evidence if item["field"] == "semantic_domains"]
     assert anchor_items
-    assert anchor_items[0]["source"] == "llm_query_plan"
+    assert anchor_items[0]["source"] == "semantic_strategy"
     assert anchor_items[0]["value"] == ["custom_llm_anchor"]
     assert domain_items
-    assert domain_items[0]["source"] == "llm_query_plan"
+    assert domain_items[0]["source"] == "semantic_strategy"
     assert domain_items[0]["value"] == ["custom_llm_domain"]
     assert all(item.get("evidence_id") == "ev_llm_semantic" for item in evidence)
 
@@ -139,7 +191,6 @@ def test_diagnosis_derives_domains_for_llm_semantic_anchors_when_missing():
         query_plan={
             "intent": "search",
             "keywords": [],
-            "_agent_planning_source": "llm",
             "_agent_semantic_anchors": ["pregnancy"],
             "_agent_semantic_source": "llm",
             "evidence_id": "ev_llm_semantic_domain",
@@ -156,35 +207,8 @@ def test_diagnosis_derives_domains_for_llm_semantic_anchors_when_missing():
     evidence = diagnosis["understanding"]["evidence"]
     domain_items = [item for item in evidence if item["field"] == "semantic_domains"]
     assert domain_items
-    assert domain_items[0]["source"] == "llm_query_plan"
+    assert domain_items[0]["source"] == "semantic_strategy"
     assert "mechanics" in domain_items[0]["value"]
-
-
-def test_diagnosis_exposes_llm_planning_error_as_evidence():
-    diagnosis = diagnose_query(
-        query="有什么mod支持怀孕玩法",
-        query_plan={
-            "intent": "search",
-            "keywords": ["pregnancy"],
-            "_agent_planning_source": "fallback",
-            "_agent_llm_planning_error_type": "RuntimeError",
-            "evidence_id": "ev_planning_error",
-            "games": [],
-            "sources": [],
-            "categories": [],
-            "adult_content": None,
-            "sort_field": "relevance",
-            "sort_order": "desc",
-        },
-        active_constraints={},
-    )
-
-    evidence = diagnosis["understanding"]["evidence"]
-    error_items = [item for item in evidence if item["field"] == "llm_planning_error_type"]
-    assert error_items
-    assert error_items[0]["source"] == "query_plan"
-    assert error_items[0]["value"] == "RuntimeError"
-    assert all(item.get("evidence_id") == "ev_planning_error" for item in evidence)
 
 
 def test_diagnosis_links_all_semantic_signal_logs_to_evidence_id(caplog):
@@ -256,7 +280,7 @@ def test_diagnosis_current_plan_overrides_context_adult_content():
     assert diagnosis["should_clarify"] is False
 
 
-def test_diagnosis_uses_favorite_preferences_as_lowest_priority_context():
+def test_diagnosis_keeps_favorite_preferences_as_hint_not_scope():
     diagnosis = diagnose_query(
         query="找最近更新的服装 Mod",
         query_plan={
@@ -279,14 +303,17 @@ def test_diagnosis_uses_favorite_preferences_as_lowest_priority_context():
         },
     )
 
-    assert diagnosis["should_clarify"] is False
-    assert diagnosis["known_slots"]["game"] == "Stellar Blade"
-    assert diagnosis["known_slots"]["source"] == "nexusmods"
-    assert diagnosis["known_slots"]["adult_content_allowed"] is True
-    assert any(
-        item["field"] == "source" and item["source"] == "long_term_favorite"
-        for item in diagnosis["understanding"]["evidence"]
-    )
+    assert diagnosis["should_clarify"] is True
+    assert "game" not in diagnosis["known_slots"]
+    assert "source" not in diagnosis["known_slots"]
+    assert "adult_content_allowed" not in diagnosis["known_slots"]
+    evidence = diagnosis["understanding"]["evidence"]
+    pref_applied = [item for item in evidence if item["field"] == "preference_memory_applied"][0]
+    pref_available = [item for item in evidence if item["field"] == "preference_memory_available"][0]
+    pref_reason = [item for item in evidence if item["field"] == "preference_memory_reason"][0]
+    assert pref_applied["value"] is False
+    assert pref_available["value"] is True
+    assert pref_reason["value"] == "weak_current_signal"
 
 
 def test_diagnosis_promotes_install_risk_intent_from_natural_question():
@@ -482,6 +509,37 @@ def test_diagnosis_includes_context_inherit_decision_evidence_when_signal_provid
     assert policy_reasons and policy_reasons[0]["value"] == ["semantic_anchor_bias"]
 
 
+def test_diagnosis_tolerates_invalid_context_signal_numbers():
+    diagnosis = diagnose_query(
+        query="继续找类似的",
+        query_plan={
+            "intent": "search",
+            "keywords": ["similar"],
+            "games": [],
+            "sources": [],
+            "categories": [],
+            "adult_content": None,
+            "sort_field": "relevance",
+            "sort_order": "desc",
+        },
+        active_constraints={},
+        context_keywords=["bimbo"],
+        context_slots={
+            "_agent_context_signal": {
+                "inherited": True,
+                "inherit_threshold": "bad",
+                "followup_score": "bad",
+            },
+        },
+    )
+
+    evidence = diagnosis["understanding"]["evidence"]
+    threshold = [item for item in evidence if item["field"] == "context_inherit_threshold"][0]
+    followup_score = [item for item in evidence if item["field"] == "context_followup_score"][0]
+    assert threshold["value"] == 0.0
+    assert followup_score["value"] == 0.0
+
+
 def test_diagnosis_uses_inherited_context_slots_as_known_scope():
     diagnosis = diagnose_query(
         query="继续找相关的",
@@ -579,6 +637,27 @@ def test_diagnosis_preference_memory_gate_blocks_when_preference_is_stale():
     assert pref_stale["value"] is True
     assert pref_age["value"] == 180
     assert pref_reason["value"] == "stale_preference_memory"
+
+
+def test_diagnosis_tolerates_invalid_preference_memory_age():
+    diagnosis = diagnose_query(
+        query="找 Skyrim outfit",
+        query_plan={
+            "intent": "search",
+            "keywords": ["outfit"],
+            "games": ["Skyrim"],
+            "sources": [],
+            "categories": [],
+            "adult_content": None,
+            "sort_field": "relevance",
+            "sort_order": "desc",
+        },
+        active_constraints={},
+        preferences={"memory_meta": {"preferences_age_days": "old"}},
+    )
+
+    pref_age = [item for item in diagnosis["understanding"]["evidence"] if item["field"] == "preference_memory_age_days"][0]
+    assert pref_age["value"] == 0
 
 
 @pytest.mark.parametrize(

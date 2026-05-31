@@ -1,14 +1,16 @@
 from typing import Any
 
 from app.services.agent.identity_inference import infer_identity_constraints
+from app.services.agent.list_utils import unique_text
 from app.services.agent.planning.query_intent import (
     detect_adult_constraint,
     detect_query_intent,
     infer_sort_preference,
     infer_source_constraints,
+    is_open_discovery_query,
     is_recent_query,
 )
-from app.services.agent.semantic_search import base_keywords
+from app.services.agent.semantic_search import base_keywords, strip_scope
 from app.services.agent.slot_attribute_inference import (
     infer_summary_language_constraints,
     infer_tag_constraints,
@@ -33,16 +35,19 @@ from app.services.agent.slot_text_inference import (
     query_without_compatibility_terms,
 )
 
-DEFAULT_FALLBACK_LIMIT = 8
+DEFAULT_EXECUTOR_QUERY_LIMIT = 8
 
 
-def build_fallback_query_plan(query: str, *, limit: int = DEFAULT_FALLBACK_LIMIT) -> dict[str, Any]:
-    """Build a deterministic query plan when LLM planning is unavailable."""
-    clean_query = _clean_fallback_keyword_query(query)
-    fallback_tokens = base_keywords(clean_query)
+def build_executor_query_plan(query: str, *, limit: int = DEFAULT_EXECUTOR_QUERY_LIMIT) -> dict[str, Any]:
+    """生成 executor 所需的确定性 query_plan 种子。"""
+    clean_query = _clean_executor_keyword_query(query)
+    executor_tokens = base_keywords(clean_query)
+    open_discovery = is_open_discovery_query(query)
     plan: dict[str, Any] = {
         "intent": detect_query_intent(query),
-        "keywords": fallback_tokens[:5],
+        "keywords": executor_tokens[:5],
+        "open_discovery": open_discovery,
+        "retrieval_mode": "fuzzy" if open_discovery else "filtered",
         "adult_content": detect_adult_constraint(query),
         "sort_field": "updated_at_remote" if is_recent_query(query) else "relevance",
         "sort_order": "desc",
@@ -63,11 +68,13 @@ def build_fallback_query_plan(query: str, *, limit: int = DEFAULT_FALLBACK_LIMIT
     plan.update(infer_compatibility_terms(query))
     plan.update(infer_author_constraint(query))
     plan.update(infer_excluded_keywords(query))
+    if open_discovery:
+        _soften_open_discovery_slots(plan)
     return plan
 
 
-def _clean_fallback_keyword_query(query: str) -> str:
-    scoped_query = query.split("[scope]", 1)[0].strip()
+def _clean_executor_keyword_query(query: str) -> str:
+    scoped_query = strip_scope(query)
     return query_without_compatibility_terms(
         query_without_thumbnail_terms(
             query_without_metric_terms(
@@ -75,3 +82,16 @@ def _clean_fallback_keyword_query(query: str) -> str:
             )
         )
     )
+
+
+def _soften_open_discovery_slots(plan: dict[str, Any]) -> None:
+    # slot_* 在开放发现里只是语义信号来源；除明确排除/身份字段外，不再主导硬过滤。
+    hints: list[str] = []
+    for field in ("categories", "tags", "requirement_terms", "compatibility_terms"):
+        values = plan.get(field)
+        if isinstance(values, list) and values:
+            hints.extend(str(item).strip() for item in values if str(item).strip())
+            plan[field] = []
+    if hints:
+        existing = plan.get("category_hints") if isinstance(plan.get("category_hints"), list) else []
+        plan["category_hints"] = unique_text([*existing, *hints], limit=16)

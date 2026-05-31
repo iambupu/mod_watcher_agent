@@ -2,6 +2,7 @@ import re
 from typing import Any
 
 from app.services.agent.identity_inference import source_from_url
+from app.services.agent.list_utils import merge_unique_text, unique_text
 from app.services.agent.planning.query_intent import _is_gameplay_support_search
 from app.services.agent.semantic_search import semantic_query
 from app.services.agent.slot_aliases import SUMMARY_LANGUAGE_ALIASES
@@ -58,7 +59,11 @@ def normalize_excluded_keywords(raw: Any) -> list[str]:
         if not phrase:
             continue
         semantic = semantic_query(phrase)
-        normalized = _merge_unique(normalized, [*semantic.base_keywords, *semantic.category_aliases])
+        normalized = merge_unique_text(
+            normalized,
+            [*semantic.base_keywords, *semantic.category_aliases],
+            key_func=alias_key,
+        )
     return normalized[:10]
 
 
@@ -146,7 +151,7 @@ def normalize_summary_languages(raw: Any) -> list[str]:
         if not language and str(value or "").strip() in {"zh-CN", "en", "ja-JP"}:
             language = str(value or "").strip()
         if language:
-            normalized = _merge_unique(normalized, [language])
+            normalized = merge_unique_text(normalized, [language], key_func=alias_key)
     return normalized[:5]
 
 
@@ -203,23 +208,5 @@ def _split_tag_values(value: str) -> list[str]:
 
 
 def _normalize_unique_terms(values: list[str], *, limit: int) -> list[str]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        term = re.sub(r"\s+", " ", str(value or "").strip())
-        key = alias_key(term)
-        if term and key not in seen:
-            normalized.append(term)
-            seen.add(key)
-    return normalized[:limit]
-
-
-def _merge_unique(values: list[str], additions: list[str]) -> list[str]:
-    result = list(values)
-    seen = {alias_key(value) for value in result}
-    for value in additions:
-        key = alias_key(value)
-        if value and key not in seen:
-            result.append(value)
-            seen.add(key)
-    return result
+    normalized = [re.sub(r"\s+", " ", str(value or "").strip()) for value in values]
+    return unique_text(normalized, limit=limit, key_func=alias_key)

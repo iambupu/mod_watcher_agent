@@ -1,5 +1,6 @@
 from app.models.mod import Mod
 from app.services.agent.result_merger import (
+    filter_by_adult_content,
     filter_by_distinctive_terms,
     filter_excluded_titles,
     merge_results,
@@ -29,6 +30,17 @@ def test_merge_results_keeps_highest_score_per_source_external_id():
 
     assert [item.score for item in merged] == [5]
     assert merged[0].mod.title == "XXTB high"
+
+
+def test_merge_results_does_not_merge_blank_external_ids_with_different_urls():
+    first = _result("First Result", "", 3)
+    first.mod.url = "https://example.com/first"
+    second = _result("Second Result", "", 7)
+    second.mod.url = "https://example.com/second"
+
+    merged = merge_results([first], [second])
+
+    assert {item.mod.title for item in merged} == {"First Result", "Second Result"}
 
 
 def test_merge_results_adds_explainable_fusion_score_breakdown():
@@ -119,3 +131,27 @@ def test_sort_results_respects_ascending_download_order():
     sorted_results = sort_results([high, low], plan)
 
     assert [item.mod.title for item in sorted_results] == ["low", "high"]
+
+
+def test_sort_results_tolerates_string_download_values():
+    high = _result("high", "1", 10)
+    high.mod.downloads = "100"
+    low = _result("low", "2", 20)
+    low.mod.downloads = "not-a-number"
+    plan = SearchPlan.from_query_plan({"sort_field": "downloads", "sort_order": "desc", "limit": 8})
+
+    sorted_results = sort_results([low, high], plan)
+
+    assert [item.mod.title for item in sorted_results] == ["high", "low"]
+
+
+def test_filter_by_adult_content_parses_string_flags():
+    clean = _result("clean", "1", 10)
+    clean.mod.adult_content = "false"
+    adult = _result("adult", "2", 20)
+    adult.mod.adult_content = "true"
+    plan = SearchPlan.from_query_plan({"adult_content": False, "limit": 8})
+
+    filtered = filter_by_adult_content([clean, adult], plan)
+
+    assert [item.mod.title for item in filtered] == ["clean"]

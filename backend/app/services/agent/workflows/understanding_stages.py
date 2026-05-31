@@ -44,6 +44,7 @@ async def diagnose_query_stage(
         "query_diagnosis": output.query_diagnosis,
         "preferences": output.preferences,
         "memory_context": output.memory_context,
+        "semantic_strategy": output.semantic_strategy,
         "llm_available": output.llm_available,
         "llm_provider": output.llm_provider,
         "llm_api_key": output.llm_api_key,

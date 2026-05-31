@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass, field
 
+from app.services.agent.list_utils import unique_text
 from app.services.agent.semantic_inference import (
     canonical_semantic_token,
     extract_semantic_signals,
@@ -56,9 +57,9 @@ class SemanticQuery:
         return " ".join(part for part in unique_terms(parts) if part).strip()
 
 
-def strip_scope(query: str) -> str:
+def strip_scope(query: object) -> str:
     """处理当前模块的业务逻辑并返回结果。"""
-    return query.split(SCOPE_MARKER, 1)[0].strip()
+    return str(query or "").split(SCOPE_MARKER, 1)[0].strip()
 
 
 def semantic_query(query: str, categories: list[str] | None = None) -> SemanticQuery:
@@ -79,7 +80,7 @@ def semantic_query(query: str, categories: list[str] | None = None) -> SemanticQ
 
 
 def semantic_query_from_anchors(query: str, anchors: list[str]) -> SemanticQuery:
-    """Build semantic expansion from upstream LLM anchors without rematching query text."""
+    """基于上游 LLM 语义锚点扩展查询，不重新匹配原始文本。"""
     clean_query = strip_scope(query)
     signals = semantic_signals_from_anchors(anchors)
     return SemanticQuery(
@@ -96,7 +97,7 @@ def semantic_query_from_anchors(query: str, anchors: list[str]) -> SemanticQuery
 
 
 def canonical_semantic_terms(values: list[str]) -> list[str]:
-    """Canonicalize semantic aliases while preserving stable input order."""
+    """规范化语义别名，同时保持稳定输入顺序。"""
     return unique_terms([canonical_semantic_token(value) for value in values])
 
 
@@ -214,11 +215,4 @@ def text_score(query: str, fields: list[str | None], categories: list[str] | Non
 
 def unique_terms(values: list[str]) -> list[str]:
     """处理当前模块的业务逻辑并返回结果。"""
-    merged: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        token = re.sub(r"\s+", " ", str(value or "").strip().lower())
-        if token and token not in seen:
-            merged.append(token)
-            seen.add(token)
-    return merged
+    return unique_text(re.sub(r"\s+", " ", str(value or "").strip().lower()) for value in values)

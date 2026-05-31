@@ -1,1 +1,1 @@
-"""Tools available to the Agent service."""
+"""Agent service 可调用的受控工具集合。"""

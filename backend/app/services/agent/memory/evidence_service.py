@@ -1,4 +1,5 @@
 from app.services.agent.schemas import AgentChatResponse
+from app.utils.numeric import safe_nonnegative_int
 
 
 def build_memory_evidence(memory_context: object, *, evidence_id: str = "") -> list[dict[str, object]]:
@@ -80,7 +81,7 @@ def build_memory_evidence(memory_context: object, *, evidence_id: str = "") -> l
                     "fragment_id": "m_long_meta_preferences_age_days",
                     "source": "long_term_meta",
                     "field": "preferences_age_days",
-                    "value": int(memory_meta.get("preferences_age_days") or 0),
+                    "value": safe_nonnegative_int(memory_meta.get("preferences_age_days")),
                     "evidence_id": evidence_id,
                 }
             )

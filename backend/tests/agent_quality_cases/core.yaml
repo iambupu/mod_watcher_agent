@@ -657,3 +657,173 @@
     diagnosis_preference_memory_stale: false
     diagnosis_preference_memory_reason: "strong_current_signal"
     diagnosis_preference_memory_age_days: 14
+- id: quality_preference_memory_is_hint_not_scope
+  query: "找最近更新的服装 Mod"
+  preferences:
+    favorite_summary:
+      top_games: ["Stellar Blade"]
+      top_sources: ["nexusmods"]
+      adult_content_allowed: true
+    memory_meta:
+      preference_stale: false
+      preferences_age_days: 1
+  slot_options:
+    games: ["Skyrim Special Edition", "Stellar Blade"]
+    game_domains: ["skyrimspecialedition", "stellarblade"]
+    categories: ["Outfits", "Gameplay"]
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    intent: "recent"
+    diagnosis_intent: "recent"
+    diagnosis_should_clarify: true
+    diagnosis_missing_slots: ["game"]
+    diagnosis_preference_memory_applied: false
+    diagnosis_preference_memory_stale: false
+    diagnosis_preference_memory_reason: "strong_current_signal"
+    diagnosis_preference_memory_age_days: 1
+- id: quality_open_bimbo_identity_route_not_style
+  query: "想找能扮演 bimbo 身份路线的玩法系统 mod"
+  expect:
+    intent: "search"
+    diagnosis_intent: "search"
+    required_terms: ["bimbo", "身份", "玩法"]
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+    understanding_field_not_contains:
+      semantic_anchors: "sexworker_style"
+- id: quality_alias_game_switch_bimbo_roleplay_not_previous_game
+  query: "天际有什么扮演 bimbo 的 MOD"
+  context:
+    game: "Stellar Blade"
+  context_keywords: ["outfit", "clothing"]
+  context_slots:
+    game: "Stellar Blade"
+    semantic_anchors: ["outfit"]
+    semantic_domains: ["content_type"]
+  slot_options:
+    games: ["Skyrim Special Edition", "Stellar Blade"]
+    game_domains: ["skyrimspecialedition", "stellarblade"]
+    categories: ["Gameplay", "Outfit", "Body"]
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    intent: "search"
+    diagnosis_intent: "search"
+    games: ["Skyrim Special Edition"]
+    required_terms: ["天际", "bimbo", "扮演"]
+    topic_shift_detected: true
+    context_inherit_score_max: 0.2
+    understanding_field_contains:
+      semantic_anchors: "roleplay"
+      semantic_domains: "mechanics"
+    understanding_field_not_contains:
+      semantic_anchors: "outfit"
+- id: quality_open_pregnancy_system_not_body_preset
+  query: "找怀孕和生育系统玩法，不是 body preset"
+  expect:
+    intent: "search"
+    diagnosis_intent: "search"
+    excluded_keywords: ["body", "preset"]
+    required_terms: ["怀孕", "生育", "body", "preset"]
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      semantic_domains: "mechanics"
+- id: quality_open_ll_framework_source_scope
+  query: "只看 LL 的核心框架体系 mod"
+  slot_options:
+    games: ["Skyrim Special Edition"]
+    game_domains: ["skyrimspecialedition"]
+    categories: ["Framework", "Gameplay", "Outfit"]
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    intent: "search"
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    required_terms: ["LL", "框架", "体系"]
+    understanding_field_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "source_scope"
+- id: quality_two_turn_followup_inherits_pregnancy_semantics
+  query: "pregnancy 继续找这个玩法方向"
+  context:
+    game: "Skyrim Special Edition"
+  context_keywords: ["pregnancy", "fertility"]
+  context_slots:
+    game: "Skyrim Special Edition"
+    semantic_anchors: ["pregnancy"]
+    semantic_domains: ["mechanics"]
+  expect:
+    intent: "search"
+    diagnosis_intent: "search"
+    diagnosis_should_clarify: false
+    context_inherit_score_min: 0.2
+    understanding_field_contains:
+      semantic_anchors: "pregnancy"
+      context_semantic_anchors: "pregnancy"
+- id: quality_two_turn_source_followup_keeps_loverslab_context
+  query: "LoversLab 继续看这个框架来源"
+  context:
+    source: "loverslab"
+  context_keywords: ["framework", "loverslab"]
+  context_slots:
+    source: "loverslab"
+    semantic_anchors: ["framework"]
+    semantic_domains: ["source_scope"]
+  expect:
+    intent: "search"
+    diagnosis_intent: "search"
+    diagnosis_should_clarify: false
+    understanding_field_contains:
+      context_semantic_anchors: "framework"
+      semantic_anchors: "framework"
+      semantic_domains: "source_scope"
+- id: quality_three_turn_switch_blocks_bimbo_carryover
+  query: "换成 Cyberpunk 2077 的载具改装 mod"
+  context:
+    game: "Skyrim Special Edition"
+  context_keywords: ["bimbo", "roleplay"]
+  context_slots:
+    game: "Skyrim Special Edition"
+    semantic_anchors: ["roleplay"]
+    semantic_domains: ["mechanics"]
+  expect:
+    intent: "search"
+    diagnosis_intent: "search"
+    topic_shift_detected: true
+    context_inherit_score_max: 0.2
+    required_terms: ["Cyberpunk", "2077", "载具"]
+- id: quality_memory_fresh_preference_not_used_when_current_source_is_explicit
+  query: "只看 LoversLab 的 Skyrim 框架 mod"
+  preferences:
+    favorite_summary:
+      top_games: ["Stellar Blade"]
+      top_sources: ["nexusmods"]
+      adult_content_allowed: true
+    memory_meta:
+      preference_stale: false
+      preferences_age_days: 2
+  slot_options:
+    games: ["Skyrim Special Edition", "Stellar Blade"]
+    game_domains: ["skyrimspecialedition", "stellarblade"]
+    categories: ["Framework", "Outfit"]
+    sources: ["nexusmods", "loverslab"]
+  expect:
+    intent: "search"
+    diagnosis_intent: "search"
+    sources: ["loverslab"]
+    diagnosis_preference_memory_applied: false
+    diagnosis_preference_memory_reason: "strong_current_signal"
+    understanding_field_contains:
+      semantic_anchors: "framework"
+      semantic_domains: "source_scope"
+- id: quality_semantic_style_does_not_become_roleplay
+  query: "找夜店女郎风格服装，不要玩法系统"
+  expect:
+    intent: "search"
+    diagnosis_intent: "search"
+    required_terms: ["夜店", "服装", "玩法"]
+    understanding_field_contains:
+      semantic_anchors: "sexworker_style"
+      semantic_domains: "content_type"
+    understanding_field_not_contains:
+      semantic_anchors: "roleplay"

@@ -216,6 +216,23 @@ def test_memory_evidence_service_builds_short_long_and_writeback_fragments():
     assert all(item["evidence_id"] == "ev_memory_fragments" for item in evidence)
 
 
+def test_memory_evidence_service_tolerates_invalid_preference_age():
+    evidence = build_memory_evidence(
+        {
+            "merged": {
+                "memory_meta": {
+                    "preferences_age_days": "stale",
+                }
+            }
+        },
+        evidence_id="ev_bad_memory_age",
+    )
+
+    age = [item for item in evidence if item["field"] == "preferences_age_days"][0]
+    assert age["value"] == 0
+    assert age["evidence_id"] == "ev_bad_memory_age"
+
+
 def test_memory_evidence_service_links_memory_retrieval_and_conflict_fragments():
     response = AgentChatResponse(
         answer="ok",
@@ -302,6 +319,43 @@ def test_conversation_state_preserves_standard_response_card_keys():
     assert cards["conclusion"] == ["结论：继续查找相关风格 Mod。"]
     assert cards["understanding"] == ["兼容旧卡片。"]
     assert "empty" not in cards
+
+
+def test_conversation_state_skips_bad_matches_without_dropping_good_matches():
+    with _session() as session:
+        session.add(
+            AgentMessage(
+                message_id="m1",
+                role="assistant",
+                text="ok",
+                session_id="s1",
+                created_at="2026-05-25T00:00:00+00:00",
+                sort_index=0,
+                matches_json=json.dumps(
+                    [
+                        {"bad": "shape"},
+                        {
+                            "id": 1,
+                            "title": "Good Match",
+                            "source": "nexusmods",
+                            "game": "Skyrim Special Edition",
+                            "url": "https://example.com/good",
+                            "author": None,
+                            "version": None,
+                            "updated_at_remote": None,
+                            "score": 10,
+                        },
+                    ],
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        session.commit()
+
+        state = conversation_service.load_conversation_state(session, SettingsService(session))
+
+    assert state.messages[0].matches is not None
+    assert [match.title for match in state.messages[0].matches] == ["Good Match"]
 
 
 def test_conversation_state_round_trips_audit_evidence():

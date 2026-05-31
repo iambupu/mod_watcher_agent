@@ -1,3 +1,4 @@
+from app.services.agent.list_utils import string_list as _string_list
 from app.services.agent.schemas import (
     AgentAnalysisEvidenceCoverage,
     AgentAudit,
@@ -7,17 +8,24 @@ from app.services.agent.schemas import (
     AgentChatResponse,
     AgentContextSignalEvidence,
     AgentMemoryContextAlignmentEvidence,
-    AgentToolPlanningEvidence,
+    AgentToolPolicyEvidence,
 )
+from app.utils.boolean import parse_optional_bool
+from app.utils.numeric import is_plain_int, safe_nonnegative_int, safe_optional_float
 
 _RECOMMENDED_ACTION_REASON_MAP = {
     "collect_more_evidence": "insufficient_analysis_evidence",
     "review_memory_signals": "memory_signal_conflicts_detected",
     "clarify_memory_conflict": "high_consistency_risk_memory_conflict",
-    "expand_online_sources_and_narrow_scope": "conservative_online_zero_result_expand_sources",
-    "narrow_query_scope_and_review_memory": "low_planning_confidence_with_medium_risk",
-    "narrow_query_scope": "low_planning_confidence",
+    "expand_online_sources_and_narrow_scope": "narrow_online_zero_result_expand_sources",
+    "narrow_query_scope_and_review_memory": "low_tool_policy_confidence_with_medium_risk",
+    "narrow_query_scope": "low_tool_policy_confidence",
 }
+_RECENT_CONTEXT_SOURCES = {"recent_user", "history_backfill"}
+
+
+def _is_recent_context_source(value: object) -> bool:
+    return str(value or "").strip().lower() in _RECENT_CONTEXT_SOURCES
 
 
 def build_standard_audit(response: AgentChatResponse, tool_plan: object | None = None) -> AgentAudit:
@@ -49,13 +57,13 @@ def build_standard_audit(response: AgentChatResponse, tool_plan: object | None =
                 evidence_ids.append(fragment_id)
     unique_evidence_ids = sorted(set(evidence_ids))
     context_source = _understanding_evidence_value(understanding_evidence, "context_source")
-    context_quality_score = _as_float(_understanding_evidence_value(understanding_evidence, "context_quality_score"))
-    context_inherit_score = _as_float(_understanding_evidence_value(understanding_evidence, "context_inherit_score"))
-    context_inherit_threshold = _as_float(_understanding_evidence_value(understanding_evidence, "context_inherit_threshold"))
-    context_followup_score = _as_float(_understanding_evidence_value(understanding_evidence, "context_followup_score"))
+    context_quality_score = safe_optional_float(_understanding_evidence_value(understanding_evidence, "context_quality_score"))
+    context_inherit_score = safe_optional_float(_understanding_evidence_value(understanding_evidence, "context_inherit_score"))
+    context_inherit_threshold = safe_optional_float(_understanding_evidence_value(understanding_evidence, "context_inherit_threshold"))
+    context_followup_score = safe_optional_float(_understanding_evidence_value(understanding_evidence, "context_followup_score"))
     context_policy_reasons = _string_list(_understanding_evidence_value(understanding_evidence, "context_policy_reasons"))
-    context_inherited = _as_bool(_understanding_evidence_value(understanding_evidence, "context_inherited"))
-    topic_shift_detected = _as_bool(_understanding_evidence_value(understanding_evidence, "topic_shift_detected"))
+    context_inherited = parse_optional_bool(_understanding_evidence_value(understanding_evidence, "context_inherited"))
+    topic_shift_detected = parse_optional_bool(_understanding_evidence_value(understanding_evidence, "topic_shift_detected"))
     conflict_fields: list[str] = []
     hard_conflict_count = 0
     soft_conflict_count = 0
@@ -96,6 +104,10 @@ def build_standard_audit(response: AgentChatResponse, tool_plan: object | None =
         "semantic_domains": _string_list(_understanding_evidence_value(understanding_evidence, "semantic_domains")),
         "evidence_id": response.evidence_id,
     }
+    semantic_strategy = _understanding_evidence_value(understanding_evidence, "semantic_strategy")
+    if isinstance(semantic_strategy, dict):
+        # 批次一把语义策略放入 audit 供观察；audit 只质检，不反向驱动检索策略。
+        analysis_payload["semantic_strategy"] = semantic_strategy
     analysis = AgentAuditAnalysis.model_validate(analysis_payload)
     coverage = AgentAnalysisEvidenceCoverage.model_validate(
         _build_analysis_evidence_coverage(analysis_payload, understanding_evidence)
@@ -125,6 +137,8 @@ def build_standard_audit(response: AgentChatResponse, tool_plan: object | None =
         "context_signal": context_signal.model_dump(mode="python"),
         "memory_context_alignment": alignment_model.model_dump(mode="python"),
     }
+    if isinstance(semantic_strategy, dict):
+        evidence["semantic_strategy"] = semantic_strategy
     web_search_evidence = _build_web_search_evidence(response.retrieval_evidence or [])
     if web_search_evidence:
         evidence["web_search"] = web_search_evidence
@@ -137,22 +151,22 @@ def build_standard_audit(response: AgentChatResponse, tool_plan: object | None =
         understanding_evidence=understanding_evidence,
     )
     evidence["semantic_trace"] = _build_semantic_trace_evidence(understanding_evidence)
-    planning_evidence = _extract_planning_evidence(tool_plan)
-    if planning_evidence:
-        evidence["tool_planning"] = AgentToolPlanningEvidence.model_validate(planning_evidence).model_dump(mode="python")
+    tool_policy_evidence = _extract_tool_policy_evidence(tool_plan)
+    if tool_policy_evidence:
+        evidence["tool_policy"] = AgentToolPolicyEvidence.model_validate(tool_policy_evidence).model_dump(mode="python")
     conclusion_payload = {
         "used_llm": response.used_llm,
         "match_count": len(response.matches),
         "consistency_risk": _consistency_risk(
             hard_conflict_count,
             soft_conflict_count,
-            memory_context_alignment_score=_as_float(alignment_model.score),
+            memory_context_alignment_score=safe_optional_float(alignment_model.score),
             context_quality_score=context_quality_score,
             context_inherit_score=context_inherit_score,
             context_source=str(context_source or ""),
             topic_shift_detected=topic_shift_detected,
         ),
-        "planning_confidence": _planning_confidence((planning_evidence or {}).get("score")),
+        "tool_policy_confidence": _tool_policy_confidence((tool_policy_evidence or {}).get("score")),
     }
     conclusion_payload["evidence_sufficiency"] = _conclusion_evidence_sufficiency(
         analysis=analysis_payload, evidence=evidence
@@ -173,19 +187,20 @@ def apply_consistency_guard(response: AgentChatResponse) -> None:
         if isinstance(evidence.get("analysis_evidence_coverage"), dict)
         else {}
     )
-    tool_planning = evidence.get("tool_planning") if isinstance(evidence.get("tool_planning"), dict) else {}
-    planning_score = tool_planning.get("score")
+    tool_policy = evidence.get("tool_policy") if isinstance(evidence.get("tool_policy"), dict) else {}
+    tool_policy_score = tool_policy.get("score")
     try:
-        planning_score_value = float(planning_score)
+        tool_policy_score_value = float(tool_policy_score)
     except (TypeError, ValueError):
-        planning_score_value = None
+        tool_policy_score_value = None
     risk = str(conclusion.get("consistency_risk") or "").strip().lower()
     evidence_sufficiency = str(conclusion.get("evidence_sufficiency") or "").strip().lower()
-    conflict_count = int(evidence.get("conflict_count") or 0)
+    conflict_count = safe_nonnegative_int(evidence.get("conflict_count"))
+    evidence["conflict_count"] = conflict_count
     has_online_adaptation_signal = any(
         isinstance(item, dict)
         and str(item.get("stage") or "").strip() == "online_adaptation"
-        and str(item.get("reason") or "").strip() == "conservative_online_zero_result_expand_sources"
+        and str(item.get("reason") or "").strip() == "narrow_online_zero_result_expand_sources"
         for item in (response.retrieval_evidence or [])
     )
     conclusion["action_payload"] = {}
@@ -196,7 +211,7 @@ def apply_consistency_guard(response: AgentChatResponse) -> None:
         if (
             risk == "low"
             and evidence_sufficiency == "insufficient"
-            and (planning_score_value is None or planning_score_value >= 0.45)
+            and (tool_policy_score_value is None or tool_policy_score_value >= 0.45)
             and not has_online_adaptation_signal
         ):
             _set_recommended_action(conclusion, "collect_more_evidence")
@@ -204,7 +219,7 @@ def apply_consistency_guard(response: AgentChatResponse) -> None:
             cards = response.response_cards if isinstance(response.response_cards, dict) else {}
             next_steps = cards.get("next_steps")
             if isinstance(next_steps, list):
-                hint = "当前任务理解证据不足，建议先补充目标游戏/关键词或上下文后再检索。"
+                hint = "我想补充目标游戏和关键词后再查一次"
                 if hint not in next_steps:
                     cards["next_steps"] = [hint, *next_steps]
                     response.response_cards = cards
@@ -226,21 +241,21 @@ def apply_consistency_guard(response: AgentChatResponse) -> None:
             cards = response.response_cards if isinstance(response.response_cards, dict) else {}
             next_steps = cards.get("next_steps")
             if isinstance(next_steps, list):
-                hint = "存在上下文冲突，请先确认目标游戏/来源后再继续检索。"
+                hint = "这次目标游戏和来源应该按哪个来查？"
                 if hint not in next_steps:
                     cards["next_steps"] = [hint, *next_steps]
                     response.response_cards = cards
             return
-        if planning_score_value is None or planning_score_value >= 0.45:
+        if tool_policy_score_value is None or tool_policy_score_value >= 0.45:
             return
         if has_online_adaptation_signal:
             _set_recommended_action(conclusion, "expand_online_sources_and_narrow_scope")
             cards = response.response_cards if isinstance(response.response_cards, dict) else {}
             next_steps = cards.get("next_steps")
             if isinstance(next_steps, list):
-                candidates = [str(item).strip() for item in (tool_planning.get("expand_online_candidates") or []) if str(item).strip()]
+                candidates = _string_list(tool_policy.get("expand_online_candidates"))
                 if not candidates:
-                    online_tools = {str(item).strip() for item in (tool_planning.get("online_tools") or []) if str(item).strip()}
+                    online_tools = set(_string_list(tool_policy.get("online_tools")))
                     candidates = [tool for tool in ["nexusmods_search", "loverslab_google"] if tool and tool not in online_tools]
                 conclusion["expand_online_candidates"] = candidates
                 candidate_details = [
@@ -252,12 +267,12 @@ def apply_consistency_guard(response: AgentChatResponse) -> None:
                     "narrow_scope_fields": ["game", "source", "keywords"],
                 }
                 if candidates:
+                    candidate_labels = [_source_candidate_label(candidate) for candidate in candidates]
                     hint = (
-                        "当前在线来源召回不足，建议补充来源或放宽来源限制，并明确游戏/关键词后重试。"
-                        f"可扩展来源：{', '.join(candidates)}。"
+                        f"继续查 {', '.join(candidate_labels)} 来源，并放宽关键词再试"
                     )
                 else:
-                    hint = "当前在线来源召回不足，建议补充来源或放宽来源限制，并明确游戏/关键词后重试。"
+                    hint = "换成全部来源，并放宽关键词再查一次"
                 if hint not in next_steps:
                     cards["next_steps"] = [hint, *next_steps]
                     response.response_cards = cards
@@ -274,7 +289,7 @@ def apply_consistency_guard(response: AgentChatResponse) -> None:
         cards = response.response_cards if isinstance(response.response_cards, dict) else {}
         next_steps = cards.get("next_steps")
         if isinstance(next_steps, list):
-            hint = "当前需求范围较宽或证据不足，建议补充游戏/来源/关键词后再检索。"
+            hint = "我想补充游戏、来源和关键词后再查一次"
             if response.used_llm:
                 return
             if hint not in next_steps:
@@ -339,7 +354,7 @@ def audit_contract_violations(*, conclusion: dict[str, object], evidence: dict[s
                 violations.append("semantic_trace_anchors_invalid")
             if not isinstance(semantic_trace.get("domains"), list):
                 violations.append("semantic_trace_domains_invalid")
-            if not isinstance(semantic_trace.get("memory_fragment_count"), int):
+            if not is_plain_int(semantic_trace.get("memory_fragment_count")):
                 violations.append("semantic_trace_memory_fragment_count_invalid")
     return violations
 
@@ -358,7 +373,7 @@ def classify_retrieval_reason_group(reason: str) -> str:
         return "context"
     if token.startswith("low_quality_context"):
         return "context"
-    if token.startswith("conservative_online_") or "online" in token:
+    if token.startswith("narrow_online_") or "online" in token:
         return "web"
     if token.startswith("semantic_") or "semantic" in token:
         return "semantic"
@@ -386,7 +401,7 @@ def _consistency_risk(
     if bool(topic_shift_detected) and (context_inherit_score is not None and context_inherit_score >= 0.45):
         return "medium"
     if (
-        str(context_source or "").strip().lower() in {"recent_user", "history_backfill"}
+        _is_recent_context_source(context_source)
         and context_inherit_score is not None
         and context_inherit_score >= 0.55
         and context_quality_score is not None
@@ -431,7 +446,7 @@ def _memory_context_alignment(
         score -= 0.2
         reasons.append("topic_shift_with_inheritance")
     if (
-        str(context_source).strip().lower() in {"recent_user", "history_backfill"}
+        _is_recent_context_source(context_source)
         and context_quality_score is not None
         and context_quality_score < 0.12
     ):
@@ -451,7 +466,7 @@ def _memory_context_alignment(
     }
 
 
-def _planning_confidence(score: object) -> str:
+def _tool_policy_confidence(score: object) -> str:
     try:
         value = float(score)
     except (TypeError, ValueError):
@@ -488,10 +503,7 @@ def _build_web_search_evidence(retrieval_evidence: list[dict[str, object]]) -> d
         if tool:
             tools.add(tool)
         status = str(item.get("status") or "").strip().lower()
-        try:
-            count = int(item.get("count") or 0)
-        except (TypeError, ValueError):
-            count = 0
+        count = safe_nonnegative_int(item.get("count"))
         if tool:
             tool_statuses[tool] = status or "unknown"
             tool_result_counts[tool] = count
@@ -543,9 +555,9 @@ def _build_retrieval_decision_evidence(
     web_search: dict[str, object],
     understanding_evidence: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
-    alignment_score = _as_float(memory_alignment.get("score"))
-    context_quality = _as_float(context_signal.get("quality_score"))
-    context_inherit = _as_float(context_signal.get("inherit_score"))
+    alignment_score = safe_optional_float(memory_alignment.get("score"))
+    context_quality = safe_optional_float(context_signal.get("quality_score"))
+    context_inherit = safe_optional_float(context_signal.get("inherit_score"))
     web_enabled = bool(web_search.get("enabled"))
     web_queried = bool(web_search.get("queried"))
     reasons: list[str] = []
@@ -667,24 +679,24 @@ def _build_analysis_evidence_coverage(
     }
 
 
-def _extract_planning_evidence(tool_plan: object | None) -> dict[str, object]:
+def _extract_tool_policy_evidence(tool_plan: object | None) -> dict[str, object]:
     if not isinstance(tool_plan, dict):
         return {}
-    planning = tool_plan.get("planning_evidence")
-    if not isinstance(planning, dict):
+    policy = tool_plan.get("tool_policy_evidence")
+    if not isinstance(policy, dict):
         return {}
     return {
-        "score": planning.get("score"),
-        "strategy": planning.get("strategy"),
-        "known_slot_count": planning.get("known_slot_count"),
-        "should_clarify": planning.get("should_clarify"),
-        "conservative_mode": planning.get("conservative_mode"),
-        "semantic_anchors": list(planning.get("semantic_anchors") or []),
-        "semantic_domains": list(planning.get("semantic_domains") or []),
-        "expand_online_candidates": list(planning.get("expand_online_candidates") or []),
-        "local_tools": list(planning.get("local_tools") or []),
-        "online_tools": list(planning.get("online_tools") or []),
-        "degraded_reasons": list(planning.get("degraded_reasons") or []),
+        "score": policy.get("score"),
+        "strategy": policy.get("execution_strategy") or policy.get("strategy"),
+        "known_slot_count": policy.get("known_slot_count"),
+        "should_clarify": policy.get("should_clarify"),
+        "online_recall_mode": policy.get("online_recall_mode"),
+        "semantic_anchors": _string_list(policy.get("semantic_anchors")),
+        "semantic_domains": _string_list(policy.get("semantic_domains")),
+        "expand_online_candidates": _string_list(policy.get("expand_online_candidates")),
+        "local_tools": _string_list(policy.get("local_tools")),
+        "online_tools": _string_list(policy.get("online_tools")),
+        "degraded_reasons": _string_list(policy.get("degraded_reasons")),
     }
 
 
@@ -723,8 +735,8 @@ def _conclusion_evidence_sufficiency(*, analysis: dict[str, object], evidence: d
         coverage_ratio = float(coverage.get("coverage_ratio") or 0.0)
     except (TypeError, ValueError):
         coverage_ratio = 0.0
-    memory_count = int(evidence.get("memory_count") or 0)
-    retrieval_count = int(evidence.get("retrieval_count") or 0)
+    memory_count = safe_nonnegative_int(evidence.get("memory_count"))
+    retrieval_count = safe_nonnegative_int(evidence.get("retrieval_count"))
     slots = analysis.get("slots") if isinstance(analysis.get("slots"), dict) else {}
     slot_count = len(slots)
     if coverage_ratio < 0.67:
@@ -748,29 +760,4 @@ def _understanding_evidence_value(understanding_evidence: list[dict[str, object]
             continue
         if str(item.get("field") or "").strip() == key:
             return item.get("value")
-    return None
-
-
-def _string_list(value: object) -> list[str]:
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return []
-
-
-def _as_float(value: object) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_bool(value: object) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes"}:
-            return True
-        if lowered in {"false", "0", "no"}:
-            return False
     return None

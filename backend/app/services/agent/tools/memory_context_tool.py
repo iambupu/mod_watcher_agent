@@ -16,7 +16,7 @@ class MemoryContextInput:
 
 
 class MemoryContextTool:
-    """Agent tool for loading short-term and long-term memory context."""
+    """读取短期上下文和长期偏好，供查询理解层做受控补全。"""
 
     name = "memory_context_loader"
 
