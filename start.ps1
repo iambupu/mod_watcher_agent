@@ -22,10 +22,18 @@ $nodeCmd = $null
 $npmCmd = $null
 
 function Test-LocalPortReady {
-    param([int]$Port)
+    param(
+        [int]$Port,
+        [int]$TimeoutMilliseconds = 750
+    )
     try {
         $tcp = New-Object System.Net.Sockets.TcpClient
-        $tcp.Connect("127.0.0.1", $Port)
+        $connect = $tcp.BeginConnect("127.0.0.1", $Port, $null, $null)
+        if (-not $connect.AsyncWaitHandle.WaitOne($TimeoutMilliseconds, $false)) {
+            $tcp.Close()
+            return $false
+        }
+        $tcp.EndConnect($connect)
         $tcp.Close()
         return $true
     }
@@ -463,7 +471,7 @@ function Wait-ServiceReady {
         [int]$BackendPort,
         [string]$FrontendMode,
         [int]$FrontendDevPort,
-        [int]$MaxWaitSeconds = 45
+        [int]$MaxWaitSeconds = 150
     )
 
     $elapsed = 0
@@ -544,7 +552,7 @@ if ($Tray) {
 
         Write-Host ""
         Write-Host "[Manager] Starting tray manager and probing service readiness..." -ForegroundColor Cyan
-        $ready = Wait-ServiceReady -BackendPort $backendPort -FrontendMode $frontendMode -FrontendDevPort $frontendDevPort -MaxWaitSeconds 45
+        $ready = Wait-ServiceReady -BackendPort $backendPort -FrontendMode $frontendMode -FrontendDevPort $frontendDevPort -MaxWaitSeconds 150
         if (-not $ready) {
             Write-Host "[X] Service probe timed out. Backend/frontend did not become ready in time." -ForegroundColor Red
             Write-Host "    Check logs: log\\tray.log, log\\backend_service.log, log\\frontend_service.log" -ForegroundColor Yellow
@@ -553,7 +561,9 @@ if ($Tray) {
 
         Write-Host "Startup checks completed and services are healthy." -ForegroundColor Green
         Write-Host "Press any key to close this window and keep running in tray mode..." -ForegroundColor Yellow
-        [void][System.Console]::ReadKey($true)
+        if (-not [System.Console]::IsInputRedirected) {
+            [void][System.Console]::ReadKey($true)
+        }
         exit 0
     }
     Write-Host "[Manager] Starting tray manager (frontend-mode=$frontendMode)..." -ForegroundColor Cyan
