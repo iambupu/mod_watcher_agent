@@ -69,6 +69,8 @@ backend/data/snapshots/
 .pytest_cache/
 coverage/
 .mypy_cache/
+.tmp/
+.tmp-*/
 
 # Secrets / env
 *.env
