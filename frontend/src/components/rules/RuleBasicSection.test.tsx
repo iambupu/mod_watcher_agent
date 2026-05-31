@@ -65,6 +65,19 @@ describe("RuleBasicSection", () => {
     expect(useRuleEditorStore.getState().draft.intervalMinutes).toBe(15);
   });
 
+  it("clamps_interval_text_to_saved_max_on_blur", async () => {
+    const user = userEvent.setup();
+    render(<RuleBasicSection />);
+
+    const intervalInput = screen.getByRole("spinbutton", { name: "rules.basic.intervalMinutesLabel" });
+    await user.clear(intervalInput);
+    await user.type(intervalInput, "2000");
+    await user.tab();
+
+    expect(intervalInput).toHaveValue(1440);
+    expect(useRuleEditorStore.getState().draft.intervalMinutes).toBe(1440);
+  });
+
   it("reads_from_store", () => {
     useRuleEditorStore.setState({
       draft: {

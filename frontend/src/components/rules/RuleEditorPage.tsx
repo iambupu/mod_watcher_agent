@@ -30,7 +30,14 @@ import {
   updateRule,
   testRule,
 } from "@/api/rules";
+import { parseWholeIntegerInput } from "@/utils/numberInput";
 import type { CommonRuleFilters, RuleTestResponse, RuleTestRequest, WatchRule } from "@/types";
+
+function parseRuleRouteId(id: string | undefined): number | null {
+  if (!id) return null;
+  const value = parseWholeIntegerInput(id, { min: 1 });
+  return typeof value === "number" ? value : null;
+}
 
 export const RuleEditorPage: React.FC = () => {
   const { t } = useTranslation();
@@ -38,7 +45,7 @@ export const RuleEditorPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
 
-  const editingRuleId = id ? Number(id) : null;
+  const editingRuleId = parseRuleRouteId(id);
   const isEditMode = editingRuleId !== null;
 
   const activeSource = useRuleEditorStore((s) => s.activeSource);

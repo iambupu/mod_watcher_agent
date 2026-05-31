@@ -1,8 +1,9 @@
 import { Clock, Download, ThumbsUp } from "lucide-react";
+import { nonNegativeNumberValue } from "@/utils/numberInput";
 
 interface ModStatsLineProps {
-  downloads?: number | null;
-  endorsements?: number | null;
+  downloads?: unknown;
+  endorsements?: unknown;
   updatedAt?: string | null;
   className?: string;
 }
@@ -21,18 +22,21 @@ export function ModStatsLine({
   updatedAt,
   className = "text-slate-400",
 }: ModStatsLineProps) {
+  const downloadCount = nonNegativeNumberValue(downloads);
+  const endorsementCount = nonNegativeNumberValue(endorsements);
+
   return (
     <div className={`flex flex-wrap items-center gap-3 text-xs ${className}`}>
-      {downloads !== undefined && downloads !== null && (
+      {downloadCount !== null && (
         <span className="inline-flex items-center gap-1">
           <Download size={12} />
-          {downloads.toLocaleString()}
+          {downloadCount.toLocaleString()}
         </span>
       )}
-      {endorsements !== undefined && endorsements !== null && (
+      {endorsementCount !== null && (
         <span className="inline-flex items-center gap-1">
           <ThumbsUp size={12} />
-          {endorsements.toLocaleString()}
+          {endorsementCount.toLocaleString()}
         </span>
       )}
       {updatedAt && (

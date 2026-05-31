@@ -1,4 +1,8 @@
 import { get, patch } from "./client";
+import { nonNegativeInteger, normalizeListResponse } from "./listResponse";
+import { fallbackModItem, mergeTranslatedSummary } from "./modHydration";
+import { boundedIntegerParam, positiveIntegerParam } from "./params";
+import { parseBoolean } from "@/utils/boolean";
 import type { ModItem, UpdateEvent } from "@/types";
 
 export interface UpdatesListParams {
@@ -24,7 +28,7 @@ export interface BackendUpdateEvent {
   raw_changelog?: string | null;
   change_summary?: string | null;
   detected_at: string;
-  seen: boolean;
+  seen: unknown;
   translated_summary?: string | null;
   mod?: ModItem | null;
 }
@@ -34,23 +38,30 @@ interface BackendUpdatesListResponse {
   total: number;
 }
 
+function buildUpdatesQuery(params?: UpdatesListParams): Record<string, string> {
+  const query: Record<string, string> = {};
+  if (!params) return query;
+  if (params.favorite_id !== undefined) {
+    const favoriteId = positiveIntegerParam(params.favorite_id);
+    if (favoriteId !== undefined) query.favorite_id = favoriteId;
+  }
+  if (params.seen !== undefined) query.seen = String(params.seen);
+  if (params.offset !== undefined) query.offset = boundedIntegerParam(params.offset, { min: 0 });
+  if (params.limit !== undefined) query.limit = boundedIntegerParam(params.limit, { min: 1, max: 200 });
+  return query;
+}
+
 export function hydrateUpdateEvent(event: BackendUpdateEvent): UpdateEvent {
   return {
     id: event.id,
     modId: event.mod_id,
-    mod: event.mod || {
-      id: event.mod_id,
-      source: "nexusmods",
-      external_id: String(event.mod_id),
-      game: "",
-      title: `Mod #${event.mod_id}`,
-      url: "",
-      tags_json: "[]",
-      translated_summary: event.translated_summary || undefined,
-      ignored: false,
-      first_seen_at: event.detected_at,
-      last_seen_at: event.detected_at,
-    },
+    mod: event.mod
+      ? mergeTranslatedSummary(event.mod, event.translated_summary)
+      : fallbackModItem(event.mod_id, {
+          firstSeenAt: event.detected_at,
+          lastSeenAt: event.detected_at,
+          translatedSummary: event.translated_summary,
+        }),
     oldVersion: event.old_version || undefined,
     newVersion: event.new_version || undefined,
     oldUpdatedAt: event.old_updated_at || undefined,
@@ -58,15 +69,18 @@ export function hydrateUpdateEvent(event: BackendUpdateEvent): UpdateEvent {
     rawChangelog: event.raw_changelog || undefined,
     changeSummary: event.change_summary || event.translated_summary || undefined,
     detectedAt: event.detected_at,
-    seen: event.seen,
+    seen: parseBoolean(event.seen),
   };
 }
 
 export function fetchUpdates(params?: UpdatesListParams): Promise<UpdatesListResponse> {
-  return get<BackendUpdatesListResponse>("/updates", params as unknown as Record<string, string>).then((data) => ({
-    items: data.items.map(hydrateUpdateEvent),
-    total: data.total,
-  }));
+  return get<BackendUpdatesListResponse>("/updates", buildUpdatesQuery(params)).then((data) => {
+    const normalized = normalizeListResponse<BackendUpdateEvent>(data);
+    return {
+      items: normalized.items.map(hydrateUpdateEvent),
+      total: normalized.total,
+    };
+  });
 }
 
 export function markUpdateSeen(eventId: number): Promise<UpdateEvent> {
@@ -74,5 +88,6 @@ export function markUpdateSeen(eventId: number): Promise<UpdateEvent> {
 }
 
 export function markAllUpdatesSeen(): Promise<{ updated: number }> {
-  return patch<{ updated: number }>("/updates/seen");
+  return patch<{ updated: number }>("/updates/seen")
+    .then((data) => ({ updated: nonNegativeInteger(data?.updated) }));
 }

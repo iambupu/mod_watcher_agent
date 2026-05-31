@@ -29,13 +29,16 @@ import { Panel } from "@/components/ui/Panel";
 import { fetchStats } from "@/api/stats";
 import type { Stats } from "@/api/stats";
 import { fetchRecommendedMods } from "@/api/mods";
-import { addFavorite, fetchFavorites, getFavoriteModId, removeFavorite } from "@/api/favorites";
+import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavorites, removeFavorite } from "@/api/favorites";
 import { fetchJobRuns, fetchSchedulerStatus, pauseScheduler, resumeScheduler, runSummaryReport } from "@/api/jobs";
 import type { JobRun } from "@/api/jobs";
 import { fetchSettings } from "@/api/settings";
 import { useUIStore } from "@/stores/uiStore";
+import { parseJobMetadata } from "@/utils/jobMetadata";
+import { isAdultContent } from "@/utils/modAdult";
 import { formatModTitle } from "@/utils/modTitle";
-import type { Favorite, ModItem } from "@/types";
+import { nonNegativeNumberValue } from "@/utils/numberInput";
+import type { ModItem } from "@/types";
 import { ModalHeader, ModalShell } from "@/components/ui/Modal";
 import { FilterBarButton } from "@/components/ui/FilterControls";
 
@@ -108,9 +111,10 @@ const toneClasses = {
   },
 };
 
-function compactNumber(value?: number): string {
-  if (value === undefined || value === null) return "0";
-  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
+function compactNumber(value?: unknown): string {
+  const parsed = nonNegativeNumberValue(value);
+  if (parsed === null) return "0";
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(parsed);
 }
 
 function formatTime(value?: string | null): string {
@@ -135,18 +139,8 @@ function jobStatusClass(status: JobRun["status"]): string {
   return "bg-rose-50 text-rose-700";
 }
 
-function parseJobMetadata(job: JobRun): Record<string, unknown> {
-  if (!job.metadata_json) return {};
-  try {
-    const parsed = JSON.parse(job.metadata_json);
-    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
-}
-
 function getJobDisplayName(job: JobRun): string {
-  const ruleName = parseJobMetadata(job).rule_name;
+  const ruleName = parseJobMetadata(job.metadata_json).rule_name;
   return typeof ruleName === "string" && ruleName.trim() ? ruleName : job.job_name;
 }
 
@@ -157,7 +151,7 @@ function getLatestSummaryJob(jobs: JobRun[]): JobRun | undefined {
 function getLatestSummaryReportJob(jobs: JobRun[]): JobRun | undefined {
   for (const job of jobs) {
     if (job.job_name !== "llm_summary_report") continue;
-    const report = parseJobMetadata(job).report;
+    const report = parseJobMetadata(job.metadata_json).report;
     if (typeof report === "string" && report.trim()) return job;
   }
   return undefined;
@@ -236,7 +230,7 @@ const RecommendedModCard: React.FC<{
         <p className="truncate text-xs font-semibold text-slate-500">{mod.game || mod.game_domain || "-"}</p>
         <div className="flex flex-wrap items-center gap-1.5">
           <SourceBadge source={mod.source} />
-          {mod.adult_content && (
+          {isAdultContent(mod.adult_content) && (
             <span className="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
               NSFW
             </span>
@@ -270,13 +264,7 @@ const Dashboard: React.FC = () => {
     queryFn: fetchFavorites,
   });
 
-  const favoriteByModId = React.useMemo(() => {
-    const pairs = new Map<number, Favorite>();
-    for (const favorite of favorites) {
-      pairs.set(getFavoriteModId(favorite), favorite);
-    }
-    return pairs;
-  }, [favorites]);
+  const favoriteByModId = React.useMemo(() => mapFavoritesByModId(favorites), [favorites]);
 
   const favoriteMutation = useMutation({
     mutationFn: async (modId: number) => {
@@ -347,9 +335,9 @@ const Dashboard: React.FC = () => {
   const recentJobs = recentJobsData?.items ?? [];
   const latestSummaryJob = getLatestSummaryJob(recentJobs);
   const latestSummaryReportJob = getLatestSummaryReportJob(recentJobs);
-  const latestSummaryReport = latestSummaryReportJob ? String(parseJobMetadata(latestSummaryReportJob).report || "") : "";
+  const latestSummaryReport = latestSummaryReportJob ? String(parseJobMetadata(latestSummaryReportJob.metadata_json).report || "") : "";
   const contentSummary = manualSummaryReport || latestSummaryReport;
-  const latestSummaryJobMetadata = latestSummaryJob ? parseJobMetadata(latestSummaryJob) : {};
+  const latestSummaryJobMetadata = latestSummaryJob ? parseJobMetadata(latestSummaryJob.metadata_json) : {};
   const latestSummaryGenerated = latestSummaryJobMetadata.generated === true;
   const latestSummaryNoContent = latestSummaryJob && !latestSummaryGenerated;
   const contentSummarySource = manualSummaryReport
@@ -423,18 +411,12 @@ const Dashboard: React.FC = () => {
   };
 
   const visibleRecentJobs = recentJobs.slice(0, 5);
-  const visibleSchedulerJobs = [...(schedulerStatus?.jobs ?? [])]
-    .sort((a, b) => {
-      if (!a.next_run_time) return 1;
-      if (!b.next_run_time) return -1;
-      return new Date(a.next_run_time).getTime() - new Date(b.next_run_time).getTime();
-    })
-    .slice(0, 5);
   const sortedSchedulerJobs = [...(schedulerStatus?.jobs ?? [])].sort((a, b) => {
     if (!a.next_run_time) return 1;
     if (!b.next_run_time) return -1;
     return new Date(a.next_run_time).getTime() - new Date(b.next_run_time).getTime();
   });
+  const visibleSchedulerJobs = sortedSchedulerJobs.slice(0, 5);
   const systemItems = [
     {
       label: "Nexus Mods API",

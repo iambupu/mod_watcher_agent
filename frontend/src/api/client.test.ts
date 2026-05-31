@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { clearSecurityToken, get, setSecurityToken } from "./client";
+import { clearSecurityToken, get, post, setSecurityToken } from "./client";
 
 
 describe("api client security token", () => {
@@ -38,5 +38,18 @@ describe("api client security token", () => {
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const headers = init.headers as Record<string, string>;
     expect(headers["X-Mod-Watcher-Token"]).toBeUndefined();
+  });
+
+  it("serializes falsy request bodies", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    } as Response);
+
+    await post<{ ok: boolean }>("/test", false);
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.body).toBe("false");
   });
 });

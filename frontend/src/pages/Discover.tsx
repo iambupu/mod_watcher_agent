@@ -39,20 +39,45 @@ import {
   fetchMods,
   generateModIntroduction,
   ignoreMod,
-  regenerateModSummary,
   unignoreMod,
 } from "@/api/mods";
-import { fetchJobRun, importNexusModsGame, runDiscoveryAll } from "@/api/jobs";
-import { addFavorite, fetchFavorites, getFavoriteModId, removeFavorite } from "@/api/favorites";
+import { importNexusModsGame, pollJobRun, runDiscoveryAll } from "@/api/jobs";
+import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavorites, removeFavorite } from "@/api/favorites";
+import { useSummaryRegeneration } from "@/hooks/useSummaryRegeneration";
 import { useUIStore } from "@/stores/uiStore";
 import { formatModSummary } from "@/utils/modSummary";
 import { formatModTitle } from "@/utils/modTitle";
-import type { Favorite, ModItem, ModSource, AdultPolicy, SummaryMode } from "@/types";
+import { isAdultContent } from "@/utils/modAdult";
+import { parseIntegerInput, parseWholeIntegerInput } from "@/utils/numberInput";
+import type { ModItem, ModSource, AdultPolicy, SummaryMode } from "@/types";
 
-const PAGE_SIZE_OPTIONS = [20, 50, 80] as const;
+const PAGE_SIZE_OPTIONS = [20, 50, 80, 180] as const;
 type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 const DEFAULT_PAGE_SIZE: PageSize = 20;
+const DISCOVER_PAGE_SIZE_STORAGE_KEY = "modWatcher.discover.pageSize";
 type DiscoverViewMode = "card" | "list";
+
+function isPageSize(value: number): value is PageSize {
+  return PAGE_SIZE_OPTIONS.includes(value as PageSize);
+}
+
+function getInitialPageSize(): PageSize {
+  if (typeof window === "undefined") return DEFAULT_PAGE_SIZE;
+  try {
+    const stored = parseWholeIntegerInput(window.localStorage.getItem(DISCOVER_PAGE_SIZE_STORAGE_KEY) || "");
+    return typeof stored === "number" && isPageSize(stored) ? stored : DEFAULT_PAGE_SIZE;
+  } catch {
+    return DEFAULT_PAGE_SIZE;
+  }
+}
+
+function savePageSize(pageSize: PageSize) {
+  try {
+    window.localStorage.setItem(DISCOVER_PAGE_SIZE_STORAGE_KEY, String(pageSize));
+  } catch {
+    // Ignore storage failures so the selector remains usable in restricted browsers.
+  }
+}
 
 function SkeletonCard() {
   return (
@@ -100,7 +125,7 @@ const Discover: React.FC = () => {
   const [adultPolicy, setAdultPolicy] = useState<AdultPolicy>("include");
   const [viewMode, setViewMode] = useState<DiscoverViewMode>("card");
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [pageSize, setPageSize] = useState<PageSize>(getInitialPageSize);
   const [isRunning, setIsRunning] = useState(false);
   const [isImportingGame, setIsImportingGame] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -110,7 +135,6 @@ const Discover: React.FC = () => {
   const [ignoredListOpen, setIgnoredListOpen] = useState(false);
   const [pendingHideModId, setPendingHideModId] = useState<number | null>(null);
   const [pendingUnfavoriteModId, setPendingUnfavoriteModId] = useState<number | null>(null);
-  const [regeneratingSummaryIds, setRegeneratingSummaryIds] = useState<Set<number>>(new Set());
   const discoveryRunRef = useRef(0);
   const gameImportRunRef = useRef(0);
 
@@ -137,13 +161,7 @@ const Discover: React.FC = () => {
     queryFn: fetchFavorites,
   });
 
-  const favoriteByModId = useMemo(() => {
-    const pairs = new Map<number, Favorite>();
-    for (const favorite of favorites) {
-      pairs.set(getFavoriteModId(favorite), favorite);
-    }
-    return pairs;
-  }, [favorites]);
+  const favoriteByModId = useMemo(() => mapFavoritesByModId(favorites), [favorites]);
 
   const queryParams = useMemo(
     () => ({
@@ -181,6 +199,13 @@ const Discover: React.FC = () => {
   const updatedLabel = isLoading ? t("common.loading") : t("discover.listLoaded");
 
   useEffect(() => {
+    if (!data || totalPages <= 0) return;
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [data, page, totalPages]);
+
+  useEffect(() => {
     setPageInput(String(page));
   }, [page]);
 
@@ -194,23 +219,24 @@ const Discover: React.FC = () => {
       const result = await runDiscoveryAll();
       if (!isCurrentRun()) return;
       setLastResult(t("jobs.queued", { jobId: result.job_id }));
-      for (let i = 0; i < 60; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        if (!isCurrentRun()) return;
-        const job = await fetchJobRun(result.job_id);
-        if (!isCurrentRun()) return;
-        if (job.status === "queued" || job.status === "running") {
+      const pollResult = await pollJobRun(result.job_id, {
+        isActive: isCurrentRun,
+        onRunning: (job) => {
           setLastResult(t("jobs.running", { jobId: result.job_id, status: t(`jobs.status.${job.status}`) }));
-          continue;
-        }
-        if (job.status === "failed") {
-          setLastResult(t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }));
-          return;
-        }
-        setLastResult(t("jobs.foundMods", { count: job.items_matched }));
-        refetch();
+        },
+      });
+      if (pollResult.status === "cancelled") return;
+      if (pollResult.status === "timeout") {
+        setLastResult(t("jobs.timeout"));
         return;
       }
+      const job = pollResult.job;
+      if (job.status === "failed") {
+        setLastResult(t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }));
+        return;
+      }
+      setLastResult(t("jobs.foundMods", { count: job.items_matched }));
+      refetch();
     } catch (e) {
       if (isCurrentRun()) {
         setLastResult(t("jobs.failed", { error: (e as Error).message }));
@@ -239,24 +265,26 @@ const Discover: React.FC = () => {
       setLastResult(t("discover.importQueued", { jobId: result.job_id, game: gameDomainName }));
       setImportDialogOpen(false);
       setImportGameDomain("");
-      for (let i = 0; i < 120; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        if (!isCurrentRun()) return;
-        const job = await fetchJobRun(result.job_id);
-        if (!isCurrentRun()) return;
-        if (job.status === "queued" || job.status === "running") {
+      const pollResult = await pollJobRun(result.job_id, {
+        attempts: 120,
+        isActive: isCurrentRun,
+        onRunning: (job) => {
           setLastResult(t("jobs.running", { jobId: result.job_id, status: t(`jobs.status.${job.status}`) }));
-          continue;
-        }
-        if (job.status === "failed") {
-          setLastResult(t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }));
-          return;
-        }
-        setLastResult(t("discover.importFinished", { created: job.items_matched, scanned: job.items_scanned }));
-        queryClient.invalidateQueries({ queryKey: ["mod-games"] });
-        refetch();
+        },
+      });
+      if (pollResult.status === "cancelled") return;
+      if (pollResult.status === "timeout") {
+        setLastResult(t("jobs.timeout"));
         return;
       }
+      const job = pollResult.job;
+      if (job.status === "failed") {
+        setLastResult(t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }));
+        return;
+      }
+      setLastResult(t("discover.importFinished", { created: job.items_matched, scanned: job.items_scanned }));
+      queryClient.invalidateQueries({ queryKey: ["mod-games"] });
+      refetch();
     } catch (e) {
       if (isCurrentRun()) {
         setLastResult(t("jobs.failed", { error: (e as Error).message }));
@@ -332,33 +360,13 @@ const Discover: React.FC = () => {
     });
   };
 
-  const regenerateSummaryMutation = useMutation({
-    mutationFn: regenerateModSummary,
-    onMutate: async (modId: number) => {
-      setRegeneratingSummaryIds((prev) => {
-        const next = new Set(prev);
-        next.add(modId);
-        return next;
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["mods"] });
-      setTimeout(() => queryClient.invalidateQueries({ queryKey: ["mods"] }), 5000);
-    },
-    onSettled: (_data, _error, modId) => {
-      setRegeneratingSummaryIds((prev) => {
-        const next = new Set(prev);
-        if (typeof modId === "number") {
-          next.delete(modId);
-        }
-        return next;
-      });
-    },
+  const { regenerateSummary: handleRegenerateSummary, regeneratingSummaryIds } = useSummaryRegeneration({
+    t,
+    setStatus: setLastResult,
+    primaryQueryKey: ["mods"],
+    extraQueryKeys: [["favorites"]],
+    refetch,
   });
-
-  const handleRegenerateSummary = (modId: number) => {
-    regenerateSummaryMutation.mutate(modId);
-  };
 
   const generateIntroductionMutation = useMutation({
     mutationFn: generateModIntroduction,
@@ -387,9 +395,11 @@ const Discover: React.FC = () => {
     }
 
     const jumpToPage = () => {
-      const nextPage = Number(pageInput.trim());
-      if (!Number.isInteger(nextPage)) return;
-      const clamped = Math.min(totalPages, Math.max(1, nextPage));
+      const clamped = parseIntegerInput(pageInput, { min: 1, max: totalPages });
+      if (clamped === null || clamped === undefined) {
+        setPageInput(String(page));
+        return;
+      }
       if (clamped !== page) {
         setPage(clamped);
       } else {
@@ -665,7 +675,10 @@ const Discover: React.FC = () => {
                   inlineLabel={t("discover.pageSize")}
                   value={String(pageSize)}
                   onValueChange={(value) => {
-                    setPageSize(Number(value) as PageSize);
+                    const nextPageSize = parseWholeIntegerInput(value);
+                    if (typeof nextPageSize !== "number" || !isPageSize(nextPageSize)) return;
+                    setPageSize(nextPageSize);
+                    savePageSize(nextPageSize);
                     setPage(1);
                   }}
                 >
@@ -775,7 +788,7 @@ const Discover: React.FC = () => {
                               <div className="min-w-0 flex-1 space-y-2">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <SourceBadge source={mod.source} />
-                                  {mod.adult_content === true && (
+                                  {isAdultContent(mod.adult_content) && (
                                     <span className="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
                                       NSFW
                                     </span>

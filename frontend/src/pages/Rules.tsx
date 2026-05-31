@@ -27,7 +27,9 @@ import {
   importRulesByUrl,
   importRulesFromLocalFile,
 } from "@/api/rules";
-import { fetchJobRun, fetchJobRuns } from "@/api/jobs";
+import { fetchJobRuns, pollJobRun } from "@/api/jobs";
+import { metadataRuleId, parseJobMetadata } from "@/utils/jobMetadata";
+import { formatLocalDateTime } from "@/utils/time";
 import type { WatchRule, ModSource } from "@/types";
 
 const Rules: React.FC = () => {
@@ -101,32 +103,36 @@ const Rules: React.FC = () => {
 
   const pollRuleJob = async (jobId: number, ruleId: number, token: number) => {
     const isCurrentRun = () => mountedRef.current && ruleRunTokensRef.current.get(ruleId) === token;
-    for (let i = 0; i < 60; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      if (!isCurrentRun()) return;
-      const job = await fetchJobRun(jobId);
-      if (!isCurrentRun()) return;
-      if (job.status === "queued" || job.status === "running") {
+    const pollResult = await pollJobRun(jobId, {
+      isActive: isCurrentRun,
+      onRunning: (job) => {
         setRunStatus((prev) => ({
           ...prev,
           [ruleId]: t("jobs.running", { jobId, status: t(`jobs.status.${job.status}`) }),
         }));
-        continue;
-      }
-      if (job.status === "failed") {
-        setRunStatus((prev) => ({
-          ...prev,
-          [ruleId]: t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }),
-        }));
-        return;
-      }
+      },
+    });
+    if (pollResult.status === "cancelled") return;
+    if (pollResult.status === "timeout") {
       setRunStatus((prev) => ({
         ...prev,
-        [ruleId]: t("jobs.foundMods", { count: job.items_matched }),
+        [ruleId]: t("jobs.timeout"),
       }));
-      queryClient.invalidateQueries({ queryKey: ["rules"] });
       return;
     }
+    const job = pollResult.job;
+    if (job.status === "failed") {
+      setRunStatus((prev) => ({
+        ...prev,
+        [ruleId]: t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }),
+      }));
+      return;
+    }
+    setRunStatus((prev) => ({
+      ...prev,
+      [ruleId]: t("jobs.foundMods", { count: job.items_matched }),
+    }));
+    queryClient.invalidateQueries({ queryKey: ["rules"] });
   };
 
   const getSourceBadgeVariant = (
@@ -148,15 +154,7 @@ const Rules: React.FC = () => {
     const items = recentJobRuns?.items ?? [];
     for (const job of items) {
       if (job.job_name !== "run_rule_discovery") continue;
-      const raw = job.metadata_json;
-      if (!raw) continue;
-      let parsed: Record<string, unknown> = {};
-      try {
-        parsed = JSON.parse(raw) as Record<string, unknown>;
-      } catch {
-        parsed = {};
-      }
-      const ruleId = Number(parsed.rule_id || 0);
+      const ruleId = metadataRuleId(parseJobMetadata(job.metadata_json));
       if (!ruleId || map.has(ruleId)) continue;
       map.set(ruleId, job.finished_at || job.started_at);
     }
@@ -164,11 +162,7 @@ const Rules: React.FC = () => {
   }, [recentJobRuns?.items]);
 
   const formatTime = (value?: string) => {
-    if (!value) return t("rules.neverRun");
-    const normalized = value.includes("T") ? value : value.replace(" ", "T");
-    const date = new Date(normalized);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
+    return formatLocalDateTime(value, t("rules.neverRun"));
   };
 
   const handleExport = async () => {

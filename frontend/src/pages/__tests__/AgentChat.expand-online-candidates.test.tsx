@@ -98,14 +98,14 @@ describe("AgentChat expand online candidates", () => {
     fireEvent.change(input, { target: { value: "test query" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    const candidateButton = await screen.findByRole("button", { name: "扩展到 LoversLab" });
+    const candidateButton = await screen.findByRole("button", { name: "继续查 LoversLab 来源的结果" });
     expect(candidateButton).toBeInTheDocument();
 
     fireEvent.click(candidateButton);
 
     const sourceSelect = screen.getByDisplayValue("discover.sourceLoverslab") as HTMLSelectElement;
     expect(sourceSelect.value).toBe("loverslab");
-    expect((input as HTMLInputElement).value).toContain("loverslab");
+    expect((input as HTMLInputElement).value).toContain("LoversLab");
   });
 
   it("renders and persists standardized analysis evidence conclusion cards", async () => {
@@ -148,6 +148,90 @@ describe("AgentChat expand online candidates", () => {
     expect(assistantMessage?.response_cards?.analysis).toEqual(["任务分析：识别跟进查询。"]);
     expect(assistantMessage?.response_cards?.evidence).toEqual(["证据：上一轮包含 bimbo 语义锚点。"]);
     expect(assistantMessage?.response_cards?.conclusion).toEqual(["结论：继续查找相关风格 Mod。"]);
+  });
+
+  it("renders summaries in assistant mod result cards", async () => {
+    vi.mocked(agentApi.chatWithAgent).mockResolvedValue({
+      answer: "找到候选。",
+      used_llm: false,
+      matches: [
+        {
+          id: 101,
+          title: "Bimbos of Skyrim LE/SE",
+          source: "loverslab",
+          game: "skyrimspecialedition",
+          author: "author",
+          version: "1.0",
+          url: "https://example.test/mod",
+          score: 100,
+          original_summary: "Adds bimbofied NPCs, quests, and a transformation curse.",
+          translated_summary: "加入 bimbo 化 NPC、任务和转化诅咒。",
+        },
+      ],
+    });
+
+    renderPage();
+
+    const input = await screen.findByPlaceholderText("agent.placeholder");
+    fireEvent.change(input, { target: { value: "天际有什么扮演bimbo的MOD" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByText("Bimbos of Skyrim LE/SE")).toBeInTheDocument();
+    expect(await screen.findByText(/加入 bimbo 化 NPC/)).toBeInTheDocument();
+  });
+
+  it("renders answer body together with structured response cards", async () => {
+    vi.mocked(agentApi.chatWithAgent).mockResolvedValue({
+      answer: "这是该 Mod 的详细解析正文，包含玩法、前置和风险。",
+      used_llm: true,
+      matches: [],
+      response_cards: {
+        analysis: ["任务分析：详细解析指定 Mod。"],
+        evidence: ["证据：已定位到 Mod。"],
+        conclusion: ["结论：可以查看详情。"],
+        results: ["已生成该 Mod 的详细解析。"],
+        next_steps: [],
+      },
+    });
+
+    renderPage();
+
+    const input = await screen.findByPlaceholderText("agent.placeholder");
+    fireEvent.change(input, { target: { value: "请详细解析这个 Mod：Bimbos of Skyrim - BimboLips 1.3.1" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByText("这是该 Mod 的详细解析正文，包含玩法、前置和风险。")).toBeInTheDocument();
+    expect(await screen.findByText("任务分析：详细解析指定 Mod。")).toBeInTheDocument();
+  });
+
+  it("uses rank reason as card description when source summaries are missing", async () => {
+    vi.mocked(agentApi.chatWithAgent).mockResolvedValue({
+      answer: "找到候选。",
+      used_llm: false,
+      matches: [
+        {
+          id: 102,
+          title: "Bimbo Body Preset",
+          source: "nexusmods",
+          game: "skyrimspecialedition",
+          author: "author",
+          version: "1.0",
+          url: "https://example.test/preset",
+          score: 88,
+          rank_reason: "名称和分类都命中 bimbo 角色扮演需求。",
+        },
+      ],
+    });
+
+    renderPage();
+
+    const input = await screen.findByPlaceholderText("agent.placeholder");
+    fireEvent.change(input, { target: { value: "天际有什么扮演bimbo的MOD" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByText("Bimbo Body Preset")).toBeInTheDocument();
+    expect(await screen.findByText("agent.matchReason")).toBeInTheDocument();
+    expect(await screen.findByText("名称和分类都命中 bimbo 角色扮演需求。")).toBeInTheDocument();
   });
 
   it("does not render empty legacy sections for analysis evidence conclusion only cards", async () => {
@@ -241,7 +325,7 @@ describe("AgentChat expand online candidates", () => {
     renderPage();
 
     expect(await screen.findByText("任务分析：需要扩展在线来源。")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "扩展到 LoversLab" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "继续查 LoversLab 来源的结果" })).toBeInTheDocument();
   });
 
   it("maps nexusmods_search candidate to nexusmods source", async () => {
@@ -269,12 +353,12 @@ describe("AgentChat expand online candidates", () => {
     fireEvent.change(input, { target: { value: "test query" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    const candidateButton = await screen.findByRole("button", { name: "扩展到 NexusMods" });
+    const candidateButton = await screen.findByRole("button", { name: "继续查 NexusMods 来源的结果" });
     fireEvent.click(candidateButton);
 
     const sourceSelect = screen.getByDisplayValue("discover.sourceNexusmods") as HTMLSelectElement;
     expect(sourceSelect.value).toBe("nexusmods");
-    expect((input as HTMLInputElement).value).toContain("nexusmods");
+    expect((input as HTMLInputElement).value).toContain("NexusMods");
   });
 
   it("prefers action_payload.expand_online_candidates when provided", async () => {
@@ -304,7 +388,7 @@ describe("AgentChat expand online candidates", () => {
     fireEvent.change(input, { target: { value: "test query" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    const candidateButton = await screen.findByRole("button", { name: "扩展到 LoversLab" });
+    const candidateButton = await screen.findByRole("button", { name: "继续查 LoversLab 来源的结果" });
     fireEvent.click(candidateButton);
 
     const sourceSelect = screen.getByDisplayValue("discover.sourceLoverslab") as HTMLSelectElement;
@@ -338,10 +422,10 @@ describe("AgentChat expand online candidates", () => {
     fireEvent.change(input, { target: { value: "test query" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    const gameButton = await screen.findByRole("button", { name: "补充游戏" });
+    const gameButton = await screen.findByRole("button", { name: "我想限定目标游戏" });
     expect(gameButton).toBeInTheDocument();
     fireEvent.click(gameButton);
-    expect((input as HTMLInputElement).value).toContain("目标游戏是");
+    expect((input as HTMLInputElement).value).toContain("我想限定目标游戏为");
   });
 
   it("renders review target button and applies review template", async () => {
@@ -371,9 +455,9 @@ describe("AgentChat expand online candidates", () => {
     fireEvent.change(input, { target: { value: "test query" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    const reviewButton = await screen.findByRole("button", { name: "查看记忆信号" });
+    const reviewButton = await screen.findByRole("button", { name: "请解释你参考了哪些记忆信号" });
     fireEvent.click(reviewButton);
-    expect((input as HTMLInputElement).value).toContain("请按记忆信号复核");
+    expect((input as HTMLInputElement).value).toContain("请解释你参考了哪些记忆信号");
   });
 
   it("renders conflict field button and applies confirm template", async () => {
@@ -403,8 +487,8 @@ describe("AgentChat expand online candidates", () => {
     fireEvent.change(input, { target: { value: "test query" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    const conflictButton = await screen.findByRole("button", { name: "确认游戏" });
+    const conflictButton = await screen.findByRole("button", { name: "这次目标游戏应该按哪个来查？" });
     fireEvent.click(conflictButton);
-    expect((input as HTMLInputElement).value).toContain("确认游戏");
+    expect((input as HTMLInputElement).value).toContain("这次目标游戏应该按哪个来查？");
   });
 });

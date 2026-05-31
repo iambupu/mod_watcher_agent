@@ -1,6 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import type { CommonRuleFilters } from "@/types";
+import { parseIntegerInput } from "@/utils/numberInput";
 
 interface MetricFilterFieldsProps {
   minDownloads?: number;
@@ -20,16 +21,15 @@ export const MetricFilterFields: React.FC<MetricFilterFieldsProps> = ({
   const { t } = useTranslation();
 
   const handleNumberChange =
-    (key: keyof CommonRuleFilters) =>
+    (key: keyof CommonRuleFilters, min = 0) =>
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const raw = e.target.value;
-      if (raw === "") {
+      const value = parseIntegerInput(e.target.value, { min, allowEmpty: true });
+      if (value === undefined) {
         onChange({ [key]: undefined });
-      } else {
-        const num = Number(raw);
-        if (!isNaN(num) && num >= 0) {
-          onChange({ [key]: num });
-        }
+        return;
+      }
+      if (value !== null) {
+        onChange({ [key]: value });
       }
     };
 
@@ -94,9 +94,9 @@ export const MetricFilterFields: React.FC<MetricFilterFieldsProps> = ({
           </p>
           <input
             type="number"
-            min={0}
+            min={1}
             value={updatedWithinDays ?? ""}
-            onChange={handleNumberChange("updatedWithinDays")}
+            onChange={handleNumberChange("updatedWithinDays", 1)}
             className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>

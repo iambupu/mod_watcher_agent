@@ -124,6 +124,13 @@ describe("RuleEditorPage", () => {
     expect(storeState.activeSource).toBe("nexusmods");
   });
 
+  it("treats_invalid_route_id_as_create_mode", async () => {
+    renderWithRoute("/rules/not-a-number/edit");
+
+    expect(screen.getByText("rules.newRule")).toBeInTheDocument();
+    expect(fetchRuleById).not.toHaveBeenCalled();
+  });
+
   it("refetches latest rule when opening edit page even if cached", async () => {
     vi.mocked(fetchRuleById).mockResolvedValueOnce({
       id: 1,

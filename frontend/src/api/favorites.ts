@@ -1,14 +1,18 @@
 import { get, post, put, del } from "./client";
 import { fetchMod } from "./mods";
+import { fallbackModItem, mergeTranslatedSummary } from "./modHydration";
 import type { Favorite, FavoriteCheckResult, ModItem } from "@/types";
 import { hydrateUpdateEvent, type BackendUpdateEvent } from "./updates";
+import { arrayOrEmpty } from "@/utils/array";
+import { parseJsonStringArray } from "@/utils/json";
+import { parseBoolean } from "@/utils/boolean";
 
 interface BackendFavorite {
   id: number;
   mod_id: number;
   mod?: ModItem;
-  tracking_enabled: boolean;
-  notify_on_update: boolean;
+  tracking_enabled: unknown;
+  notify_on_update: unknown;
   user_note?: string | null;
   user_tags_json: string;
   last_known_version?: string | null;
@@ -17,39 +21,17 @@ interface BackendFavorite {
   translated_summary?: string | null;
 }
 
-function parseTags(value: string | undefined): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 function fromBackendFavorite(raw: BackendFavorite): Favorite {
-  const fallbackMod: ModItem = {
-    id: raw.mod_id,
-    source: "nexusmods",
-    external_id: String(raw.mod_id),
-    game: "",
-    title: `Mod #${raw.mod_id}`,
-    url: "#",
-    tags_json: "[]",
-    ignored: false,
-    first_seen_at: "",
-    last_seen_at: "",
-  };
   return {
     id: raw.id,
     modId: raw.mod_id,
     mod: raw.mod
-      ? { ...raw.mod, translated_summary: raw.mod.translated_summary ?? raw.translated_summary ?? undefined }
-      : fallbackMod,
-    trackingEnabled: raw.tracking_enabled,
-    notifyOnUpdate: raw.notify_on_update,
+      ? mergeTranslatedSummary(raw.mod, raw.translated_summary)
+      : fallbackModItem(raw.mod_id, { url: "#", translatedSummary: raw.translated_summary }),
+    trackingEnabled: parseBoolean(raw.tracking_enabled),
+    notifyOnUpdate: parseBoolean(raw.notify_on_update),
     userNote: raw.user_note ?? undefined,
-    userTags: parseTags(raw.user_tags_json),
+    userTags: parseJsonStringArray(raw.user_tags_json),
     lastKnownVersion: raw.last_known_version ?? undefined,
     lastKnownUpdatedAt: raw.last_known_updated_at ?? undefined,
     lastCheckedAt: raw.last_checked_at ?? undefined,
@@ -81,9 +63,25 @@ export function getFavoriteModId(favorite: Favorite): number {
   return favorite.modId;
 }
 
+export function favoriteByModId(favorites: Favorite[] | undefined): Map<number, Favorite> {
+  const pairs = new Map<number, Favorite>();
+  for (const favorite of favorites ?? []) {
+    pairs.set(getFavoriteModId(favorite), favorite);
+  }
+  return pairs;
+}
+
+export function favoriteIdByModId(favorites: Favorite[] | undefined): Map<number, number> {
+  const pairs = new Map<number, number>();
+  for (const favorite of favorites ?? []) {
+    pairs.set(getFavoriteModId(favorite), favorite.id);
+  }
+  return pairs;
+}
+
 export const fetchFavorites = async (): Promise<Favorite[]> => {
   const raw = await get<BackendFavorite[]>("/favorites");
-  return Promise.all(raw.map(hydrateFavorite));
+  return Promise.all(arrayOrEmpty<BackendFavorite>(raw).map(hydrateFavorite));
 };
 
 export const addFavorite = async (data: {
@@ -104,15 +102,15 @@ export const checkUpdate = (
   post<{
     favorite_id: number;
     mod_id: number;
-    update_detected: boolean;
+    update_detected: unknown;
     update_event: BackendUpdateEvent | null;
     last_checked_at?: string | null;
-    notification_sent: boolean;
+    notification_sent: unknown;
   }>(`/favorites/${id}/check-update`).then((result) => ({
     favoriteId: result.favorite_id,
     modId: result.mod_id,
-    updateDetected: result.update_detected,
+    updateDetected: parseBoolean(result.update_detected),
     updateEvent: result.update_event ? hydrateUpdateEvent(result.update_event) : null,
     lastCheckedAt: result.last_checked_at ?? undefined,
-    notificationSent: result.notification_sent,
+    notificationSent: parseBoolean(result.notification_sent),
   }));

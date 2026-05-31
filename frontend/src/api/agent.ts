@@ -63,14 +63,31 @@ export interface AgentAudit {
     [key: string]: unknown;
   };
   conclusion?: {
+    used_llm?: boolean;
+    match_count?: number;
+    consistency_risk?: "low" | "medium" | "high";
     recommended_action?: string;
-    planning_confidence?: "low" | "medium" | "high" | "unknown";
+    recommended_action_reason?: string;
+    tool_policy_confidence?: "low" | "medium" | "high" | "unknown";
+    evidence_sufficiency?: "insufficient" | "partial" | "sufficient";
+    contract_status?: "ok" | "violated";
+    contract_violations_count?: number;
     expand_online_candidates?: string[];
     expand_online_candidates_detail?: AgentActionCandidate[];
     action_payload?: AgentActionPayload;
     requires_clarification?: boolean;
     [key: string]: unknown;
   };
+}
+
+export interface AgentResponseCards {
+  analysis?: string[];
+  evidence?: string[];
+  conclusion?: string[];
+  understanding?: string[];
+  filters?: string[];
+  results?: string[];
+  next_steps?: string[];
 }
 
 export interface AgentConversationMessage {
@@ -80,15 +97,7 @@ export interface AgentConversationMessage {
   session_id: string;
   created_at?: string;
   matches?: AgentModMatch[];
-  response_cards?: {
-    analysis?: string[];
-    evidence?: string[];
-    conclusion?: string[];
-    understanding?: string[];
-    filters?: string[];
-    results?: string[];
-    next_steps?: string[];
-  };
+  response_cards?: AgentResponseCards;
   llm_provider?: string;
   llm_model?: string;
   audit?: AgentAudit;
@@ -98,15 +107,7 @@ export interface AgentChatResponse {
   answer: string;
   used_llm: boolean;
   matches: AgentModMatch[];
-  response_cards?: {
-    analysis?: string[];
-    evidence?: string[];
-    conclusion?: string[];
-    understanding?: string[];
-    filters?: string[];
-    results?: string[];
-    next_steps?: string[];
-  };
+  response_cards?: AgentResponseCards;
   llm_provider?: string;
   llm_model?: string;
   audit?: AgentAudit;

@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/Input";
 import { TokenInput } from "@/components/rules/TokenInput";
 import { useRuleEditorStore } from "@/stores/ruleEditorStore";
 import type { NexusModsRuleConfig } from "@/types";
+import { parseIntegerInput } from "@/utils/numberInput";
 
 type NexusQueryMode = NonNullable<NexusModsRuleConfig["queryMode"]>;
 type NexusSortBy = NonNullable<NexusModsRuleConfig["sortBy"]>;
@@ -34,8 +35,7 @@ export const NexusModsRulePanel: React.FC = () => {
         return t("rules.nexusmods.errors.gameDomainNameRequired");
       }
       if (field === "updatedSinceDays") {
-        const num = Number(value);
-        if (isNaN(num) || num <= 0) {
+        if (parseIntegerInput(String(value), { min: 1, max: 365 }) == null) {
           return t("rules.nexusmods.errors.updatedSinceDaysNumeric");
         }
       }
@@ -69,10 +69,16 @@ export const NexusModsRulePanel: React.FC = () => {
 
   const handleChange = useCallback(
     (field: keyof typeof nexusConfig, raw: string) => {
-      const value =
-        field === "updatedSinceDays" ? Number(raw) : raw;
       const error = validate(field, raw);
       setFieldError(field, error);
+      if (field === "updatedSinceDays") {
+        const value = parseIntegerInput(raw, { min: 1, max: 365 });
+        if (value != null) {
+          updateNexusConfig({ updatedSinceDays: value });
+        }
+        return;
+      }
+      const value = raw;
       updateNexusConfig({ [field]: value });
     },
     [updateNexusConfig, validate, setFieldError],
