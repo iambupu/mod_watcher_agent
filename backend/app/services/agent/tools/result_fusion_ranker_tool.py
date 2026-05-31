@@ -48,6 +48,8 @@ class ResultFusionRankerTool:
             results = filter_by_distinctive_terms(
                 results,
                 _filter_query(tool_input.query, tool_input.plan, tool_input.query_plan),
+                query_plan=tool_input.query_plan,
+                plan=tool_input.plan,
                 fallback_terms=_fallback_filter_terms(tool_input.query_plan, tool_input.plan),
             )
         results = filter_by_adult_content(results, tool_input.plan)

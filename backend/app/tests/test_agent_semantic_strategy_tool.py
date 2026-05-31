@@ -220,7 +220,88 @@ def test_semantic_strategy_adapter_softens_open_discovery_slots():
     assert plan["tags"] == []
     assert plan["requirement_terms"] == []
     assert plan["compatibility_terms"] == []
-    assert plan["category_hints"] == ["Gameplay", "3BA", "SKSE", "AE", "curse"]
+    assert plan["category_hints"] == ["Gameplay", "3BA", "SKSE", "AE"]
+
+
+def test_semantic_strategy_adapter_filters_out_ungrounded_llm_core_terms():
+    strategy = SemanticStrategy(
+        task_type="open_discovery",
+        user_goal="天际有什么扮演 bimbo 的mod",
+        strategy="broad_then_judge",
+        core_terms=["bimbo", "subtitle", "bimbofication"],
+        answer_shape="grouped_recommendation",
+    )
+    result = strategy_tool_module.SemanticStrategyResult(
+        strategy=strategy,
+        source="llm",
+        status="succeeded",
+        used_llm=True,
+    )
+
+    plan = attach_semantic_strategy_to_query_plan(
+        {
+            "keywords": ["天际", "bimbo", "mod"],
+            "limit": 8,
+        },
+        result,
+    )
+
+    assert plan["keywords"] == ["bimbo"]
+    assert plan["_agent_ranking_semantic_anchors"] == ["bimbo", "roleplay"]
+
+
+def test_semantic_strategy_adapter_filters_ungrounded_soft_signals():
+    strategy = SemanticStrategy(
+        task_type="open_discovery",
+        user_goal="天际有什么扮演 bimbo 的mod",
+        strategy="broad_then_judge",
+        core_terms=["bimbo"],
+        soft_signals=["subtitle", "翻译", "bimbo", "roleplay"],
+        answer_shape="grouped_recommendation",
+    )
+    result = strategy_tool_module.SemanticStrategyResult(
+        strategy=strategy,
+        source="llm",
+        status="succeeded",
+        used_llm=True,
+    )
+
+    plan = attach_semantic_strategy_to_query_plan(
+        {
+            "keywords": ["天际", "bimbo", "mod"],
+            "limit": 8,
+        },
+        result,
+    )
+
+    assert plan["_agent_semantic_soft_signals"] == ["bimbo", "roleplay"]
+
+
+def test_semantic_strategy_adapter_allows_terms_from_existing_semantic_anchors_when_user_goal_is_sparse():
+    strategy = SemanticStrategy(
+        task_type="open_discovery",
+        user_goal="",
+        strategy="broad_then_judge",
+        core_terms=["bimbo", "roleplay", "subtitle"],
+        answer_shape="grouped_recommendation",
+    )
+    result = strategy_tool_module.SemanticStrategyResult(
+        strategy=strategy,
+        source="llm",
+        status="succeeded",
+        used_llm=True,
+    )
+
+    plan = attach_semantic_strategy_to_query_plan(
+        {
+            "keywords": ["天际"],
+            "_agent_ranking_semantic_anchors": ["roleplay", "framework"],
+            "_agent_semantic_anchors": ["bimbo"],
+        },
+        result,
+    )
+
+    assert "roleplay" in plan["keywords"]
 
 
 def test_semantic_strategy_adapter_llm_open_discovery_updates_executor_mode():

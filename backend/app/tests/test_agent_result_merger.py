@@ -90,6 +90,117 @@ def test_filter_by_distinctive_terms_treats_fallback_expansions_as_alternatives(
     assert [item.mod.title for item in filtered] == ["Stellar Lace Combat Suit"]
 
 
+def test_filter_by_distinctive_terms_with_anchor_groups_prefers_more_relevant_groups():
+    results = [
+        _result("Bimbo Roleplay Expansion", "1", 9),
+        _result("Bimbo Morph Pack", "2", 8),
+        _result("Whistling in Skyrim CHS", "3", 7),
+    ]
+    results[0].mod.original_summary = "A roleplay companion package."
+    results[1].mod.original_summary = "Pure body morph pack for Skyrim."
+    results[2].mod.original_summary = "Chinese subtitles and translations for Skyrim whistling."
+    query_plan = {
+        "_agent_ranking_semantic_anchors": ["bimbo", "roleplay"],
+        "_agent_semantic_anchors": [],
+    }
+
+    filtered = filter_by_distinctive_terms(results, "天际有什么扮演bimbo mod", query_plan=query_plan)
+
+    assert [item.mod.title for item in filtered] == ["Bimbo Roleplay Expansion", "Bimbo Morph Pack", "Whistling in Skyrim CHS"]
+
+
+def test_filter_by_distinctive_terms_with_anchor_groups_falls_back_when_no_group_full_coverage():
+    results = [
+        _result("Bimbo Morph Pack", "1", 8),
+        _result("Whistling in Skyrim CHS", "2", 7),
+        _result("Lore Expansion", "3", 6),
+    ]
+    results[0].mod.original_summary = "Body morph pack focused on bimbo style."
+    results[1].mod.original_summary = "Chinese subtitles and translation patch."
+    results[2].mod.original_summary = "Core quest framework."
+
+    query_plan = {
+        "_agent_ranking_semantic_anchors": ["bimbo", "framework", "roleplay"],
+        "_agent_semantic_anchors": [],
+    }
+
+    filtered = filter_by_distinctive_terms(results, "天际有什么扮演bimbo mod", query_plan=query_plan)
+
+    assert [item.mod.title for item in filtered] == ["Bimbo Morph Pack", "Lore Expansion", "Whistling in Skyrim CHS"]
+
+
+def test_filter_by_distinctive_terms_ignores_author_name_match_without_author_constraint():
+    bimbo_roleplay = _result("Bimbo Roleplay Expansion", "1", 12)
+    bimbo_roleplay.mod.original_summary = "Roleplay companion and quest updates."
+    age_of_nirn = _result("The Age of Nirn - Revelations", "2", 11)
+    age_of_nirn.mod.author = "Bimbovakiin"
+    age_of_nirn.mod.original_summary = "A lightweight narrative layer for Skyrim's main quest."
+
+    query_plan = {
+        "_agent_ranking_semantic_anchors": ["bimbo", "roleplay"],
+    }
+    filtered = filter_by_distinctive_terms(
+        [age_of_nirn, bimbo_roleplay],
+        "天际有什么扮演bimbo mod",
+        query_plan=query_plan,
+    )
+
+    assert [item.mod.title for item in filtered] == ["Bimbo Roleplay Expansion", "The Age of Nirn - Revelations"]
+
+
+def test_filter_by_distinctive_terms_can_match_author_when_author_constraint_is_explicit():
+    byline = _result("The Age of Nirn - Revelations", "1", 12)
+    byline.mod.author = "Bimbovakiin"
+    byline.mod.original_summary = "A lightweight narrative layer for Skyrim's main quest."
+    other = _result("Outfit Pack", "2", 11)
+    other.mod.original_summary = "A simple outfit pack."
+
+    query_plan = {
+        "author": "Bimbovakiin",
+    }
+    plan = SearchPlan.from_query_plan({"author": "Bimbovakiin"})
+    filtered = filter_by_distinctive_terms(
+        [other, byline],
+        "Bimbovakiin",
+        query_plan=query_plan,
+        plan=plan,
+    )
+
+    assert [item.mod.title for item in filtered] == ["The Age of Nirn - Revelations"]
+
+
+def test_filter_by_distinctive_terms_does_not_match_anchor_term_inside_longer_token():
+    results = [
+        _result("Bimbovakiin", "1", 10),
+        _result("Bimbo Roleplay Expansion", "2", 9),
+    ]
+    results[1].mod.original_summary = "Roleplay companion and quest updates."
+    query_plan = {
+        "_agent_ranking_semantic_anchors": ["bimbo", "roleplay"],
+        "_agent_semantic_anchors": [],
+    }
+
+    filtered = filter_by_distinctive_terms(results, "天际有什么扮演bimbo mod", query_plan=query_plan)
+
+    assert [item.mod.title for item in filtered] == ["Bimbo Roleplay Expansion", "Bimbovakiin"]
+
+
+def test_sort_results_boosts_results_matching_more_keyword_groups():
+    high_relevance = _result("Bimbo Roleplay Expansion", "1", 5)
+    high_relevance.mod.original_summary = "Roleplay framework and quests."
+    medium_relevance = _result("Bimbo Morph Pack", "2", 5)
+    medium_relevance.mod.original_summary = "Body morph preset focused on bimbo style."
+    plan = SearchPlan.from_query_plan({"sort_field": "relevance", "sort_order": "desc", "limit": 8})
+    query_plan = {
+        "_agent_ranking_semantic_anchors": ["bimbo", "roleplay"],
+        "_agent_semantic_anchors": [],
+    }
+
+    sorted_results = sort_results([medium_relevance, high_relevance], plan, query_plan)
+
+    assert [item.mod.title for item in sorted_results] == ["Bimbo Roleplay Expansion", "Bimbo Morph Pack"]
+
+
 def test_filter_by_distinctive_terms_allows_partial_match_for_long_term_sets():
     results = [_result("Script Extender Utility Patch", "1", 5), _result("Casual Armor Pack", "2", 9)]
     results[0].mod.original_summary = "Requires SKSE and Address Library before installation."

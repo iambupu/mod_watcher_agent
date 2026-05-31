@@ -1,9 +1,12 @@
+import re
 from typing import Any
 
 from app.services.agent.list_utils import string_list
 from app.services.agent.planning.open_discovery_policy import apply_open_discovery_executor_policy
 from app.services.agent.planning.semantic_signals import anchor_domains, extract_semantic_anchors
 from app.services.agent.semantic_brain.semantic_strategy_schema import SemanticStrategyResult
+from app.services.agent.semantic_inference import canonical_semantic_token
+from app.services.agent.semantic_search import base_keywords, semantic_query_from_anchors
 from app.utils.boolean import parse_bool
 
 
@@ -35,8 +38,16 @@ def _apply_strategy_core(plan: dict[str, Any], strategy: dict[str, Any], *, used
     soft_signals = string_list(strategy.get("soft_signals"), limit=20)
 
     if core_terms and (used_llm or not plan.get("keywords")):
+        core_terms = _constrain_llm_terms(core_terms, strategy, plan) if used_llm else core_terms
+        if not core_terms:
+            # 避免覆盖为非法/脱离问题的关键词，保留原有可用关键词。
+            core_terms = string_list(plan.get("keywords"))
+        if not core_terms:
+            return
         # core_terms 是 LLM 对当前任务主体的表达；旧 keywords 只作为 executor 兼容字段承载它。
         plan["keywords"] = core_terms
+    if used_llm:
+        soft_signals = _constrain_llm_terms(soft_signals, strategy, plan)
     if used_llm:
         _apply_hard_filter(plan, "game", "games", hard_filters)
         _apply_hard_filter(plan, "source", "sources", hard_filters)
@@ -111,3 +122,67 @@ def _intent_for_task_type(task_type: str, *, fallback: str) -> str:
 def _drop_core_term_exclusions(values: list[str], core_terms: list[str]) -> list[str]:
     core_keys = {value.lower() for value in core_terms}
     return [value for value in values if value.lower() not in core_keys]
+
+
+def _constrain_llm_terms(
+    terms: list[str],
+    strategy: dict[str, Any],
+    plan: dict[str, Any],
+) -> list[str]:
+    user_goal = str(strategy.get("user_goal") or "").strip()
+    allowed = _grounded_terms_for_plan(plan, user_goal)
+    if not allowed:
+        return terms
+    constrained = [term for term in string_list(terms) if _is_grounded_term(_normalize_term(term), allowed)]
+    return constrained
+
+
+def _is_grounded_term(term_norm: str, allowed_terms: set[str]) -> bool:
+    if not term_norm:
+        return False
+    return term_norm in allowed_terms or canonical_semantic_term(term_norm) in allowed_terms
+
+
+def canonical_semantic_term(term_norm: str) -> str:
+    term = str(term_norm or "").strip().lower()
+    if not term:
+        return term
+    mapped = canonical_semantic_token(term)
+    if mapped:
+        return mapped
+    # 仅做低风险词形归一化，避免把普通词误切短（如 boss -> bos）。
+    if re.fullmatch(r"[a-z0-9]+", term):
+        if term.endswith("s") and len(term) > 4 and not term.endswith(("ss", "us", "is", "es")):
+            return term[:-1]
+        if term.endswith("ed") and len(term) > 4:
+            return term[:-2]
+    return term
+
+
+def _grounded_terms_for_plan(plan: dict[str, Any], user_goal: str) -> set[str]:
+    grounding: set[str] = {
+        *_normalize_terms(string_list(plan.get("keywords"))),
+        *_normalize_terms(base_keywords(user_goal)),
+    }
+    grounding.update(_normalize_terms(string_list(plan.get("_agent_ranking_semantic_anchors"))))
+    grounding.update(_normalize_terms(string_list(plan.get("_agent_semantic_anchors"))))
+    anchors = extract_semantic_anchors(user_goal, string_list(plan.get("keywords")))
+    grounding.update(_normalize_terms(anchors))
+    if anchors:
+        signals = semantic_query_from_anchors("", anchors)
+        grounding.update(_normalize_terms(signals.expanded_terms))
+        grounding.update(_normalize_terms(signals.category_aliases))
+        grounding.update(_normalize_terms(signals.matched_concepts))
+    return grounding
+
+
+def _normalize_terms(values: list[str]) -> set[str]:
+    return {
+        _normalize_term(value)
+        for value in values
+        if _normalize_term(value)
+    }
+
+
+def _normalize_term(value: str) -> str:
+    return str(value or "").strip().lower()
