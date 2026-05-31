@@ -1,7 +1,10 @@
 import re
 from typing import Any
 
+from app.services.agent.filter_value_utils import optional_min_metric, optional_time_window
 from app.services.game_alias_service import alias_key
+from app.utils.boolean import parse_optional_bool
+from app.utils.numeric import bounded_int
 
 
 def normalize_allowed_list(
@@ -32,38 +35,19 @@ def normalize_allowed_list(
 
 
 def normalize_optional_bool(raw: Any) -> bool | None:
-    if isinstance(raw, bool):
-        return raw
-    value = str(raw or "").strip().lower()
-    if value in {"true", "1", "yes", "y"}:
-        return True
-    if value in {"false", "0", "no", "n"}:
-        return False
-    return None
+    return parse_optional_bool(raw)
 
 
 def normalize_limit(raw: dict[str, Any], *, default: int, maximum: int) -> int:
-    try:
-        limit = int(raw.get("limit") or default)
-    except (TypeError, ValueError):
-        limit = default
-    return max(1, min(maximum, limit))
+    return bounded_int(raw.get("limit"), default=default, minimum=1, maximum=maximum)
 
 
 def normalize_min_metric(raw: Any) -> int | None:
-    try:
-        value = int(str(raw or "").replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
-    return max(0, value)
+    return optional_min_metric(raw)
 
 
 def normalize_time_window(raw: Any) -> int | None:
-    try:
-        value = int(str(raw or "").replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
-    return max(1, min(365, value))
+    return optional_time_window(raw)
 
 
 def normalize_absolute_date(raw: Any) -> str | None:

@@ -1,14 +1,19 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session
 
 from app.models.mod import Mod
+from app.services.agent.filter_value_utils import (
+    optional_min_metric,
+    optional_time_window,
+    url_without_query,
+)
 from app.services.source_identity import external_id_aliases
+from app.utils.numeric import bounded_int
 
 
 @dataclass(frozen=True)
@@ -103,6 +108,40 @@ def rebuild_mods_fts(session: Session) -> bool:
     )
     session.commit()
     return True
+
+
+def mods_fts_needs_rebuild(session: Session) -> bool:
+    if session.get_bind().dialect.name != "sqlite":
+        return False
+    if not _has_mods_fts(session):
+        return True
+    try:
+        fts_count = int(session.execute(text("SELECT COUNT(1) FROM mods_fts")).scalar_one() or 0)
+        mod_count = int(
+            session.execute(text("SELECT COUNT(1) FROM mods WHERE id IS NOT NULL")).scalar_one()
+            or 0
+        )
+        stale_summary_row = session.execute(
+            text(
+                """
+                SELECT 1
+                FROM mod_summaries s
+                JOIN mods m ON m.id = s.mod_id
+                LEFT JOIN mods_fts f ON f.mod_id = s.mod_id
+                WHERE COALESCE(TRIM(s.content), '') != ''
+                  AND (
+                    f.mod_id IS NULL
+                    OR COALESCE(TRIM(f.translated_summary), '') = ''
+                    OR instr(f.translated_summary, s.content) = 0
+                  )
+                LIMIT 1
+                """
+            )
+        ).first()
+    except OperationalError:
+        session.rollback()
+        return True
+    return fts_count != mod_count or stale_summary_row is not None
 
 
 def _drop_legacy_mods_fts_if_needed(session: Session) -> None:
@@ -426,7 +465,10 @@ def query_mods_fts(
 ) -> list[SqliteFtsResult]:
     if not keywords or session.get_bind().dialect.name != "sqlite":
         return []
-    match_query = _fts_match_query(keywords)
+    match_query = _fts_match_query(
+        keywords,
+        match_all=str(filters.get("keyword_match_mode") or "").strip().lower() == "all",
+    )
     if not match_query:
         return []
     if not _has_mods_fts(session) and not rebuild_mods_fts(session):
@@ -434,7 +476,7 @@ def query_mods_fts(
 
     where, params = _filter_sql(filters)
     params["match_query"] = match_query
-    params["limit"] = max(1, min(50, int(limit or 8)))
+    params["limit"] = _normalize_limit(limit)
     rows = session.execute(
         text(
             f"""
@@ -451,7 +493,13 @@ def query_mods_fts(
         params,
     ).all()
     if not rows and _contains_cjk(match_query):
-        rows = _query_cjk_like_fallback(session, keywords=keywords, where=where, params=params)
+        rows = _query_cjk_like_fallback(
+            session,
+            keywords=keywords,
+            where=where,
+            params=params,
+            match_all=str(filters.get("keyword_match_mode") or "").strip().lower() == "all",
+        )
     results: list[SqliteFtsResult] = []
     for index, row in enumerate(rows):
         mod = session.get(Mod, int(row.mod_id))
@@ -460,12 +508,17 @@ def query_mods_fts(
     return results
 
 
+def _normalize_limit(limit: Any) -> int:
+    return bounded_int(limit, default=8, minimum=1, maximum=50)
+
+
 def _query_cjk_like_fallback(
     session: Session,
     *,
     keywords: list[str],
     where: str,
     params: dict[str, Any],
+    match_all: bool = False,
 ):
     like_clauses: list[str] = []
     fallback_params = dict(params)
@@ -493,7 +546,7 @@ def _query_cjk_like_fallback(
             SELECT m.id AS mod_id, 0 AS rank
             FROM mods_fts
             JOIN mods m ON m.id = mods_fts.mod_id
-            WHERE ({' OR '.join(like_clauses)})
+            WHERE ({(' AND ' if match_all else ' OR ').join(like_clauses)})
               AND m.ignored = 0
               {where}
             ORDER BY m.first_seen_at DESC
@@ -514,13 +567,13 @@ def _has_mods_fts(session: Session) -> bool:
     return row is not None
 
 
-def _fts_match_query(keywords: list[str]) -> str:
+def _fts_match_query(keywords: list[str], *, match_all: bool = False) -> str:
     terms = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
     quoted_terms = []
     for term in terms:
         escaped = term.replace('"', '""')
         quoted_terms.append(f'"{escaped}"')
-    return " OR ".join(quoted_terms)
+    return (" AND " if match_all else " OR ").join(quoted_terms)
 
 
 def _contains_cjk(text: str) -> bool:
@@ -533,6 +586,7 @@ def _filter_sql(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     _add_in_filter(clauses, params, "m.game", "game", filters.get("games"))
     _add_in_filter(clauses, params, "m.game_domain", "game_domain", filters.get("game_domains"))
     _add_in_filter(clauses, params, "m.source", "source", filters.get("sources"))
+    _add_not_in_filter(clauses, params, "m.source", "excluded_source", filters.get("excluded_sources"))
     _add_in_filter(clauses, params, "m.category", "category", filters.get("categories"))
     _add_identity_filter(clauses, params, filters)
     for index, tag in enumerate(filters.get("tags") or []):
@@ -621,23 +675,23 @@ def _filter_sql(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if author:
         clauses.append("m.author LIKE :author")
         params["author"] = f"%{author}%"
-    min_downloads = _optional_min_metric(filters.get("min_downloads"))
+    min_downloads = optional_min_metric(filters.get("min_downloads"))
     if min_downloads is not None:
         clauses.append("m.downloads >= :min_downloads")
         params["min_downloads"] = min_downloads
-    min_endorsements = _optional_min_metric(filters.get("min_endorsements"))
+    min_endorsements = optional_min_metric(filters.get("min_endorsements"))
     if min_endorsements is not None:
         clauses.append("m.endorsements >= :min_endorsements")
         params["min_endorsements"] = min_endorsements
-    min_views = _optional_min_metric(filters.get("min_views"))
+    min_views = optional_min_metric(filters.get("min_views"))
     if min_views is not None:
         clauses.append("m.views >= :min_views")
         params["min_views"] = min_views
-    min_likes = _optional_min_metric(filters.get("min_likes"))
+    min_likes = optional_min_metric(filters.get("min_likes"))
     if min_likes is not None:
         clauses.append("m.likes >= :min_likes")
         params["min_likes"] = min_likes
-    updated_since_days = _optional_time_window(filters.get("updated_since_days"))
+    updated_since_days = optional_time_window(filters.get("updated_since_days"))
     if updated_since_days is not None:
         clauses.append("(m.updated_at_remote >= :updated_since_cutoff OR m.published_at_remote >= :updated_since_cutoff)")
         params["updated_since_cutoff"] = (datetime.now(UTC) - timedelta(days=updated_since_days)).isoformat()
@@ -670,6 +724,16 @@ def _filter_sql(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 AND COALESCE(mods_fts.translated_summary, '') NOT LIKE :{name}
             )"""
         )
+    for index, title in enumerate(filters.get("exclude_titles") or []):
+        value = " ".join(str(title or "").lower().split())
+        if not value:
+            continue
+        name = f"exclude_title_{index}"
+        params[name] = value
+        clauses.append(
+            "(LOWER(TRIM(COALESCE(m.title, ''))) != :"
+            f"{name} AND LOWER(TRIM(COALESCE(m.translated_title_zh, ''))) != :{name})"
+        )
     adult_content = filters.get("adult_content")
     if isinstance(adult_content, bool):
         clauses.append("m.adult_content = :adult_content")
@@ -690,7 +754,7 @@ def _add_identity_filter(clauses: list[str], params: dict[str, Any], filters: di
     if source_url:
         identity_clauses.append("m.url = :source_url")
         params["source_url"] = source_url
-        canonical_url = _url_without_query(source_url)
+        canonical_url = url_without_query(source_url)
         if canonical_url != source_url:
             identity_clauses.append("m.url = :canonical_source_url")
             params["canonical_source_url"] = canonical_url
@@ -714,27 +778,6 @@ def _add_identity_filter(clauses: list[str], params: dict[str, Any], filters: di
         clauses.append("(" + " OR ".join(identity_clauses) + ")")
 
 
-def _url_without_query(url: str) -> str:
-    parsed = urlsplit(str(url or "").strip())
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
-
-
-def _optional_min_metric(value: Any) -> int | None:
-    try:
-        parsed = int(str(value or "").replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
-    return max(0, parsed)
-
-
-def _optional_time_window(value: Any) -> int | None:
-    try:
-        parsed = int(str(value or "").replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
-    return max(1, min(365, parsed))
-
-
 def _add_in_filter(
     clauses: list[str],
     params: dict[str, Any],
@@ -751,3 +794,21 @@ def _add_in_filter(
         placeholders.append(f":{name}")
         params[name] = value
     clauses.append(f"{column} IN ({', '.join(placeholders)})")
+
+
+def _add_not_in_filter(
+    clauses: list[str],
+    params: dict[str, Any],
+    column: str,
+    prefix: str,
+    values: Any,
+) -> None:
+    normalized = [str(value).strip() for value in (values or []) if str(value).strip()]
+    if not normalized:
+        return
+    placeholders = []
+    for index, value in enumerate(normalized):
+        name = f"{prefix}_{index}"
+        placeholders.append(f":{name}")
+        params[name] = value
+    clauses.append(f"{column} NOT IN ({', '.join(placeholders)})")

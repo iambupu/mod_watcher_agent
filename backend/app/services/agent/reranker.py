@@ -1,9 +1,10 @@
 import json
 from typing import Any
 
-from app.services.agent.query_planner import safe_json_loads
 from app.services.agent.schemas import AgentModMatch
 from app.services.llm_client import create_llm_client
+from app.utils.ids import positive_integer_id
+from app.utils.json import json_object_from_text
 
 
 async def validate_matches_with_llm(
@@ -45,7 +46,7 @@ async def validate_matches_with_llm(
             f"translated_summary={(item.translated_summary or '')[:400]}; original_summary={(item.original_summary or '')[:400]}"
         )
     raw = await client.chat("\n".join(lines), model=model, max_tokens=200)
-    data = safe_json_loads(raw)
+    data = json_object_from_text(raw)
     if not isinstance(data, dict):
         return matches
     scored_raw = data.get("items")
@@ -56,13 +57,14 @@ async def validate_matches_with_llm(
         if not isinstance(item, dict):
             continue
         raw_id = item.get("id")
-        if not isinstance(raw_id, int) and not (isinstance(raw_id, str) and raw_id.isdigit()):
+        item_id = positive_integer_id(raw_id, allow_string=True)
+        if item_id is None:
             continue
         try:
             score = float(item.get("score"))
         except (TypeError, ValueError):
             continue
-        score_by_id[int(raw_id)] = max(0.0, min(1.0, score))
+        score_by_id[item_id] = max(0.0, min(1.0, score))
     if not score_by_id:
         return matches
     reranked = [item for item in matches if score_by_id.get(item.id, 0.0) >= 0.4]

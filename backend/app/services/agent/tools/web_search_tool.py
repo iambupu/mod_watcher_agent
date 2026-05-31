@@ -3,6 +3,10 @@ from dataclasses import dataclass
 
 from sqlmodel import Session
 
+from app.services.agent.retrieval_evidence import (
+    active_query_plan_fields,
+    append_retrieval_evidence,
+)
 from app.services.agent.search_types import SearchResult
 from app.services.agent.tools.loverslab_google_search_tool import (
     LoversLabGoogleSearchTool,
@@ -16,6 +20,7 @@ from app.services.agent.tools.nexusmods_search_tool import (
     NexusModsSearchTool,
     nexus_tool_input_from_plan,
 )
+from app.utils.numeric import safe_nonnegative_int
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +32,7 @@ class WebSearchOutput:
 
 
 class WebSearchTool:
-    """Encapsulates all online search execution and adaptation evidence."""
+    """封装在线检索执行和适配证据，不让主流程耦合具体站点细节。"""
 
     name = "web_search"
 
@@ -40,7 +45,7 @@ class WebSearchTool:
         query: str,
         query_plan: dict,
         evidence_id: str = "",
-        conservative_mode: bool = False,
+        online_recall_mode: str = "broad",
         allowed_tools: set[str] | None = None,
     ) -> WebSearchOutput:
         results: list[SearchResult] = []
@@ -57,7 +62,7 @@ class WebSearchTool:
                 "agent.retrieval.online tool=nexusmods_search status=skipped reason=not_planned count=0 evidence_id=%s",
                 evidence_id,
             )
-            self._append_evidence(
+            append_retrieval_evidence(
                 evidence,
                 stage="online_retrieval",
                 tool="nexusmods_search",
@@ -66,6 +71,7 @@ class WebSearchTool:
                 reason="not_planned",
                 fields=["tool_plan"],
                 evidence_id=evidence_id,
+                fragment_prefix="r_web",
             )
         elif nexus_input is not None:
             nexus_tool = NexusModsSearchTool(self.session)
@@ -78,15 +84,16 @@ class WebSearchTool:
                 reason or "",
                 evidence_id,
             )
-            self._append_evidence(
+            append_retrieval_evidence(
                 evidence,
                 stage="online_retrieval",
                 tool="nexusmods_search",
                 status=status,
                 count=len(nexus_results),
                 reason=reason,
-                fields=_query_plan_fields(query_plan),
+                fields=active_query_plan_fields(query_plan),
                 evidence_id=evidence_id,
+                fragment_prefix="r_web",
             )
             results.extend(nexus_results)
         else:
@@ -94,7 +101,7 @@ class WebSearchTool:
                 "agent.retrieval.online tool=nexusmods_search status=skipped reason=source_filter count=0 evidence_id=%s",
                 evidence_id,
             )
-            self._append_evidence(
+            append_retrieval_evidence(
                 evidence,
                 stage="online_retrieval",
                 tool="nexusmods_search",
@@ -103,6 +110,7 @@ class WebSearchTool:
                 reason="source_filter",
                 fields=["sources"],
                 evidence_id=evidence_id,
+                fragment_prefix="r_web",
             )
 
         loverslab_input = loverslab_google_input_from_plan(query, query_plan)
@@ -111,7 +119,7 @@ class WebSearchTool:
                 "agent.retrieval.online tool=loverslab_google status=skipped reason=not_planned count=0 evidence_id=%s",
                 evidence_id,
             )
-            self._append_evidence(
+            append_retrieval_evidence(
                 evidence,
                 stage="online_retrieval",
                 tool="loverslab_google",
@@ -120,6 +128,7 @@ class WebSearchTool:
                 reason="not_planned",
                 fields=["tool_plan"],
                 evidence_id=evidence_id,
+                fragment_prefix="r_web",
             )
         elif loverslab_input is not None:
             loverslab_tool = LoversLabGoogleSearchTool(self.session)
@@ -132,15 +141,16 @@ class WebSearchTool:
                 reason or "",
                 evidence_id,
             )
-            self._append_evidence(
+            append_retrieval_evidence(
                 evidence,
                 stage="online_retrieval",
                 tool="loverslab_google",
                 status=status,
                 count=len(loverslab_results),
                 reason=reason,
-                fields=_query_plan_fields(query_plan),
+                fields=active_query_plan_fields(query_plan),
                 evidence_id=evidence_id,
+                fragment_prefix="r_web",
             )
             results.extend(loverslab_results)
             if not loverslab_results and status != "skipped":
@@ -156,15 +166,16 @@ class WebSearchTool:
                         reason or "",
                         evidence_id,
                     )
-                    self._append_evidence(
+                    append_retrieval_evidence(
                         evidence,
                         stage="online_retrieval",
                         tool="loverslab_scrape",
                         status=status,
                         count=len(scrape_results),
                         reason=reason,
-                        fields=_query_plan_fields(query_plan),
+                        fields=active_query_plan_fields(query_plan),
                         evidence_id=evidence_id,
+                        fragment_prefix="r_web",
                     )
                     results.extend(scrape_results)
                 else:
@@ -172,7 +183,7 @@ class WebSearchTool:
                         "agent.retrieval.online tool=loverslab_scrape status=skipped reason=source_filter count=0 evidence_id=%s",
                         evidence_id,
                     )
-                    self._append_evidence(
+                    append_retrieval_evidence(
                         evidence,
                         stage="online_retrieval",
                         tool="loverslab_scrape",
@@ -181,13 +192,14 @@ class WebSearchTool:
                         reason="source_filter",
                         fields=["sources"],
                         evidence_id=evidence_id,
+                        fragment_prefix="r_web",
                     )
         else:
             logger.info(
                 "agent.retrieval.online tool=loverslab_google status=skipped reason=source_filter count=0 evidence_id=%s",
                 evidence_id,
             )
-            self._append_evidence(
+            append_retrieval_evidence(
                 evidence,
                 stage="online_retrieval",
                 tool="loverslab_google",
@@ -196,25 +208,27 @@ class WebSearchTool:
                 reason="source_filter",
                 fields=["sources"],
                 evidence_id=evidence_id,
+                fragment_prefix="r_web",
             )
 
-        if conservative_mode and not results:
-            self._append_evidence(
+        if online_recall_mode == "narrow" and not results and _has_actionable_zero_result(evidence):
+            append_retrieval_evidence(
                 evidence,
                 stage="online_adaptation",
                 tool="online_strategy",
                 status="suggested",
                 count=0,
-                reason="conservative_online_zero_result_expand_sources",
+                reason="narrow_online_zero_result_expand_sources",
                 fields=["sources", "adult_content", "keywords"],
                 evidence_id=evidence_id,
+                fragment_prefix="r_web",
             )
         succeeded_tools = [
             str(item.get("tool"))
             for item in evidence
             if item.get("stage") == "online_retrieval"
             and item.get("status") == "succeeded"
-            and int(item.get("count") or 0) > 0
+            and safe_nonnegative_int(item.get("count")) > 0
         ]
         degraded_tools = [
             str(item.get("tool"))
@@ -234,77 +248,17 @@ class WebSearchTool:
         else:
             web_status = "succeeded"
         logger.info(
-            "agent.tool name=web_search status=%s results=%s evidence=%s tools=%s degraded_tools=%s adaptation=%s conservative_mode=%s evidence_id=%s",
+            "agent.tool name=web_search status=%s results=%s evidence=%s tools=%s degraded_tools=%s adaptation=%s online_recall_mode=%s evidence_id=%s",
             web_status,
             len(results),
             len(evidence),
             succeeded_tools,
             degraded_tools,
             adaptation_triggered,
-            conservative_mode,
+            online_recall_mode,
             evidence_id,
         )
         return WebSearchOutput(results=results, evidence=evidence)
-
-    def _append_evidence(
-        self,
-        evidence: list[dict[str, object]],
-        *,
-        stage: str,
-        tool: str,
-        status: str,
-        count: int,
-        reason: str | None = None,
-        fields: list[str] | None = None,
-        evidence_id: str = "",
-    ) -> None:
-        fragment_id = f"r_web_{len(evidence) + 1}"
-        item: dict[str, object] = {
-            "fragment_id": fragment_id,
-            "stage": stage,
-            "tool": tool,
-            "status": status,
-            "count": count,
-        }
-        if evidence_id:
-            item["evidence_id"] = evidence_id
-        if reason:
-            item["reason"] = reason
-        if fields:
-            item["fields"] = fields
-        evidence.append(item)
-
-
-def _query_plan_fields(query_plan: dict) -> list[str]:
-    field_keys = [
-        "keywords",
-        "games",
-        "game_domains",
-        "sources",
-        "categories",
-        "tags",
-        "adult_content",
-        "has_thumbnail",
-        "summary_languages",
-        "excluded_summary_languages",
-        "requirement_terms",
-        "compatibility_terms",
-        "author",
-        "sort_field",
-        "sort_order",
-        "exact_title",
-        "version",
-        "external_id",
-        "source_url",
-    ]
-    active: list[str] = []
-    for key in field_keys:
-        value = query_plan.get(key)
-        if value in (None, "", []):
-            continue
-        active.append(key)
-    return active
-
 
 def _tool_status(tool: object, results: list[SearchResult] | None = None) -> tuple[str, str | None]:
     status = str(getattr(tool, "last_status", "succeeded") or "succeeded")
@@ -312,3 +266,16 @@ def _tool_status(tool: object, results: list[SearchResult] | None = None) -> tup
     if status == "not_started" and results:
         status = "succeeded"
     return status, str(reason) if reason else None
+
+
+def _has_actionable_zero_result(evidence: list[dict[str, object]]) -> bool:
+    for item in evidence:
+        if item.get("stage") != "online_retrieval":
+            continue
+        status = str(item.get("status") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        if status in {"succeeded", "degraded"}:
+            return True
+        if status == "skipped" and reason not in {"missing_credentials", "source_filter", "not_planned"}:
+            return True
+    return False

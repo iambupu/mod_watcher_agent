@@ -1,6 +1,7 @@
 from typing import Any, NotRequired, TypedDict
 
 from app.services.agent.context.context_inference import is_contextual_followup
+from app.services.agent.list_utils import string_list as _string_list
 from app.services.agent.planning.context_diagnosis import (
     ContextDiagnosisSignal,
     PreferenceMemoryGate,
@@ -10,6 +11,8 @@ from app.services.agent.planning.context_diagnosis import (
 from app.services.agent.planning.query_intent import detect_query_intent
 from app.services.agent.planning.semantic_signals import anchor_domains
 from app.services.agent.tools.semantic_signal_tool import SemanticSignalInput, SemanticSignalTool
+from app.utils.boolean import parse_bool, parse_optional_bool
+from app.utils.numeric import safe_float, safe_nonnegative_int
 
 
 class UnderstandingEvidence(TypedDict):
@@ -18,6 +21,7 @@ class UnderstandingEvidence(TypedDict):
     source: str
     value: Any
     evidence_id: NotRequired[str]
+    related_fragments: NotRequired[list[str]]
 
 
 class TaskUnderstanding(TypedDict):
@@ -39,7 +43,7 @@ class QueryDiagnosis(TypedDict):
 
 
 def diagnosis_log_fields(diagnosis: dict[str, Any]) -> dict[str, Any]:
-    """Extract stable log fields from diagnosis evidence."""
+    """从诊断结果中提取稳定日志字段。"""
     return {
         "context_continuity_score": _evidence_value(diagnosis, "context_continuity_score", None),
         "semantic_anchors": _evidence_value(diagnosis, "semantic_anchors", []),
@@ -59,6 +63,7 @@ def diagnose_query(
     constraints = active_constraints or {}
     plan_keywords = _string_list((query_plan or {}).get("keywords"))
     evidence_id = str((query_plan or {}).get("evidence_id") or "").strip()
+    semantic_strategy = _semantic_strategy(query_plan)
     semantic_anchors, semantic_domains, semantic_source = _semantic_signals(
         query=query,
         query_plan=query_plan,
@@ -76,14 +81,14 @@ def diagnose_query(
     known_slots, slot_sources = _merge_known_slots(
         query_plan,
         constraints,
-        preferences or {},
-        allow_preference_slots=preference_gate.allow,
     )
+    if semantic_strategy:
+        _merge_semantic_strategy_slots(known_slots, slot_sources, semantic_strategy)
     _merge_inherited_context_slots(known_slots, slot_sources, context_slots or {})
-    intent = _diagnosed_intent(query, query_plan)
-    missing_slots = _missing_slots(query, query_plan, known_slots, intent)
+    intent = _diagnosed_intent(query, query_plan, semantic_strategy=semantic_strategy)
+    missing_slots = _missing_slots(query, query_plan, known_slots, intent, semantic_strategy=semantic_strategy)
     should_clarify = bool(missing_slots)
-    confidence = _confidence(known_slots, missing_slots)
+    confidence = _confidence(known_slots, missing_slots, semantic_strategy=semantic_strategy)
     context_signal = evaluate_context_diagnosis(
         query=query,
         known_slots=known_slots,
@@ -114,6 +119,7 @@ def diagnose_query(
             semantic_domains=semantic_domains,
             semantic_source=semantic_source,
             context_signal=context_signal,
+            semantic_strategy=semantic_strategy,
         ),
     }
     return diagnosis
@@ -145,6 +151,7 @@ def _build_understanding(
     semantic_domains: list[str] | None = None,
     semantic_source: str = "analysis",
     context_signal: ContextDiagnosisSignal | None = None,
+    semantic_strategy: dict[str, Any] | None = None,
 ) -> TaskUnderstanding:
     evidence_id = str((query_plan or {}).get("evidence_id") or "").strip()
     plan_keywords = list(plan_keywords or [])
@@ -172,32 +179,41 @@ def _build_understanding(
             "value": confidence,
         },
     ]
-    planning_source = str((query_plan or {}).get("_agent_planning_source") or "").strip()
-    if planning_source:
+    if isinstance(semantic_strategy, dict):
+        # diagnosis 服务前端和 audit，只解释 SemanticStrategy；检索策略已在兼容 query_plan 中确定。
         evidence.append(
             {
-                "fragment_id": _understanding_fragment_id("planning_source", "query_plan"),
-                "field": "planning_source",
-                "source": "query_plan",
-                "value": planning_source,
+                "fragment_id": _understanding_fragment_id("semantic_strategy", "semantic_strategy"),
+                "field": "semantic_strategy",
+                "source": str((query_plan or {}).get("_agent_semantic_strategy_source") or "semantic_strategy"),
+                "value": semantic_strategy,
             }
-        )
-        evidence.append(
-            {
-                "fragment_id": _understanding_fragment_id("llm_planning_used", "query_plan"),
-                "field": "llm_planning_used",
-                "source": "query_plan",
-                "value": planning_source == "llm",
-            }
-        )
-        llm_error_type = str((query_plan or {}).get("_agent_llm_planning_error_type") or "").strip()
-        if llm_error_type:
+            )
+        for field, value in _semantic_strategy_evidence_fields(semantic_strategy).items():
             evidence.append(
                 {
-                    "fragment_id": _understanding_fragment_id("llm_planning_error_type", "query_plan"),
-                    "field": "llm_planning_error_type",
-                    "source": "query_plan",
-                    "value": llm_error_type,
+                    "fragment_id": _understanding_fragment_id(field, "semantic_strategy"),
+                    "field": field,
+                    "source": "semantic_strategy",
+                    "value": value,
+                }
+            )
+        evidence.append(
+            {
+                "fragment_id": _understanding_fragment_id("semantic_strategy_used_llm", "semantic_strategy"),
+                "field": "semantic_strategy_used_llm",
+                "source": "semantic_strategy",
+                "value": bool((query_plan or {}).get("_agent_semantic_strategy_used_llm")),
+            }
+        )
+        fallback_reason = str((query_plan or {}).get("_agent_semantic_strategy_fallback_reason") or "").strip()
+        if fallback_reason:
+            evidence.append(
+                {
+                    "fragment_id": _understanding_fragment_id("semantic_strategy_fallback_reason", "semantic_strategy"),
+                    "field": "semantic_strategy_fallback_reason",
+                    "source": "semantic_strategy",
+                    "value": fallback_reason,
                 }
             )
     if followup:
@@ -321,7 +337,7 @@ def _build_understanding(
                 "fragment_id": _understanding_fragment_id("context_inherit_threshold", "diagnosis"),
                 "field": "context_inherit_threshold",
                 "source": "diagnosis",
-                "value": float(raw_context_signal.get("inherit_threshold") or 0.0),
+                "value": safe_float(raw_context_signal.get("inherit_threshold")),
             }
         )
         evidence.append(
@@ -329,7 +345,7 @@ def _build_understanding(
                 "fragment_id": _understanding_fragment_id("context_followup_score", "diagnosis"),
                 "field": "context_followup_score",
                 "source": "diagnosis",
-                "value": float(raw_context_signal.get("followup_score") or 0.0),
+                "value": safe_float(raw_context_signal.get("followup_score")),
             }
         )
         evidence.append(
@@ -348,6 +364,14 @@ def _build_understanding(
         {
             "fragment_id": _understanding_fragment_id("preference_memory_applied", "diagnosis"),
             "field": "preference_memory_applied",
+            "source": "diagnosis",
+            "value": False,
+        }
+    )
+    evidence.append(
+        {
+            "fragment_id": _understanding_fragment_id("preference_memory_available", "diagnosis"),
+            "field": "preference_memory_available",
             "source": "diagnosis",
             "value": bool(preference_gate.allow),
         }
@@ -387,6 +411,10 @@ def _build_understanding(
             }
         )
     understanding_slots = dict(known_slots)
+    if isinstance(semantic_strategy, dict):
+        understanding_slots["semantic_task_type"] = str(semantic_strategy.get("task_type") or "")
+        understanding_slots["semantic_strategy"] = str(semantic_strategy.get("strategy") or "")
+        understanding_slots["soft_signals"] = _string_list(semantic_strategy.get("soft_signals"))
     if not understanding_slots.get("game") and context_slots.get("game") and not topic_shift:
         understanding_slots["game"] = context_slots["game"]
     if plan_keywords:
@@ -399,6 +427,27 @@ def _build_understanding(
                 "value": list(plan_keywords),
             }
         )
+    if "open_discovery" in query_plan:
+        open_discovery = parse_bool(query_plan.get("open_discovery"))
+        understanding_slots["open_discovery"] = open_discovery
+        evidence.append(
+            {
+                "fragment_id": _understanding_fragment_id("open_discovery", "query_plan"),
+                "field": "open_discovery",
+                "source": "query_plan",
+                "value": open_discovery,
+            }
+        )
+    if query_plan.get("retrieval_mode"):
+        understanding_slots["retrieval_mode"] = str(query_plan.get("retrieval_mode"))
+        evidence.append(
+            {
+                "fragment_id": _understanding_fragment_id("retrieval_mode", "query_plan"),
+                "field": "retrieval_mode",
+                "source": "query_plan",
+                "value": str(query_plan.get("retrieval_mode")),
+            }
+        )
     memory_meta = preferences.get("memory_meta") if isinstance(preferences, dict) else None
     if isinstance(memory_meta, dict) and memory_meta.get("preferences_age_days") is not None:
         evidence.append(
@@ -406,19 +455,20 @@ def _build_understanding(
                 "fragment_id": _understanding_fragment_id("preference_memory_age_days", "diagnosis"),
                 "field": "preference_memory_age_days",
                 "source": "diagnosis",
-                "value": int(memory_meta.get("preferences_age_days") or 0),
+                "value": safe_nonnegative_int(memory_meta.get("preferences_age_days")),
             }
         )
     for field in ["game", "source", "category", "adult_content", "sort_field", "sort_order", "adult_content_allowed"]:
         if field in known_slots:
-            evidence.append(
-                {
-                    "fragment_id": _understanding_fragment_id(field, slot_sources.get(field, "query_plan")),
-                    "field": field,
-                    "source": slot_sources.get(field, "query_plan"),
-                    "value": known_slots.get(field),
-                }
-            )
+            item = {
+                "fragment_id": _understanding_fragment_id(field, slot_sources.get(field, "query_plan")),
+                "field": field,
+                "source": slot_sources.get(field, "query_plan"),
+                "value": known_slots.get(field),
+            }
+            if field == "game":
+                item["related_fragments"] = ["u_query_plan_keywords", "m_writeback_game"]
+            evidence.append(item)
     if missing_slots:
         evidence.append(
             {
@@ -440,9 +490,20 @@ def _build_understanding(
     }
 
 
-def _diagnosed_intent(query: str, query_plan: dict[str, Any]) -> str:
-    detected = detect_query_intent(query)
+def _diagnosed_intent(query: str, query_plan: dict[str, Any], *, semantic_strategy: dict[str, Any] | None = None) -> str:
     planned = str(query_plan.get("intent") or "unknown")
+    if isinstance(semantic_strategy, dict) and semantic_strategy.get("task_type"):
+        if semantic_strategy.get("task_type") == "comparative" and planned in {"alternative", "comparison"}:
+            return planned
+        return {
+            "exact_lookup": "search",
+            "open_discovery": "search",
+            "comparative": "comparison",
+            "advisory": "install_risk",
+            "preference": "preference_summary",
+            "unknown": "unknown",
+        }.get(str(semantic_strategy.get("task_type")), planned)
+    detected = detect_query_intent(query)
     if detected in {"comparison", "alternative", "install_risk", "preference_summary"}:
         return detected
     return planned
@@ -451,9 +512,6 @@ def _diagnosed_intent(query: str, query_plan: dict[str, Any]) -> str:
 def _merge_known_slots(
     query_plan: dict[str, Any],
     constraints: dict[str, Any],
-    preferences: dict[str, Any],
-    *,
-    allow_preference_slots: bool,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     known: dict[str, Any] = {}
     slot_sources: dict[str, str] = {}
@@ -471,7 +529,6 @@ def _merge_known_slots(
         if key not in known and constraints.get(key) is not None:
             known[key] = constraints[key]
             slot_sources[key] = "short_term_memory"
-    _merge_preference_slots(known, slot_sources, preferences, allow_preference_slots=allow_preference_slots)
 
     adult_content = query_plan.get("adult_content")
     if adult_content is None:
@@ -485,40 +542,25 @@ def _merge_known_slots(
     return known, slot_sources
 
 
-def _merge_preference_slots(
+def _merge_semantic_strategy_slots(
     known: dict[str, Any],
     slot_sources: dict[str, str],
-    preferences: dict[str, Any],
-    *,
-    allow_preference_slots: bool,
+    semantic_strategy: dict[str, Any],
 ) -> None:
-    if not allow_preference_slots:
-        return
-    memory_meta = preferences.get("memory_meta") if isinstance(preferences, dict) else None
-    if isinstance(memory_meta, dict) and bool(memory_meta.get("preference_stale")):
-        return
-    favorite_summary = preferences.get("favorite_summary") if isinstance(preferences, dict) else None
-    if not isinstance(favorite_summary, dict):
-        return
-    if "game" not in known:
-        _copy_first_list_value(
-            known,
-            "game",
-            favorite_summary.get("top_games"),
-            slot_sources=slot_sources,
-            source="long_term_favorite",
-        )
-    if "source" not in known:
-        _copy_first_list_value(
-            known,
-            "source",
-            favorite_summary.get("top_sources"),
-            slot_sources=slot_sources,
-            source="long_term_favorite",
-        )
-    if favorite_summary.get("adult_content_allowed") is True and "adult_content" not in known:
-        known["adult_content_allowed"] = True
-        slot_sources["adult_content_allowed"] = "long_term_favorite"
+    hard_filters = semantic_strategy.get("hard_filters") if isinstance(semantic_strategy.get("hard_filters"), dict) else {}
+    mapping = {
+        "game": "game",
+        "source": "source",
+        "adult_content": "adult_content",
+        "exact_title": "exact_title",
+        "external_id": "external_id",
+        "source_url": "source_url",
+    }
+    for source_key, slot_key in mapping.items():
+        value = hard_filters.get(source_key)
+        if value not in (None, "", []):
+            known[slot_key] = _normalize_slot_value(slot_key, value)
+            slot_sources[slot_key] = "semantic_strategy"
 
 
 def _merge_inherited_context_slots(
@@ -548,14 +590,30 @@ def _copy_first_list_value(
     slot_sources: dict[str, str] | None = None,
     source: str | None = None,
 ) -> None:
-    if isinstance(value, list) and value:
-        target[key] = value[0]
+    values = _string_list(value, limit=1)
+    if values:
+        target[key] = _normalize_slot_value(key, values[0])
         if slot_sources is not None and source:
             slot_sources[key] = source
-    elif isinstance(value, str) and value.strip():
-        target[key] = value.strip()
-        if slot_sources is not None and source:
-            slot_sources[key] = source
+
+
+def _normalize_slot_value(key: str, value: object) -> object:
+    if key == "adult_content":
+        parsed = parse_optional_bool(value)
+        if parsed is not None:
+            return parsed
+        return value
+    text = str(value or "").strip()
+    if key == "category":
+        labels = {
+            "outfit": "Outfit",
+            "body": "Body",
+            "gameplay": "Gameplay",
+            "armor": "Armor",
+            "weapon": "Weapon",
+        }
+        return labels.get(text.lower(), text)
+    return text
 
 
 def _missing_slots(
@@ -563,7 +621,13 @@ def _missing_slots(
     query_plan: dict[str, Any],
     known_slots: dict[str, Any],
     intent: str | None = None,
+    semantic_strategy: dict[str, Any] | None = None,
 ) -> list[str]:
+    task_type = semantic_strategy.get("task_type") if isinstance(semantic_strategy, dict) else None
+    if task_type in {"open_discovery", "preference"}:
+        return []
+    if task_type == "unknown":
+        return ["query_scope"]
     intent = intent or str(query_plan.get("intent") or "unknown")
     if intent not in {"search", "recent", "game", "comparison", "alternative"}:
         return []
@@ -576,7 +640,16 @@ def _missing_slots(
     return []
 
 
-def _confidence(known_slots: dict[str, Any], missing_slots: list[str]) -> float:
+def _confidence(
+    known_slots: dict[str, Any],
+    missing_slots: list[str],
+    *,
+    semantic_strategy: dict[str, Any] | None = None,
+) -> float:
+    if isinstance(semantic_strategy, dict):
+        semantic_confidence = safe_float(semantic_strategy.get("confidence"))
+        if semantic_confidence > 0:
+            return round(max(0.0, min(semantic_confidence, 0.98)), 3)
     if missing_slots:
         return 0.45
     score = 0.55
@@ -594,7 +667,27 @@ def _confidence(known_slots: dict[str, Any], missing_slots: list[str]) -> float:
 def _clarifying_question(missing_slots: list[str]) -> str | None:
     if "game" in missing_slots:
         return "你想看哪个游戏的 Mod？"
+    if "query_scope" in missing_slots:
+        return "你想查找哪类 Mod，或希望我按哪个游戏、来源、关键词来缩小范围？"
     return None
+
+
+def _semantic_strategy(query_plan: dict[str, Any] | None) -> dict[str, Any]:
+    value = (query_plan or {}).get("_agent_semantic_strategy")
+    return value if isinstance(value, dict) else {}
+
+
+def _semantic_strategy_evidence_fields(strategy: dict[str, Any]) -> dict[str, Any]:
+    hard_filters = strategy.get("hard_filters") if isinstance(strategy.get("hard_filters"), dict) else {}
+    return {
+        "semantic_task_type": str(strategy.get("task_type") or ""),
+        "semantic_user_goal": str(strategy.get("user_goal") or ""),
+        "semantic_retrieval_strategy": str(strategy.get("strategy") or ""),
+        "semantic_hard_filters": hard_filters,
+        "semantic_soft_signals": _string_list(strategy.get("soft_signals")),
+        "semantic_missing_info": _string_list(strategy.get("missing_info")),
+        "semantic_strategy_reason": str(strategy.get("reason") or ""),
+    }
 
 
 def _is_contextual_followup(query: str) -> bool:
@@ -615,15 +708,10 @@ def _semantic_signals(
     plan_anchors = _string_list((query_plan or {}).get("_agent_semantic_anchors"))
     if plan_anchors:
         plan_domains = _string_list((query_plan or {}).get("_agent_semantic_domains")) or anchor_domains(plan_anchors)
-        source = "llm_query_plan" if str((query_plan or {}).get("_agent_semantic_source") or "") == "llm" else "query_plan"
+        semantic_source = str((query_plan or {}).get("_agent_semantic_source") or "").strip()
+        source = "semantic_strategy" if semantic_source == "llm" else "query_plan"
         return plan_anchors, plan_domains, source
     semantic_signal = SemanticSignalTool().run(
         SemanticSignalInput(query=query, keywords=keywords, evidence_id=evidence_id)
     )
     return semantic_signal.anchors, semantic_signal.domains, "analysis"
-
-
-def _string_list(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()][:12]

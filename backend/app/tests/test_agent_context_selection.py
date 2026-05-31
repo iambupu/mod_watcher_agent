@@ -39,6 +39,23 @@ def test_select_history_query_context_prefers_semantic_continuity_and_quality():
     assert selection.score > 0.0
 
 
+def test_select_history_query_context_tolerates_invalid_quality_score():
+    selection = select_history_query_context(
+        current_text="继续找 bimbo 同类",
+        current_keywords=["bimbo"],
+        candidates=[
+            {
+                "source": "recent_user",
+                "keywords": ["bimbo", "body"],
+                "quality_score": "bad",
+            },
+        ],
+    )
+
+    assert selection is not None
+    assert selection.quality_score == context_quality_score(selection.selected_context)
+
+
 def test_select_history_query_context_rejects_weak_unrelated_context():
     selection = select_history_query_context(
         current_text="cyberpunk vehicle overhaul mod",

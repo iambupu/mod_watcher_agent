@@ -20,6 +20,10 @@ def start_trace() -> float:
     return perf_counter()
 
 
+def elapsed_ms(started_at: float) -> int:
+    return max(0, int((perf_counter() - started_at) * 1000))
+
+
 def finish_trace(
     step: str,
     started_at: float,
@@ -30,7 +34,7 @@ def finish_trace(
     event: TraceEvent = {
         "step": step,
         "status": "succeeded",
-        "duration_ms": _elapsed_ms(started_at),
+        "duration_ms": elapsed_ms(started_at),
     }
     if evidence_id:
         event["evidence_id"] = evidence_id
@@ -43,7 +47,7 @@ def fail_trace(step: str, started_at: float, error: BaseException, *, evidence_i
     event: TraceEvent = {
         "step": step,
         "status": "failed",
-        "duration_ms": _elapsed_ms(started_at),
+        "duration_ms": elapsed_ms(started_at),
         "error_type": type(error).__name__,
         "message": "Agent graph step failed.",
     }
@@ -63,7 +67,3 @@ def append_trace(trace: list[TraceEvent] | None, event: TraceEvent) -> list[Trac
         event.get("error_type", ""),
     )
     return [*(trace or []), event]
-
-
-def _elapsed_ms(started_at: float) -> int:
-    return max(0, int((perf_counter() - started_at) * 1000))

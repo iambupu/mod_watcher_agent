@@ -100,6 +100,16 @@ def test_loverslab_google_input_respects_source_filter():
     assert tool_input.limit == 6
 
 
+def test_loverslab_google_input_tolerates_invalid_limit():
+    tool_input = loverslab_google_input_from_plan(
+        "follower mod",
+        {"sources": ["loverslab"], "games": ["Skyrim Special Edition"], "limit": "many"},
+    )
+
+    assert tool_input is not None
+    assert tool_input.limit == 8
+
+
 def test_loverslab_google_input_carries_explicit_time_window():
     tool_input = loverslab_google_input_from_plan(
         "最近7天 follower mod",
@@ -123,3 +133,17 @@ def test_loverslab_google_tool_expands_chinese_query_terms():
 
     assert "female" in str(params["q"])
     assert "outfit" in str(params["q"])
+
+
+def test_loverslab_google_tool_tolerates_invalid_direct_time_window():
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        tool = LoversLabGoogleSearchTool(session)
+        params = tool._build_params(
+            LoversLabGoogleSearchInput(query="follower", updated_since_days="many", limit=5),
+            "google-key",
+            "cx-id",
+        )
+
+    assert "dateRestrict" not in params

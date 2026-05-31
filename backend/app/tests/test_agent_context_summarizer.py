@@ -33,6 +33,22 @@ def test_context_summary_keeps_recent_messages_and_summarizes_older_context():
     assert context["active_constraints"]["adult_content"] is True
 
 
+def test_context_summary_running_summary_does_not_truncate_messages():
+    long_older_text = "Skyrim bimbo roleplay mod " + "详细条件" * 80
+    long_current_text = "继续按这个方向找 " + "补充要求" * 80
+    history = [
+        _item("user", long_older_text),
+        _item("assistant", "已记录。"),
+        _item("user", "最近一轮"),
+    ]
+    request = AgentChatRequest(message=long_current_text, history=history)
+
+    context = summarize_agent_context(request, recent_message_count=1)
+
+    assert long_older_text in context["running_summary"]
+    assert long_current_text in context["running_summary"]
+
+
 def test_context_summary_preserves_current_explicit_adult_content_override():
     history = [
         _item("user", "找 Stellar Blade R18 服装"),
@@ -56,6 +72,19 @@ def test_context_summary_prefers_current_game_over_history():
     context = summarize_agent_context(request)
 
     assert context["active_constraints"]["game"] == "Skyrim"
+
+
+def test_context_summary_recognizes_game_alias_in_current_query():
+    history = [
+        _item("user", "找 Stellar Blade 服装"),
+        _item("assistant", "已按 Stellar Blade 查询。"),
+    ]
+    request = AgentChatRequest(message="天际有什么扮演 bimbo 的 MOD", history=history)
+
+    context = summarize_agent_context(request)
+
+    assert context["active_constraints"]["game"] == "Skyrim Special Edition"
+    assert context["last_query_context"]["game"] == "Skyrim Special Edition"
 
 
 def test_context_summary_does_not_inherit_history_constraints_for_new_strong_topic():

@@ -1,11 +1,13 @@
 import re
 
+from app.services.agent.list_utils import merge_unique_text as _merge_unique
+from app.services.agent.semantic_search import strip_scope
 from app.services.agent.slot_aliases import SUMMARY_LANGUAGE_ALIASES
 
 
 def infer_tag_constraints(query: str) -> dict[str, list[str]]:
-    """Infer explicit tag filters from phrasing like "带 CBBE 标签" or "tag: 3BA"."""
-    text = (query or "").split("[scope]", 1)[0]
+    """从“带 CBBE 标签”或 `tag: 3BA` 等表达中推断标签过滤条件。"""
+    text = strip_scope(query)
     tags: list[str] = []
     patterns = [
         r"(?:标签|tag|tags|tagged)\s*[:：=]?\s*([A-Za-z0-9][A-Za-z0-9_\-+ .,/]{0,80})",
@@ -21,8 +23,8 @@ def infer_tag_constraints(query: str) -> dict[str, list[str]]:
 
 
 def infer_summary_language_constraints(query: str) -> dict[str, list[str]]:
-    """Infer requested translated-summary language, e.g. Chinese summary/intro."""
-    text = (query or "").split("[scope]", 1)[0].lower()
+    """推断用户请求的摘要语言，例如中文摘要或英文介绍。"""
+    text = strip_scope(query).lower()
     if not any(marker in text for marker in ["摘要", "介绍", "说明", "summary", "intro", "description"]):
         return {}
     languages: list[str] = []
@@ -47,8 +49,8 @@ def infer_summary_language_constraints(query: str) -> dict[str, list[str]]:
 
 
 def infer_thumbnail_constraint(query: str) -> dict[str, bool]:
-    """Infer whether the user explicitly wants mods with or without images."""
-    text = (query or "").split("[scope]", 1)[0].lower()
+    """推断用户是否明确要求有图或无图 MOD。"""
+    text = strip_scope(query).lower()
     negative_markers = [
         "不要图片",
         "不要图",
@@ -165,15 +167,3 @@ def _match_has_negative_prefix(text: str, start: int) -> bool:
 
 def _alias_key(value: str) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(value or "").lower())
-
-
-def _merge_unique(values: list[str], additions: list[str]) -> list[str]:
-    merged = list(values)
-    seen = {value.lower() for value in merged}
-    for item in additions:
-        value = str(item or "").strip()
-        key = value.lower()
-        if value and key not in seen:
-            merged.append(value)
-            seen.add(key)
-    return merged

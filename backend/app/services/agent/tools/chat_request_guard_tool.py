@@ -19,7 +19,7 @@ class ChatRequestGuardOutput:
 
 
 class ChatRequestGuardTool:
-    """Agent tool for request-level guard responses before graph execution."""
+    """在进入 graph 前处理可直接短路的请求级问题。"""
 
     name = "chat_request_guard"
 
@@ -40,7 +40,7 @@ class ChatRequestGuardTool:
                 conclusion="结论：需要先提供查询内容。",
                 understanding="请先输入你的查询需求。",
                 result="当前没有可用结果。",
-                next_step="例如：最近更新的 Stellar Blade 画面 Mod。",
+                next_step="最近更新的 Stellar Blade 画面 Mod",
             ),
             evidence_id=tool_input.evidence_id or None,
         )

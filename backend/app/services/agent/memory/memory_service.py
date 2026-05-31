@@ -3,8 +3,10 @@ from typing import Any, TypedDict
 
 from sqlmodel import Session
 
+from app.services.agent.list_utils import string_list, unique_text
 from app.services.agent.memory.preference_service import AgentPreferenceService
 from app.services.agent.semantic_search import canonical_semantic_terms
+from app.utils.time import parse_utc_datetime
 
 
 class AgentMemoryContext(TypedDict):
@@ -56,14 +58,13 @@ class AgentMemoryService:
         conversation = long.get("conversation_summary") if isinstance(long.get("conversation_summary"), dict) else {}
         merged_query = {**long_query, **short_query}
         for key in ("keywords", "semantic_anchors", "semantic_domains"):
-            merged_values = _merge_string_lists(
-                long_query.get(key),
-                short_query.get(key),
-                canonicalize=key in {"keywords", "semantic_anchors"},
-            )
+            merged_values = [*string_list(long_query.get(key)), *string_list(short_query.get(key))]
+            if key in {"keywords", "semantic_anchors"}:
+                merged_values = canonical_semantic_terms(merged_values)
+            merged_values = unique_text(merged_values)
             if merged_values:
                 merged_query[key] = merged_values
-        updated_at = _parse_iso_datetime(long.get("updated_at"))
+        updated_at = parse_utc_datetime(long.get("updated_at"))
         age_days = _age_days(updated_at)
         preference_stale = _is_stale(updated_at, max_age_days=self._LONG_TERM_STALE_DAYS)
         return {
@@ -78,19 +79,6 @@ class AgentMemoryService:
         }
 
 
-def _parse_iso_datetime(raw: object) -> datetime | None:
-    text = str(raw or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
-
-
 def _is_stale(value: datetime | None, *, max_age_days: int) -> bool:
     if value is None:
         return False
@@ -103,21 +91,3 @@ def _age_days(value: datetime | None) -> int | None:
         return None
     age_seconds = max(0.0, (datetime.now(UTC) - value).total_seconds())
     return int(age_seconds // 86400)
-
-
-def _merge_string_lists(primary: object, secondary: object, *, canonicalize: bool = False) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    values = [*(primary if isinstance(primary, list) else []), *(secondary if isinstance(secondary, list) else [])]
-    if canonicalize:
-        values = canonical_semantic_terms([str(value) for value in values])
-    for raw in values:
-        token = str(raw or "").strip()
-        if not token:
-            continue
-        key = token.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(token)
-    return merged

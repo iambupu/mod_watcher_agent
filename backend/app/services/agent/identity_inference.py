@@ -1,13 +1,14 @@
 import re
 from urllib.parse import urlparse
 
+from app.services.agent.semantic_search import strip_scope
 from app.services.agent.slot_aliases import SOURCE_HOST_ALIASES, source_aliases_by_source
 from app.services.source_identity import canonical_external_id
 
 
 def infer_identity_constraints(query: str) -> dict[str, object]:
-    """Infer a source URL or source-side resource ID as a strong identity filter."""
-    text = (query or "").split("[scope]", 1)[0]
+    """从来源 URL 或站点资源 ID 中推断强身份过滤条件。"""
+    text = strip_scope(query)
     url = first_source_url(text)
     if url:
         source = source_from_url(url)

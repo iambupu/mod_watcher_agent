@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.services.agent.planning.open_discovery_policy import is_open_discovery_plan
 from app.services.agent.reranker import validate_matches_with_llm
 from app.services.agent.schemas import AgentModMatch
 
@@ -32,7 +33,7 @@ class LlmCandidateValidatorOutput:
 
 
 class LlmCandidateValidatorTool:
-    """Agent tool for optional LLM semantic validation of candidate mods."""
+    """非开放发现路径的轻量 LLM 校验；开放发现相关性统一交给 CandidateSemanticJudgeTool。"""
 
     name = "llm_candidate_validator"
 
@@ -44,6 +45,8 @@ class LlmCandidateValidatorTool:
             return self._skip(tool_input, reason="no_matches")
         if not tool_input.llm_available:
             return self._skip(tool_input, reason="llm_unavailable")
+        if is_open_discovery_plan(tool_input.query_plan):
+            return self._skip(tool_input, reason="semantic_judge_primary")
         try:
             validated = await self.validator(
                 query=tool_input.query,

@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from sqlmodel import Session
 
 from app.models.mod import Mod
-from app.services.agent.semantic_search import text_score
+from app.services.agent.semantic_search import strip_scope, text_score
 from app.services.loverslab.constants import LOVERSLAB_HOSTS
 from app.services.source_identity import canonical_external_id, find_existing_mod_by_identity
 
@@ -28,7 +28,7 @@ class LoversLabSearchRecord:
 
 def clean_loverslab_query(query: str) -> str:
     """处理当前模块的业务逻辑并返回结果。"""
-    query = query.split("[scope]", 1)[0].strip()
+    query = strip_scope(query)
     query = re.sub(r"\bsite\s*:\s*\S+", "", query, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", query).strip()
 

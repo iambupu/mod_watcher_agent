@@ -22,6 +22,8 @@ def test_apply_followup_context_records_signal_and_inherits_keywords(caplog):
     assert raw["keywords"][:2] == ["bimbo", "roleplay"]
     assert raw["games"] == ["Skyrim Special Edition"]
     assert raw["sources"] == ["loverslab"]
+    assert raw["_agent_context_hint"]["game"] == "Skyrim Special Edition"
+    assert raw["_agent_context_hint"]["source_name"] == "loverslab"
     signal = raw["_agent_context_signal"]
     assert signal["source"] == "recent_user"
     assert signal["inherited"] is True
@@ -64,6 +66,19 @@ def test_apply_followup_context_preserves_explicit_slots():
     assert raw["_agent_context_signal"]["skipped_reason"] == "topic_shift"
     assert raw["_agent_context_signal"]["overridden_by_current_signal"] is True
     assert raw["_agent_context_signal"]["inherited_fields"] == []
+
+
+def test_apply_followup_context_tolerates_invalid_quality_score():
+    raw = {"keywords": ["related"], "games": [], "sources": [], "categories": []}
+    context = {
+        "source": "recent_user",
+        "keywords": ["bimbo"],
+        "quality_score": "bad",
+    }
+
+    apply_followup_context(raw, context, "继续找相关的")
+
+    assert raw["_agent_context_signal"]["quality_score"] == 0.0
 
 
 def test_apply_followup_context_does_not_copy_adult_topic_into_strong_new_outfit_query():

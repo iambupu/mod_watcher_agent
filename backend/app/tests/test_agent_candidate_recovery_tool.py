@@ -90,3 +90,37 @@ async def test_candidate_recovery_clears_keywords_and_emits_evidence(monkeypatch
             "fields": ["keywords", "sort_field", "sort_order", "limit"],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_candidate_recovery_tolerates_bad_retry_limit(monkeypatch):
+    captured = {}
+
+    async def fake_local_run(self, tool_input):
+        captured["retry_plan"] = tool_input.plan.to_query_plan()
+        return ["candidate"]
+
+    def fake_ranker_run(self, tool_input):
+        return ResultFusionRankerOutput(results=list(tool_input.staged_results), evidence=[])
+
+    def fake_materializer_run(self, tool_input):
+        captured["materializer_limit"] = tool_input.limit
+        return MatchMaterializerOutput(matches=[_match()])
+
+    monkeypatch.setattr(LocalDbSearchTool, "run", fake_local_run)
+    monkeypatch.setattr(ResultFusionRankerTool, "run", fake_ranker_run)
+    monkeypatch.setattr(MatchMaterializerTool, "run", fake_materializer_run)
+
+    output = await CandidateRecoveryTool(session=object()).run(
+        CandidateRecoveryInput(
+            query="有什么相关风格的mod",
+            search_query="相关风格",
+            query_plan={"keywords": ["bimbo"], "limit": "not-a-number"},
+            plan=SearchPlan.from_query_plan({"keywords": ["bimbo"], "limit": 8}),
+            evidence_id="ev_recovery",
+        )
+    )
+
+    assert [match.title for match in output.matches] == ["Recovered Mod"]
+    assert captured["retry_plan"]["limit"] == 8
+    assert captured["materializer_limit"] == 8

@@ -18,6 +18,7 @@ def apply_query_understanding_to_response(
             query_plan if isinstance(query_plan, dict) else {},
             response.matches,
         )
+        normalize_understanding_category(response.understanding)
 
 
 def sync_understanding_slots_from_query_plan(
@@ -48,3 +49,26 @@ def sync_understanding_slots_from_query_plan(
     first = matches[0]
     if not slots.get("game") and first.game:
         slots["game"] = first.game
+
+
+def normalize_understanding_category(understanding: dict[str, object]) -> None:
+    slots = understanding.get("slots")
+    if isinstance(slots, dict) and slots.get("category"):
+        slots["category"] = _category_label(slots.get("category"))
+    evidence = understanding.get("evidence")
+    if not isinstance(evidence, list):
+        return
+    for item in evidence:
+        if isinstance(item, dict) and item.get("field") == "category":
+            item["value"] = _category_label(item.get("value"))
+
+
+def _category_label(value: object) -> str:
+    text = str(value or "").strip()
+    return {
+        "outfit": "Outfit",
+        "body": "Body",
+        "gameplay": "Gameplay",
+        "armor": "Armor",
+        "weapon": "Weapon",
+    }.get(text.lower(), text)

@@ -5,9 +5,11 @@ import httpx
 from sqlmodel import Session
 
 from app.models.mod import Mod
+from app.services.agent.filter_value_utils import optional_time_window
 from app.services.agent.planning.query_intent import detect_adult_constraint
+from app.services.agent.planning.slot_normalization import normalize_limit
 from app.services.agent.search_types import SearchResult
-from app.services.agent.semantic_search import semantic_query
+from app.services.agent.semantic_search import semantic_query, strip_scope
 from app.services.agent.tools.loverslab_search_common import (
     REQUEST_TIMEOUT,
     LoversLabSearchRecord,
@@ -33,7 +35,7 @@ class LoversLabGoogleSearchInput:
 
 
 class LoversLabGoogleSearchTool:
-    """Agent tool that searches Google for indexed LoversLab pages."""
+    """通过 Google Custom Search 查找已索引的 LoversLab 页面。"""
 
     name = "loverslab_google_search"
 
@@ -90,8 +92,8 @@ class LoversLabGoogleSearchTool:
             "safe": "off",
             "filter": "1",
         }
-        if tool_input.updated_since_days:
-            days = max(1, min(365, int(tool_input.updated_since_days)))
+        days = optional_time_window(tool_input.updated_since_days)
+        if days is not None:
             params["dateRestrict"] = f"d{days}"
         return params
 
@@ -142,25 +144,17 @@ def loverslab_google_input_from_plan(query: str, plan: dict[str, Any]) -> Lovers
         return None
     games = [str(value).strip() for value in (plan.get("games") or []) if str(value).strip()]
     game_domains = [str(value).strip() for value in (plan.get("game_domains") or []) if str(value).strip()]
-    days = _optional_time_window(plan.get("updated_since_days"))
+    days = optional_time_window(plan.get("updated_since_days"))
     if days is None and str(plan.get("sort_field") or "") in {"updated_at_remote", "first_seen_at"}:
         days = 30
     return LoversLabGoogleSearchInput(
-        query=query.split("[scope]", 1)[0].strip(),
+        query=strip_scope(query),
         game=games[0] if games else game_domains[0] if game_domains else None,
         adult_content=plan.get("adult_content") if isinstance(plan.get("adult_content"), bool) else detect_adult_constraint(query),
         updated_since_days=days,
         sort_field=str(plan.get("sort_field") or "relevance"),
-        limit=int(plan.get("limit") or 8),
+        limit=normalize_limit(plan, default=8, maximum=20),
     )
-
-
-def _optional_time_window(value: Any) -> int | None:
-    try:
-        parsed = int(str(value or "").replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
-    return max(1, min(365, parsed))
 
 
 def _thumbnail_url(item: dict[str, Any]) -> str | None:

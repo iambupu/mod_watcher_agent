@@ -19,26 +19,11 @@ from app.services.agent.planning.query_intent import (
 from app.services.agent.planning.semantic_signals import anchor_domains, extract_semantic_anchors
 from app.services.agent.schemas import AgentChatRequest, AgentHistoryItem, AgentModDetailRequest
 from app.services.agent.semantic_search import base_keywords
+from app.services.game_alias_service import DEFAULT_KNOWN_GAMES, alias_key, build_resolved_aliases
 
 logger = logging.getLogger(__name__)
 
-_KNOWN_GAMES = [
-    "Stellar Blade",
-    "Skyrim Special Edition",
-    "Skyrim Legendary Edition",
-    "Skyrim VR",
-    "Skyrim",
-    "Fallout 4",
-]
-_SOURCE_ALIASES = {
-    "nexusmods": "nexusmods",
-    "nexus mods": "nexusmods",
-    "nexus": "nexusmods",
-    "loverslab": "loverslab",
-    "lovers lab": "loverslab",
-    "llab": "loverslab",
-    "ll": "loverslab",
-}
+_KNOWN_GAMES = DEFAULT_KNOWN_GAMES
 _CATEGORY_HINTS = {
     "服装": "outfit",
     "outfit": "outfit",
@@ -75,9 +60,9 @@ def _build_running_summary(older: list[AgentHistoryItem], current_text: str) -> 
     if older:
         for item in older[-8:]:
             prefix = "用户" if item.role == "user" else "助手"
-            lines.append(f"{prefix}: {item.text[:180]}")
+            lines.append(f"{prefix}: {item.text}")
     if current_text:
-        lines.append(f"本轮用户: {current_text[:180]}")
+        lines.append(f"本轮用户: {current_text}")
     return "上下文摘要:\n" + "\n".join(lines) if lines else ""
 
 
@@ -130,14 +115,12 @@ def _find_known_value(text: str, values: list[str]) -> str | None:
     for value in values:
         if value.lower() in lowered:
             return value
-    return None
-
-
-def _find_source(text: str) -> str | None:
-    lowered = text.lower()
-    for alias, source in _SOURCE_ALIASES.items():
-        if alias in lowered:
-            return source
+    text_key = alias_key(text)
+    if not text_key:
+        return None
+    for key, targets in build_resolved_aliases(values).items():
+        if key and key in text_key and targets:
+            return targets[0]
     return None
 
 

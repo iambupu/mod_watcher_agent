@@ -14,7 +14,7 @@ class LocalDbSearchInput:
 
 
 class LocalDbSearchTool:
-    """Agent tool for searching locally stored mods."""
+    """检索本地已存储 MOD，承担离线优先路径和硬过滤落点。"""
 
     name = "local_db_search"
 

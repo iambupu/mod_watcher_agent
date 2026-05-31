@@ -8,10 +8,12 @@ from app.services.agent.result_merger import (
     filter_by_exact_title,
     filter_excluded_keywords,
     filter_excluded_titles,
+    filter_semantic_soft_rejects,
     merge_results,
     sort_results,
 )
 from app.services.agent.search_types import SearchPlan, SearchResult
+from app.services.agent.semantic_search import strip_scope
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +37,13 @@ class ResultFusionRankerOutput:
 
 
 class ResultFusionRankerTool:
-    """Agent tool for fusing, filtering, and ranking retrieved mod candidates."""
+    """融合多路检索候选，执行过滤、去重和排序。"""
 
     name = "result_fusion_ranker"
 
     def run(self, tool_input: ResultFusionRankerInput) -> ResultFusionRankerOutput:
         results = merge_results(tool_input.staged_results, tool_input.online_results)
-        results = sort_results(results, tool_input.plan)
+        results = sort_results(results, tool_input.plan, tool_input.query_plan)
         if tool_input.apply_distinctive_filter:
             results = filter_by_distinctive_terms(
                 results,
@@ -49,6 +51,7 @@ class ResultFusionRankerTool:
                 fallback_terms=_fallback_filter_terms(tool_input.query_plan, tool_input.plan),
             )
         results = filter_by_adult_content(results, tool_input.plan)
+        results = filter_semantic_soft_rejects(results, tool_input.query_plan)
         results = filter_by_exact_title(results, tool_input.plan.exact_title)
         results = filter_excluded_titles(results, _excluded_titles(tool_input.query_plan))
         results = filter_excluded_keywords(results, tool_input.plan.excluded_keywords)
@@ -83,7 +86,7 @@ def _filter_query(query: str, plan: SearchPlan, query_plan: dict[str, Any] | Non
         return plan.exact_title
     if plan.external_id or plan.source_url:
         return ""
-    visible_query = query.split("[scope]", 1)[0].strip()
+    visible_query = strip_scope(query)
     if query_plan and query_plan.get("keyword_match_mode") == "all" and plan.keywords:
         return " ".join(plan.keywords)
     if (plan.summary_languages or isinstance(plan.has_thumbnail, bool)) and plan.keywords:

@@ -82,6 +82,28 @@ def test_preference_service_persists_last_query_context_and_favorite_summary():
     assert loaded["favorite_summary"]["top_games"] == ["Stellar Blade"]
 
 
+def test_preference_service_tolerates_non_object_json():
+    with _session() as session:
+        service = AgentPreferenceService(session)
+        service.settings.set("agent_preferences_json", "[]")
+
+        loaded = service.load_preferences()
+
+    assert loaded == {
+        "last_query_context": {},
+        "favorite_summary": {},
+        "updated_at": None,
+    }
+
+
+def test_preference_service_parses_numeric_dirty_flag():
+    with _session() as session:
+        service = AgentPreferenceService(session)
+        service.settings.set("agent_preferences_dirty", "1")
+
+        assert service.is_dirty() is True
+
+
 def test_conversation_preference_summary_uses_recent_messages_and_matches():
     with _session() as session:
         outfit = Mod(
@@ -128,6 +150,26 @@ def test_conversation_preference_summary_uses_recent_messages_and_matches():
     assert summary["top_categories"][0] == "Outfits"
     assert summary["adult_content_preference"] is True
     assert summary["matched_mod_count"] == 1
+
+
+def test_conversation_preference_summary_ignores_non_array_matches_json():
+    with _session() as session:
+        session.add(
+            AgentMessage(
+                message_id="m1",
+                role="assistant",
+                text="bad matches",
+                session_id="s1",
+                created_at="2025-01-01T00:00:00",
+                matches_json='{"id": 1}',
+                sort_index=0,
+            )
+        )
+        session.commit()
+
+        summary = summarize_conversation_preferences(session)
+
+    assert summary["matched_mod_count"] == 0
 
 
 def test_refresh_agent_preferences_combines_favorites_and_conversation():

@@ -1,5 +1,4 @@
 import logging
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -8,19 +7,26 @@ from sqlmodel import Session
 
 from app.services import llm_provider_config as llm_provider_config_module
 from app.services.agent import llm_config_service as llm_config_module
-from app.services.agent import query_planner as query_planner_module
 from app.services.agent import rate_limiter as rate_limiter_module
 from app.services.agent.context.memory_context_builder import load_agent_memory_context
 from app.services.agent.planning.context_pipeline import prepare_contextual_query_plan
+from app.services.agent.planning.llm_context_selection import select_last_query_context_with_llm
 from app.services.agent.planning.query_diagnosis import QueryDiagnosis, diagnosis_log_fields
+from app.services.agent.query_planner import load_slot_options, normalize_query_plan
 from app.services.agent.schemas import AgentHistoryItem
+from app.services.agent.semantic_brain.semantic_strategy_adapter import (
+    attach_semantic_strategy_to_query_plan,
+)
+from app.services.agent.semantic_brain.semantic_strategy_tool import (
+    SemanticStrategyInput,
+    SemanticStrategyTool,
+)
+from app.services.agent.tools.executor_query_tool import ExecutorQueryInput, ExecutorQueryTool
 from app.services.agent.tools.query_diagnosis_tool import QueryDiagnosisInput, QueryDiagnosisTool
-from app.services.agent.tools.query_planning_tool import QueryPlanningInput, QueryPlanningTool
 from app.services.settings_service import SettingsService
+from app.utils.numeric import safe_float
 
 logger = logging.getLogger(__name__)
-
-QueryPlanner = Callable[..., Awaitable[dict[str, Any] | None]]
 
 
 @dataclass(frozen=True)
@@ -47,20 +53,21 @@ class TaskUnderstandingOutput:
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_model: str = ""
+    semantic_strategy: dict[str, Any] = field(default_factory=dict)
     evidence_id: str = ""
 
 
 class TaskUnderstandingTool:
-    """Agent tool for memory-aware query planning and task diagnosis."""
+    """结合上下文、长期记忆和可选 LLM，生成查询计划与任务诊断。"""
 
     name = "task_understanding"
 
-    def __init__(self, session: Session | None, *, planner: QueryPlanner | None = None):
+    def __init__(self, session: Session | None):
         self.session = session
-        self.planner = planner or query_planner_module.plan_query_with_llm
 
     async def run(self, tool_input: TaskUnderstandingInput) -> TaskUnderstandingOutput:
         evidence_id = str(tool_input.evidence_id or "").strip()
+        # 记忆只参与补全和软偏好；本轮显式输入仍由 context pipeline 优先处理。
         memory_context = load_agent_memory_context(
             session=self.session,
             last_query_context=tool_input.last_query_context,
@@ -69,17 +76,6 @@ class TaskUnderstandingTool:
             evidence_id=evidence_id,
         )
         preferences = memory_context.get("merged", {})
-        context_planning = prepare_contextual_query_plan(
-            query=tool_input.query,
-            active_constraints=tool_input.active_constraints,
-            last_query_context=tool_input.last_query_context,
-            shown_mod_titles=tool_input.shown_mod_titles,
-            history=tool_input.history,
-            memory_context=memory_context,
-            session=self.session,
-            evidence_id=evidence_id,
-        )
-        query_plan = context_planning.query_plan
         provider = api_key = base_url = model = ""
         llm_available = False
         if self.session is not None and hasattr(self.session, "exec"):
@@ -94,31 +90,76 @@ class TaskUnderstandingTool:
                 model_override=tool_input.model_override,
             )
             llm_available = llm_provider_config_module.provider_has_credentials(provider, api_key)
-            planning_output = await QueryPlanningTool(self.session, planner=self.planner).run(
-                QueryPlanningInput(
+        selected_last_query_context = tool_input.last_query_context
+        if llm_available:
+            llm_context = await select_last_query_context_with_llm(
+                query=tool_input.query,
+                history=tool_input.history,
+                active_constraints=tool_input.active_constraints,
+                short_last_query_context=tool_input.last_query_context,
+                memory_context=memory_context,
+                shown_mod_titles=tool_input.shown_mod_titles,
+                provider=provider,
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+                evidence_id=evidence_id,
+            )
+            if llm_context.context:
+                selected_last_query_context = llm_context.context
+        semantic_strategy = await SemanticStrategyTool().run(
+            SemanticStrategyInput(
+                query=tool_input.query,
+                history=tool_input.history,
+                active_constraints=tool_input.active_constraints,
+                last_query_context=selected_last_query_context,
+                memory_context=memory_context,
+                shown_mod_titles=tool_input.shown_mod_titles,
+                llm_available=llm_available,
+                provider=provider,
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+                evidence_id=evidence_id,
+            )
+        )
+        context_result = prepare_contextual_query_plan(
+            query=tool_input.query,
+            active_constraints=tool_input.active_constraints,
+            last_query_context=selected_last_query_context,
+            shown_mod_titles=tool_input.shown_mod_titles,
+            history=tool_input.history,
+            memory_context=memory_context,
+            session=self.session,
+            evidence_id=evidence_id,
+        )
+        query_plan = context_result.query_plan
+        if self.session is not None and hasattr(self.session, "exec"):
+            # ExecutorQueryTool 只生成 executor 输入字段；LLM 只在 SemanticStrategyTool 中作为语义大脑使用。
+            executor_query = await ExecutorQueryTool(self.session).run(
+                ExecutorQueryInput(
                     query=tool_input.query,
-                    history=tool_input.history,
                     context_query_plan=query_plan,
                     evidence_id=evidence_id,
-                    llm_available=llm_available,
-                    provider=provider,
-                    api_key=api_key,
-                    base_url=base_url,
-                    model=model,
                 )
             )
-            query_plan = planning_output.query_plan
-            evidence_id = planning_output.evidence_id or evidence_id
+            query_plan = executor_query.query_plan
+            evidence_id = executor_query.evidence_id or evidence_id
             query_plan["evidence_id"] = evidence_id
+        query_plan = attach_semantic_strategy_to_query_plan(query_plan, semantic_strategy)
+        if self.session is not None and hasattr(self.session, "exec"):
+            normalized_plan = normalize_query_plan(query_plan, tool_input.query, load_slot_options(self.session))
+            query_plan = {**query_plan, **normalized_plan}
         _log_memory_context(memory_context, preferences)
+        # 诊断层把 query_plan 转成可审计的 intent、slots 和语义信号，供工具规划使用。
         diagnosis = QueryDiagnosisTool().run(
             QueryDiagnosisInput(
                 query=tool_input.query,
                 query_plan=query_plan,
                 active_constraints=tool_input.active_constraints,
                 preferences=preferences,
-                context_keywords=context_planning.diagnosis_context_keywords,
-                context_slots=context_planning.diagnosis_context_slots,
+                context_keywords=context_result.diagnosis_context_keywords,
+                context_slots=context_result.diagnosis_context_slots,
             )
         )
         _log_diagnosis(query_plan, diagnosis)
@@ -138,6 +179,7 @@ class TaskUnderstandingTool:
             llm_api_key=api_key,
             llm_base_url=base_url,
             llm_model=model,
+            semantic_strategy=semantic_strategy.strategy.model_dump(mode="python"),
             evidence_id=evidence_id,
         )
 
@@ -163,7 +205,7 @@ def _log_diagnosis(query_plan: dict[str, Any], diagnosis: QueryDiagnosis) -> Non
         "agent.diagnosis evidence_id=%s intent=%s confidence=%.2f should_clarify=%s missing_slots=%s known_slots=%s context_continuity_score=%s semantic_anchors=%s semantic_domains=%s",
         query_plan.get("evidence_id"),
         diagnosis.get("intent"),
-        float(diagnosis.get("confidence") or 0),
+        safe_float(diagnosis.get("confidence")),
         diagnosis.get("should_clarify"),
         diagnosis.get("missing_slots"),
         sorted((diagnosis.get("known_slots") or {}).keys()),

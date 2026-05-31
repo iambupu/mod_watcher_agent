@@ -22,6 +22,7 @@ async def test_diagnose_query_stage_maps_task_understanding_output(monkeypatch):
                 query_diagnosis={"intent": "search"},
                 preferences={"adult_content_allowed": True},
                 memory_context={"merged": {"adult_content_allowed": True}},
+                semantic_strategy={"task_type": "open_discovery"},
                 llm_available=True,
                 llm_provider="provider",
                 llm_api_key="secret",

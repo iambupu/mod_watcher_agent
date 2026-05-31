@@ -70,7 +70,9 @@ async def rank_candidates_stage(
             "strategy": CandidateRankingTool.name,
             "match_count": output.match_count,
             "validator_status": output.validator_status,
+            "semantic_judge_status": output.semantic_judge_status,
         },
+        "query_plan": output.query_plan,
         "retrieval_evidence": output.evidence,
         "matches": output.matches,
     }

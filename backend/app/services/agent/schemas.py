@@ -65,7 +65,7 @@ class AgentAuditConclusion(BaseModel):
     used_llm: bool | None = None
     match_count: int | None = None
     consistency_risk: Literal["low", "medium", "high"] | None = None
-    planning_confidence: Literal["low", "medium", "high", "unknown"] | None = None
+    tool_policy_confidence: Literal["low", "medium", "high", "unknown"] | None = None
     evidence_sufficiency: Literal["insufficient", "partial", "sufficient"] | None = None
     contract_status: Literal["ok", "violated"] | None = None
     contract_violations_count: int | None = None
@@ -144,12 +144,12 @@ class AgentAnalysisEvidenceCoverage(BaseModel):
     field_fragments: dict[str, list[str]] = Field(default_factory=dict)
 
 
-class AgentToolPlanningEvidence(BaseModel):
+class AgentToolPolicyEvidence(BaseModel):
     score: float | None = None
     strategy: str | None = None
     known_slot_count: int | None = None
     should_clarify: bool | None = None
-    conservative_mode: bool | None = None
+    online_recall_mode: str | None = None
     semantic_anchors: list[str] = Field(default_factory=list)
     semantic_domains: list[str] = Field(default_factory=list)
     expand_online_candidates: list[str] = Field(default_factory=list)
@@ -183,7 +183,7 @@ class AgentAuditEvidence(BaseModel):
     context_signal: AgentContextSignalEvidence | None = None
     memory_context_alignment: AgentMemoryContextAlignmentEvidence | None = None
     analysis_evidence_coverage: AgentAnalysisEvidenceCoverage | None = None
-    tool_planning: AgentToolPlanningEvidence | None = None
+    tool_policy: AgentToolPolicyEvidence | None = None
     action_evidence_consistent: bool | None = None
     action_evidence_consistency_reason: str | None = None
     audit_contract_passed: bool | None = None

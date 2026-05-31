@@ -40,10 +40,9 @@ def test_agent_runtime_stays_request_graph_and_finalization_only():
         "CandidateRankingTool",
         "ChatAnswerTool",
         "MemoryWritebackTool",
-        "QueryPlanningTool",
+        "ExecutorQueryTool",
         "TaskUnderstandingTool",
         "LocalDbSearchTool",
-        "VectorSearchTool",
         "ResultFusionRankerTool",
         "ResponseCardBuilderTool",
     ]

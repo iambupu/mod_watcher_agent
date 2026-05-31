@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class ContextSummaryTool:
-    """Agent tool for compacting request history into actionable context."""
+    """把请求历史压缩为后续节点可消费的上下文事实和活跃约束。"""
 
     name = "context_summary"
 

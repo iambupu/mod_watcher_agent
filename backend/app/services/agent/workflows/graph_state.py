@@ -27,6 +27,7 @@ class AgentGraphState(TypedDict):
     shown_mod_titles: NotRequired[list[str]]
     preferences: NotRequired[dict[str, object]]
     memory_context: NotRequired[dict[str, object]]
+    semantic_strategy: NotRequired[dict[str, object]]
     query_plan: NotRequired[dict[str, object]]
     query_diagnosis: NotRequired[QueryDiagnosis]
     tool_plan: NotRequired[ToolPlan]

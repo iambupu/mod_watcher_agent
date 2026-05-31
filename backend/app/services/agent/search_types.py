@@ -2,12 +2,18 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.models.mod import Mod
+from app.services.agent.filter_value_utils import optional_min_metric, optional_time_window
+from app.services.agent.list_utils import string_list as _string_list
+from app.utils.boolean import parse_bool
+from app.utils.numeric import bounded_int
 
 
 @dataclass(frozen=True)
 class SearchPlan:
     keywords: list[str]
     excluded_keywords: list[str]
+    excluded_sources: list[str]
+    exclude_titles: list[str]
     games: list[str]
     game_domains: list[str]
     categories: list[str]
@@ -39,17 +45,21 @@ class SearchPlan:
     created_after: str | None = None
     created_before: str | None = None
     category_match_mode: str | None = None
+    category_hints: list[str] | None = None
+    open_discovery: bool = False
+    retrieval_mode: str | None = None
+    candidate_pool_limit: int | None = None
+    keyword_match_mode: str | None = None
 
     @classmethod
     def from_query_plan(cls, plan: dict[str, Any]) -> "SearchPlan":
-        try:
-            limit = int(plan.get("limit") or 8)
-        except (TypeError, ValueError):
-            limit = 8
+        candidate_pool_limit = optional_min_metric(plan.get("candidate_pool_limit"))
         adult_content = plan.get("adult_content")
         return cls(
             keywords=_string_list(plan.get("keywords")),
             excluded_keywords=_string_list(plan.get("excluded_keywords")),
+            excluded_sources=_string_list(plan.get("excluded_sources")),
+            exclude_titles=_string_list(plan.get("exclude_titles")),
             games=_string_list(plan.get("games")),
             game_domains=_string_list(plan.get("game_domains")),
             categories=_string_list(plan.get("categories")),
@@ -68,12 +78,12 @@ class SearchPlan:
             adult_content=adult_content if isinstance(adult_content, bool) else None,
             sort_field=str(plan.get("sort_field") or "relevance"),
             sort_order="asc" if str(plan.get("sort_order") or "").lower() == "asc" else "desc",
-            limit=max(1, min(20, limit)),
-            min_downloads=_optional_int(plan.get("min_downloads")),
-            min_endorsements=_optional_int(plan.get("min_endorsements")),
-            min_views=_optional_int(plan.get("min_views")),
-            min_likes=_optional_int(plan.get("min_likes")),
-            updated_since_days=_optional_positive_int(plan.get("updated_since_days")),
+            limit=bounded_int(plan.get("limit"), default=8, minimum=1, maximum=20),
+            min_downloads=optional_min_metric(plan.get("min_downloads")),
+            min_endorsements=optional_min_metric(plan.get("min_endorsements")),
+            min_views=optional_min_metric(plan.get("min_views")),
+            min_likes=optional_min_metric(plan.get("min_likes")),
+            updated_since_days=optional_time_window(plan.get("updated_since_days")),
             updated_after=_optional_string(plan.get("updated_after")),
             updated_before=_optional_string(plan.get("updated_before")),
             published_after=_optional_string(plan.get("published_after")),
@@ -81,12 +91,19 @@ class SearchPlan:
             created_after=_optional_string(plan.get("created_after")),
             created_before=_optional_string(plan.get("created_before")),
             category_match_mode=str(plan.get("category_match_mode") or "") or None,
+            category_hints=_string_list(plan.get("category_hints")),
+            open_discovery=parse_bool(plan.get("open_discovery")),
+            retrieval_mode=_optional_string(plan.get("retrieval_mode")),
+            candidate_pool_limit=max(1, min(80, candidate_pool_limit)) if candidate_pool_limit else None,
+            keyword_match_mode="all" if str(plan.get("keyword_match_mode") or "").strip().lower() == "all" else None,
         )
 
     def to_query_plan(self) -> dict[str, Any]:
         data: dict[str, Any] = {
             "keywords": self.keywords,
             "excluded_keywords": self.excluded_keywords,
+            "excluded_sources": self.excluded_sources,
+            "exclude_titles": self.exclude_titles,
             "games": self.games,
             "game_domains": self.game_domains,
             "categories": self.categories,
@@ -120,6 +137,16 @@ class SearchPlan:
         }
         if self.category_match_mode:
             data["category_match_mode"] = self.category_match_mode
+        if self.category_hints:
+            data["category_hints"] = self.category_hints
+        if self.open_discovery:
+            data["open_discovery"] = True
+        if self.retrieval_mode:
+            data["retrieval_mode"] = self.retrieval_mode
+        if self.candidate_pool_limit:
+            data["candidate_pool_limit"] = self.candidate_pool_limit
+        if self.keyword_match_mode:
+            data["keyword_match_mode"] = self.keyword_match_mode
         return data
 
 
@@ -132,31 +159,6 @@ class SearchResult:
     rank_reason: str | None = None
 
 
-def _string_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        values = [value]
-    else:
-        values = list(value) if isinstance(value, list | tuple | set) else []
-    return [str(item).strip() for item in values if str(item).strip()]
-
-
 def _optional_string(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
-
-
-def _optional_int(value: Any) -> int | None:
-    try:
-        parsed = int(str(value or "").replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
-    return max(0, parsed)
-
-
-def _optional_positive_int(value: Any) -> int | None:
-    parsed = _optional_int(value)
-    if parsed is None:
-        return None
-    return max(1, min(365, parsed))

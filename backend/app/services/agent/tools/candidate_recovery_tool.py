@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlmodel import Session
 
+from app.services.agent.planning.slot_normalization import normalize_limit
 from app.services.agent.query_planner import DEFAULT_AGENT_LIMIT
 from app.services.agent.schemas import AgentModMatch
 from app.services.agent.search_types import SearchPlan
@@ -39,7 +40,7 @@ class CandidateRecoveryOutput:
 
 
 class CandidateRecoveryTool:
-    """Agent tool for a narrow local fallback when validated candidates are empty."""
+    """候选校验后为空时执行窄范围本地恢复检索。"""
 
     name = "candidate_recovery"
 
@@ -104,5 +105,5 @@ def _build_retry_plan(query_plan: dict[str, Any], plan: SearchPlan, evidence_id:
     retry_plan["keywords"] = []
     retry_plan["sort_field"] = query_plan.get("sort_field") or "updated_at_remote"
     retry_plan["sort_order"] = query_plan.get("sort_order") or "desc"
-    retry_plan["limit"] = int(query_plan.get("limit") or DEFAULT_AGENT_LIMIT)
+    retry_plan["limit"] = normalize_limit(query_plan, default=plan.limit or DEFAULT_AGENT_LIMIT, maximum=20)
     return retry_plan

@@ -49,7 +49,7 @@ class SearchScrapeResult:
 
 
 class LoversLabSearchScrapeTool:
-    """Agent tool that scrapes public search result pages for LoversLab links."""
+    """抓取公开搜索结果页中的 LoversLab 链接。"""
 
     name = "loverslab_scrape_search"
 

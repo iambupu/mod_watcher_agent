@@ -138,3 +138,50 @@ def test_quality_runner_records_case_exceptions(monkeypatch):
             "expected": "no exception",
         }
     ]
+
+
+def test_quality_runner_reports_bad_numeric_evidence_as_failed_checks(monkeypatch):
+    def bad_numeric_diagnosis(**kwargs):  # noqa: ANN003
+        evidence_id = kwargs["query_plan"]["evidence_id"]
+        return {
+            "intent": "search",
+            "missing_slots": [],
+            "known_slots": {},
+            "should_clarify": False,
+            "understanding": {
+                "intent": "search",
+                "slots": {},
+                "confidence": 0.8,
+                "evidence": [
+                    {
+                        "field": "context_inherit_score",
+                        "value": "bad",
+                        "evidence_id": evidence_id,
+                    },
+                    {
+                        "field": "preference_memory_age_days",
+                        "value": "old",
+                        "evidence_id": evidence_id,
+                    },
+                ],
+            },
+        }
+
+    monkeypatch.setattr(runner, "diagnose_query", bad_numeric_diagnosis)
+
+    report = run_quality_cases(
+        [
+            {
+                "id": "bad_numeric_evidence",
+                "query": "bimbo",
+                "expect": {
+                    "context_inherit_score_min": 0.5,
+                    "diagnosis_preference_memory_age_days": 7,
+                },
+            }
+        ]
+    )
+
+    assert report["failed"] == 1
+    checks = report["evidence"]["case_results"][0]["checks"]
+    assert any(check["name"] == "diagnosis.context_inherit_score_min" and check["passed"] is False for check in checks)

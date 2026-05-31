@@ -21,7 +21,7 @@ class ToolPlannerInput:
 
 
 class ToolPlannerTool:
-    """Agent tool for selecting retrieval tools and fallback strategy."""
+    """根据诊断结果选择本地和在线检索工具，并记录可解释降级原因。"""
 
     name = "tool_planner"
 
@@ -31,8 +31,6 @@ class ToolPlannerTool:
             if tool_input.capabilities is not None
             else default_tool_capabilities()
         )
-        if not capabilities.get("qdrant_vector"):
-            logger.info("agent.vector status=degraded reason=qdrant_disabled")
         tool_plan = build_tool_plan(
             query_diagnosis=tool_input.query_diagnosis,
             preferences=tool_input.preferences,
@@ -40,12 +38,13 @@ class ToolPlannerTool:
             local_only=tool_input.local_only,
         )
         logger.info(
-            "agent.tool name=tool_planner status=succeeded groups=%s fallback_tools=%s degraded=%s strategy=%s conservative_mode=%s evidence_id=%s",
+            "agent.tool name=tool_planner status=succeeded groups=%s online_tools=%s degraded=%s tool_policy_score=%s tool_policy_strategy=%s online_recall_mode=%s evidence_id=%s",
             [group["name"] for group in tool_plan.get("parallel_groups", [])],
-            [step.get("tool") for step in tool_plan.get("fallback_steps", [])],
+            [step.get("tool") for step in tool_plan.get("online_steps", [])],
             tool_plan.get("degraded_reasons", []),
-            (tool_plan.get("planning_evidence") or {}).get("strategy"),
-            (tool_plan.get("planning_evidence") or {}).get("conservative_mode"),
+            (tool_plan.get("tool_policy_evidence") or {}).get("score"),
+            (tool_plan.get("tool_policy_evidence") or {}).get("strategy"),
+            (tool_plan.get("tool_policy_evidence") or {}).get("online_recall_mode"),
             tool_input.evidence_id,
         )
         return tool_plan

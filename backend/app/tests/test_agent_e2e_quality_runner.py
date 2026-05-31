@@ -69,25 +69,6 @@ def test_e2e_quality_runner_reports_structured_passes():
     assert "audit.evidence.web_search.queried" in online_case_checks
     assert "audit.evidence.web_search.online_result_count" in online_case_checks
     assert "audit.evidence.web_search.tools_contains" in online_case_checks
-    llm_planning_case_checks = {
-        check["name"]
-        for item in report["evidence"]["case_results"]
-        if item["id"] == "e2e_llm_planning_source_evidence"
-        for check in item["checks"]
-        if isinstance(check, dict)
-    }
-    assert "understanding.planning_source" in llm_planning_case_checks
-    assert "understanding.llm_planning_used" in llm_planning_case_checks
-    llm_planning_error_case_checks = {
-        check["name"]
-        for item in report["evidence"]["case_results"]
-        if item["id"] == "e2e_llm_planning_error_degrades_with_evidence"
-        for check in item["checks"]
-        if isinstance(check, dict)
-    }
-    assert "understanding.planning_source" in llm_planning_error_case_checks
-    assert "understanding.llm_planning_used" in llm_planning_error_case_checks
-    assert "understanding.llm_planning_error_type" in llm_planning_error_case_checks
     memory_writeback_case_checks = {
         check["name"]
         for item in report["evidence"]["case_results"]
@@ -98,16 +79,6 @@ def test_e2e_quality_runner_reports_structured_passes():
     assert "http.status.turn_1" in memory_writeback_case_checks
     assert "http.status.turn_2" in memory_writeback_case_checks
     assert "understanding.context_source" in memory_writeback_case_checks
-    candidate_recovery_case_checks = {
-        check["name"]
-        for item in report["evidence"]["case_results"]
-        if item["id"] == "e2e_topic_shift_to_cyberpunk_vehicle"
-        for check in item["checks"]
-        if isinstance(check, dict)
-    }
-    assert "retrieval_evidence.stage_contains" in candidate_recovery_case_checks
-    assert "retrieval_evidence.tool_contains" in candidate_recovery_case_checks
-    assert "retrieval_evidence.reason_contains" in candidate_recovery_case_checks
     target_case_expected_checks = {
         "e2e_bimbo_roleplay_intent": [
             "audit.evidence.retrieval_decision.semantic_anchors_contains",
@@ -144,6 +115,55 @@ def test_e2e_quality_runner_reports_structured_passes():
         }
         for check_name in expected_checks:
             assert check_name in check_names
+    semantic_guard_checks = {
+        check["name"]
+        for item in report["evidence"]["case_results"]
+        if item["id"] == "e2e_quality_style_outfit_not_gameplay_semantic_drift"
+        for check in item["checks"]
+        if isinstance(check, dict)
+    }
+    assert "response.answer_not_contains" in semantic_guard_checks
+    assert "understanding.semantic_anchors_not_contains" in semantic_guard_checks
+    assert "audit.evidence.semantic_trace.anchors_not_contains" in semantic_guard_checks
+    source_guard_checks = {
+        check["name"]
+        for item in report["evidence"]["case_results"]
+        if item["id"] == "e2e_quality_loverslab_source_constraint_pregnancy"
+        for check in item["checks"]
+        if isinstance(check, dict)
+    }
+    assert "result.top_source" in source_guard_checks
+    assert "result.exclude_title:Nexus Pregnancy Gameplay" in source_guard_checks
+    assert "understanding.source" in source_guard_checks
+    answer_structure_checks = {
+        check["name"]
+        for item in report["evidence"]["case_results"]
+        if item["id"] == "e2e_quality_recommendation_format_not_comparison"
+        for check in item["checks"]
+        if isinstance(check, dict)
+    }
+    assert "response.answer_contains" in answer_structure_checks
+    assert "response.answer_not_contains" in answer_structure_checks
+    assert "response.cards.results_contains" in answer_structure_checks
+    memory_turn_checks = {
+        check["name"]
+        for item in report["evidence"]["case_results"]
+        if item["id"] == "e2e_quality_two_turn_pregnancy_followup"
+        for check in item["checks"]
+        if isinstance(check, dict)
+    }
+    assert "http.status.turn_1" in memory_turn_checks
+    assert "http.status.turn_2" in memory_turn_checks
+    assert "understanding.context_source" in memory_turn_checks
+    source_refine_checks = {
+        check["name"]
+        for item in report["evidence"]["case_results"]
+        if item["id"] == "e2e_quality_memory_writeback_three_turn_source_refine"
+        for check in item["checks"]
+        if isinstance(check, dict)
+    }
+    assert "log.contains:agent.context_inherit source=long_term_writeback" in source_refine_checks
+    assert "log.contains:context_semantic_anchors=['bimbo']" in source_refine_checks
 
 
 def test_e2e_quality_loader_rejects_non_object_cases(tmp_path):
@@ -205,6 +225,13 @@ def test_e2e_quality_runner_fails_invalid_expect_field_types():
     assert checks[0]["expected"] == expect_field_type_summary()
     assert expect_field_type_summary()["exclude_titles"] == "list"
     assert expect_field_type_summary()["understanding_field_contains"] == "object"
+    assert expect_field_type_summary()["understanding_field_not_contains"] == "object"
+    assert expect_field_type_summary()["answer_contains"] == "string"
+    assert expect_field_type_summary()["answer_not_contains"] == "string"
+    assert expect_field_type_summary()["top_source"] == "string"
+    assert expect_field_type_summary()["response_card_contains"] == "object"
+    assert expect_field_type_summary()["audit_analysis_equals"] == "object"
+    assert expect_field_type_summary()["log_contains"] == "list"
     assert expect_field_type_summary()["audit_web_search_equals"] == "object"
     assert expect_field_type_summary()["audit_web_search_contains"] == "object"
     assert expect_field_type_summary()["retrieval_evidence_contains"] == "object"
@@ -230,3 +257,10 @@ def test_e2e_quality_runner_records_case_exceptions(monkeypatch):
             "expected": "no exception",
         }
     ]
+
+
+def test_e2e_quality_runner_stub_score_does_not_count_bool_as_int():
+    assert e2e_runner._stub_search_score({}) == 9
+    assert e2e_runner._stub_search_score({"score": 0}) == 0
+    assert e2e_runner._stub_search_score({"score": True}) == 0
+    assert e2e_runner._stub_search_score({"score": "12"}) == 12

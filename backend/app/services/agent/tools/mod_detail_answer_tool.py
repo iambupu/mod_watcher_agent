@@ -11,8 +11,10 @@ from app.services.agent.rate_limiter import build_rate_limit_key, enforce_rate_l
 from app.services.agent.response_builder import (
     build_detail_response_cards,
     build_status_response_cards,
+    match_from_mod,
 )
-from app.services.agent.schemas import AgentChatResponse, AgentHistoryItem, AgentModMatch
+from app.services.agent.schemas import AgentChatResponse, AgentHistoryItem
+from app.services.agent.tools.llm_output import is_empty_or_error_content
 from app.services.llm_provider_config import provider_has_credentials
 from app.services.settings_service import SettingsService
 
@@ -28,7 +30,7 @@ class ModDetailAnswerInput:
 
 
 class ModDetailAnswerTool:
-    """Agent tool for generating the mod-detail response path."""
+    """生成指定 MOD 的详情问答响应，不走普通搜索排序链路。"""
 
     name = "mod_detail_answer"
 
@@ -48,12 +50,12 @@ class ModDetailAnswerTool:
                     conclusion="结论：当前无法生成可靠详情。",
                     understanding="未找到对应 Mod。",
                     result="当前没有可展示的详情结果。",
-                    next_step="请返回结果列表重新选择一个 Mod。",
+                    next_step="我想回到结果列表重新选一个 Mod",
                 ),
             )
 
         summary_by_mod = build_summary_map(self.session, [tool_input.mod_id])
-        match = _match_from_mod(mod, 1, summary_by_mod)
+        match = match_from_mod(mod, 1, summary_by_mod)
         fallback = build_detail_fallback(mod, match)
 
         settings = SettingsService(self.session)
@@ -84,7 +86,7 @@ class ModDetailAnswerTool:
             model=model,
             history=tool_input.history,
         )
-        if _is_empty_or_error_content(content):
+        if is_empty_or_error_content(content):
             return AgentChatResponse(
                 answer=fallback,
                 used_llm=False,
@@ -101,29 +103,6 @@ class ModDetailAnswerTool:
         )
 
 
-def _match_from_mod(mod: Mod, score: int, summary_by_mod: dict[int, str]) -> AgentModMatch:
-    return AgentModMatch(
-        id=mod.id or 0,
-        title=mod.title,
-        translated_title_zh=mod.translated_title_zh,
-        source=mod.source,
-        game=mod.game,
-        game_domain=mod.game_domain,
-        category=mod.category,
-        author=mod.author,
-        version=mod.version,
-        url=mod.url,
-        updated_at_remote=mod.updated_at_remote,
-        downloads=mod.downloads,
-        endorsements=mod.endorsements,
-        likes=mod.likes,
-        adult_content=mod.adult_content,
-        score=score,
-        original_summary=mod.original_summary,
-        translated_summary=summary_by_mod.get(mod.id or 0),
-    )
-
-
 def _detail_response_cards(mod: Mod, generated: bool) -> dict[str, list[str]]:
     return build_detail_response_cards(
         title=mod.title,
@@ -131,13 +110,3 @@ def _detail_response_cards(mod: Mod, generated: bool) -> dict[str, list[str]]:
         game=mod.game,
         generated=generated,
     )
-
-
-def _is_empty_or_error_content(content: str) -> bool:
-    normalized = str(content or "").strip().lower()
-    return not normalized or normalized in {
-        "failed to fetch",
-        "fetch failed",
-        "network error",
-        "networkerror when attempting to fetch resource.",
-    }

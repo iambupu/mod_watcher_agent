@@ -2,6 +2,7 @@ from app.services.agent.semantic_search import (
     distinctive_query_terms,
     infer_categories,
     semantic_query,
+    strip_scope,
     text_score,
 )
 
@@ -13,6 +14,11 @@ def test_semantic_query_expands_chinese_female_outfit_terms():
     assert "outfit" in semantic.expanded_terms
     assert "clothing" in semantic.expanded_terms
     assert "clothing" in semantic.category_aliases
+
+
+def test_strip_scope_tolerates_empty_values():
+    assert strip_scope(None) == ""
+    assert strip_scope("目标 [scope] {\"source\":\"current\"}") == "目标"
 
 
 def test_infer_categories_uses_available_category_names():

@@ -1,6 +1,5 @@
 import json
 import logging
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +13,6 @@ from app.main import app as fastapi_app
 from app.models.mod import Mod
 from app.models.settings import Setting
 from app.services import llm_provider_config as llm_provider_config_module
-from app.services.agent import query_planner as query_planner_module
 from app.services.agent import rate_limiter as rate_limiter_module
 from app.services.agent.quality._checks import (
     exception_check,
@@ -25,31 +23,41 @@ from app.services.agent.quality._checks import (
     expect_field_type_summary as build_expect_field_type_summary,
 )
 from app.services.agent.search_types import SearchResult
-from app.services.agent.tools.answer_generation_tool import AnswerGenerationTool
-from app.services.agent.tools.llm_candidate_validator_tool import LlmCandidateValidatorTool
 from app.services.agent.tools.loverslab_google_search_tool import LoversLabGoogleSearchTool
 from app.services.agent.tools.loverslab_search_scrape_tool import LoversLabSearchScrapeTool
 from app.services.agent.tools.nexusmods_search_tool import NexusModsSearchTool
+from app.utils.numeric import is_plain_int, safe_nonnegative_int, safe_optional_float
 
 _EXPECT_FIELD_TYPES = {
+    "answer_contains": "string",
+    "answer_not_contains": "string",
+    "audit_analysis_contains": "object",
+    "audit_analysis_equals": "object",
     "audit_conclusion_equals": "object",
     "audit_retrieval_decision_contains": "object",
+    "audit_retrieval_decision_not_contains": "object",
     "audit_semantic_trace_contains": "object",
+    "audit_semantic_trace_not_contains": "object",
     "audit_web_search_contains": "object",
     "audit_web_search_equals": "object",
     "clarifying_question_contains": "string",
     "context_inherit_score_min": "number",
     "exclude_titles": "list",
+    "log_contains": "list",
     "memory_field_equals": "object",
     "memory_field_min": "object",
     "retrieval_evidence_contains": "object",
+    "result_sources": "list",
+    "response_card_contains": "object",
     "slot_game": "string",
+    "top_source": "string",
     "top_title": "string",
     "topic_shift_detected": "bool",
     "understanding_field_contains": "object",
     "understanding_field_equals": "object",
     "understanding_field_max": "object",
     "understanding_field_min": "object",
+    "understanding_field_not_contains": "object",
 }
 
 
@@ -150,28 +158,27 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
     root_logger.addHandler(log_handler)
     original_setup_scheduler = main_module.setup_scheduler
     original_init_db = main_module.init_db
+    original_deferred_startup_maintenance = main_module._run_deferred_startup_maintenance
     original_engine = main_module.engine
     original_provider_has_credentials = llm_provider_config_module.provider_has_credentials
     original_enforce_rate_limit = rate_limiter_module.enforce_rate_limit
-    original_plan_query_with_llm = query_planner_module.plan_query_with_llm
-    original_candidate_validator_run = LlmCandidateValidatorTool.run
-    original_answer_generation_run = AnswerGenerationTool.run
     original_nexus_run = NexusModsSearchTool.run
     original_loverslab_google_run = LoversLabGoogleSearchTool.run
     original_loverslab_scrape_run = LoversLabSearchScrapeTool.run
     if fast_mode:
-        async def _noop_setup_scheduler(session: Any | None = None) -> None:
+        async def _noop_setup_scheduler(_session: Any | None = None) -> None:
             return None
 
         def _noop_init_db() -> None:
+            return None
+
+        async def _noop_deferred_startup_maintenance() -> None:
             return None
 
         async def _noop_enforce_rate_limit(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
             return None
 
         stub_online_results = case.get("stub_online_results") if isinstance(case.get("stub_online_results"), dict) else {}
-        llm_query_plan = case.get("llm_query_plan") if isinstance(case.get("llm_query_plan"), dict) else None
-        llm_query_plan_error = str(case.get("llm_query_plan_error") or "").strip()
 
         async def _empty_leaf_search(self: Any, tool_input: Any) -> list[Any]:  # noqa: ARG001
             self.last_status = "succeeded"
@@ -185,31 +192,21 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
             self.last_status = "succeeded"
             self.last_reason = None
             return [
-                SearchResult(score=int(item.get("score") or 9), mod=_mod_from_stub(item), tool_name=str(getattr(self, "name", "")))
+                SearchResult(
+                    score=_stub_search_score(item),
+                    mod=_mod_from_stub(item),
+                    tool_name=str(getattr(self, "name", "")),
+                )
                 for item in tool_results
                 if isinstance(item, dict)
             ]
 
-        async def _stubbed_llm_plan(**kwargs: Any) -> dict[str, Any] | None:  # noqa: ARG001
-            if llm_query_plan_error:
-                raise RuntimeError(llm_query_plan_error)
-            return dict(llm_query_plan or {})
-
-        async def _stubbed_candidate_validator_run(self: Any, tool_input: Any) -> Any:
-            return await original_candidate_validator_run(self, replace(tool_input, llm_available=False))
-
-        async def _stubbed_answer_generation_run(self: Any, tool_input: Any) -> Any:
-            return await original_answer_generation_run(self, replace(tool_input, llm_available=False))
-
         main_module.setup_scheduler = _noop_setup_scheduler
         main_module.init_db = _noop_init_db
+        main_module._run_deferred_startup_maintenance = _noop_deferred_startup_maintenance
         main_module.engine = engine
-        llm_provider_config_module.provider_has_credentials = lambda provider, api_key: llm_query_plan is not None or bool(llm_query_plan_error)
+        llm_provider_config_module.provider_has_credentials = lambda provider, api_key: False  # noqa: ARG005
         rate_limiter_module.enforce_rate_limit = _noop_enforce_rate_limit
-        if llm_query_plan is not None or llm_query_plan_error:
-            query_planner_module.plan_query_with_llm = _stubbed_llm_plan
-            LlmCandidateValidatorTool.run = _stubbed_candidate_validator_run
-            AnswerGenerationTool.run = _stubbed_answer_generation_run
         NexusModsSearchTool.run = _stubbed_leaf_search
         LoversLabGoogleSearchTool.run = _stubbed_leaf_search
         LoversLabSearchScrapeTool.run = _stubbed_leaf_search
@@ -286,6 +283,7 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
             ):
                 return False, checks
         titles = [str(item.get("title") or "") for item in matches if isinstance(item, dict)]
+        sources = [str(item.get("source") or "") for item in matches if isinstance(item, dict)]
         if "top_title" in expected and not check(
             "result.top_title",
             bool(titles) and titles[0] == str(expected["top_title"]),
@@ -299,6 +297,43 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
                 str(excluded) not in titles,
                 actual=titles,
                 expected=f"exclude {excluded}",
+            ):
+                return False, checks
+        if "top_source" in expected and not check(
+            "result.top_source",
+            bool(sources) and sources[0] == str(expected["top_source"]),
+            actual=sources[0] if sources else None,
+            expected=expected["top_source"],
+        ):
+            return False, checks
+        if "result_sources" in expected:
+            expected_sources = [str(item) for item in expected["result_sources"]]
+            actual_sources = sorted({source for source in sources if source})
+            if not check(
+                "result.sources",
+                actual_sources == sorted(expected_sources),
+                actual=actual_sources,
+                expected=sorted(expected_sources),
+            ):
+                return False, checks
+        if "answer_contains" in expected:
+            answer = str(body.get("answer") or "")
+            target = str(expected["answer_contains"])
+            if not check("response.answer_contains", target in answer, actual=answer, expected=target):
+                return False, checks
+        if "answer_not_contains" in expected:
+            answer = str(body.get("answer") or "")
+            target = str(expected["answer_not_contains"])
+            if not check("response.answer_not_contains", target not in answer, actual=answer, expected=f"not {target}"):
+                return False, checks
+        for section, target in (expected.get("response_card_contains") or {}).items():
+            items = response_cards.get(str(section)) if isinstance(response_cards, dict) else None
+            values = items if isinstance(items, list) else []
+            if not check(
+                f"response.cards.{section}_contains",
+                any(str(target) in str(item) for item in values),
+                actual=values,
+                expected=target,
             ):
                 return False, checks
         understanding = body.get("understanding") if isinstance(body.get("understanding"), dict) else {}
@@ -325,6 +360,16 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
                 expected=target,
             ):
                 return False, checks
+        for field, target in (expected.get("understanding_field_not_contains") or {}).items():
+            actual = evidence_map.get(str(field))
+            values = actual if isinstance(actual, list) else []
+            if not check(
+                f"understanding.{field}_not_contains",
+                str(target) not in [str(item) for item in values],
+                actual=values,
+                expected=f"not {target}",
+            ):
+                return False, checks
         for field, target in (expected.get("understanding_field_contains") or {}).items():
             actual = evidence_map.get(str(field))
             values = actual if isinstance(actual, list) else []
@@ -336,8 +381,8 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
             ):
                 return False, checks
         for field, target in (expected.get("understanding_field_min") or {}).items():
-            actual = _as_float(evidence_map.get(str(field)))
-            min_target = _as_float(target)
+            actual = safe_optional_float(evidence_map.get(str(field)))
+            min_target = safe_optional_float(target)
             if not check(
                 f"understanding.{field}_min",
                 actual is not None and min_target is not None and actual >= min_target,
@@ -346,8 +391,8 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
             ):
                 return False, checks
         for field, target in (expected.get("understanding_field_max") or {}).items():
-            actual = _as_float(evidence_map.get(str(field)))
-            max_target = _as_float(target)
+            actual = safe_optional_float(evidence_map.get(str(field)))
+            max_target = safe_optional_float(target)
             if not check(
                 f"understanding.{field}_max",
                 actual is not None and max_target is not None and actual <= max_target,
@@ -363,7 +408,7 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
         ):
             return False, checks
         if "context_inherit_score_min" in expected:
-            actual = _as_float(evidence_map.get("context_inherit_score"))
+            actual = safe_optional_float(evidence_map.get("context_inherit_score"))
             target = float(expected["context_inherit_score_min"])
             if not check("understanding.context_inherit_score_min", actual is not None and actual >= target, actual=actual, expected=target):
                 return False, checks
@@ -383,8 +428,8 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
             ):
                 return False, checks
         for field, target in (expected.get("memory_field_min") or {}).items():
-            actual = _as_float(memory_map.get(str(field)))
-            min_target = _as_float(target)
+            actual = safe_optional_float(memory_map.get(str(field)))
+            min_target = safe_optional_float(target)
             if not check(
                 f"memory.{field}_min",
                 actual is not None and min_target is not None and actual >= min_target,
@@ -406,6 +451,25 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
             ):
                 return False, checks
         audit_evidence = audit.get("evidence") if isinstance(audit.get("evidence"), dict) else {}
+        audit_analysis = audit.get("analysis") if isinstance(audit.get("analysis"), dict) else {}
+        for field, target in (expected.get("audit_analysis_equals") or {}).items():
+            if not check(
+                f"audit.analysis.{field}",
+                audit_analysis.get(str(field)) == target,
+                actual=audit_analysis.get(str(field)),
+                expected=target,
+            ):
+                return False, checks
+        for field, target in (expected.get("audit_analysis_contains") or {}).items():
+            actual = audit_analysis.get(str(field))
+            values = actual if isinstance(actual, list) else []
+            if not check(
+                f"audit.analysis.{field}_contains",
+                str(target) in [str(item) for item in values],
+                actual=values,
+                expected=target,
+            ):
+                return False, checks
         retrieval_decision = (
             audit_evidence.get("retrieval_decision")
             if isinstance(audit_evidence.get("retrieval_decision"), dict)
@@ -439,6 +503,16 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
                 expected=target,
             ):
                 return False, checks
+        for field, target in (expected.get("audit_retrieval_decision_not_contains") or {}).items():
+            actual = retrieval_decision.get(str(field))
+            values = actual if isinstance(actual, list) else []
+            if not check(
+                f"audit.evidence.retrieval_decision.{field}_not_contains",
+                str(target) not in [str(item) for item in values],
+                actual=values,
+                expected=f"not {target}",
+            ):
+                return False, checks
         semantic_trace = audit_evidence.get("semantic_trace")
         if semantic_trace is not None:
             if not check(
@@ -447,8 +521,8 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
                 and isinstance(semantic_trace.get("anchors"), list)
                 and isinstance(semantic_trace.get("context_anchors"), list)
                 and isinstance(semantic_trace.get("domains"), list)
-                and isinstance(semantic_trace.get("inherited_anchor_overlap"), int)
-                and isinstance(semantic_trace.get("memory_fragment_count"), int),
+                and is_plain_int(semantic_trace.get("inherited_anchor_overlap"))
+                and is_plain_int(semantic_trace.get("memory_fragment_count")),
                 actual=semantic_trace,
                 expected={
                     "anchors": "list",
@@ -467,6 +541,16 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
                     str(target) in [str(item) for item in values],
                     actual=values,
                     expected=target,
+                ):
+                    return False, checks
+            for field, target in (expected.get("audit_semantic_trace_not_contains") or {}).items():
+                actual = semantic_trace.get(str(field))
+                values = actual if isinstance(actual, list) else []
+                if not check(
+                    f"audit.evidence.semantic_trace.{field}_not_contains",
+                    str(target) not in [str(item) for item in values],
+                    actual=values,
+                    expected=f"not {target}",
                 ):
                     return False, checks
         web_search = audit_evidence.get("web_search")
@@ -520,6 +604,14 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
             ):
                 return False, checks
         messages = log_handler.messages
+        for target in expected.get("log_contains") or []:
+            if not check(
+                f"log.contains:{target}",
+                any(str(target) in message for message in messages),
+                actual=target,
+                expected="log message contains target",
+            ):
+                return False, checks
         evidence_id = str(body.get("evidence_id") or "")
         for field_name, items in [
             ("understanding.evidence", evidence),
@@ -573,7 +665,7 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
             "context_summary",
             "semantic_signal_extractor",
             "memory_context_loader",
-            "query_planning",
+            "executor_query",
             "query_diagnosis",
             "tool_planner",
             "result_fusion_ranker",
@@ -589,13 +681,6 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
                 expected="succeeded",
             ):
                 return False, checks
-        if not check(
-            "log.tool.vector_search",
-            any("agent.tool name=vector_search status=" in message for message in messages),
-            actual="tool=vector_search",
-            expected="succeeded_or_degraded",
-        ):
-            return False, checks
         if not check(
             "log.tool.web_search",
             any("agent.tool name=web_search status=" in message for message in messages),
@@ -618,8 +703,7 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
             "semantic_signal_extractor",
             "query_diagnosis",
             "tool_planner",
-            "query_planning",
-            "vector_search",
+            "executor_query",
             "web_search",
             "result_fusion_ranker",
             "match_materializer",
@@ -653,12 +737,10 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
         if fast_mode:
             main_module.setup_scheduler = original_setup_scheduler
             main_module.init_db = original_init_db
+            main_module._run_deferred_startup_maintenance = original_deferred_startup_maintenance
             main_module.engine = original_engine
             llm_provider_config_module.provider_has_credentials = original_provider_has_credentials
             rate_limiter_module.enforce_rate_limit = original_enforce_rate_limit
-            query_planner_module.plan_query_with_llm = original_plan_query_with_llm
-            LlmCandidateValidatorTool.run = original_candidate_validator_run
-            AnswerGenerationTool.run = original_answer_generation_run
             NexusModsSearchTool.run = original_nexus_run
             LoversLabGoogleSearchTool.run = original_loverslab_google_run
             LoversLabSearchScrapeTool.run = original_loverslab_scrape_run
@@ -767,13 +849,6 @@ def _mod_from_stub(item: dict[str, Any]) -> Mod:
     return Mod(**payload)
 
 
-def _as_float(value: Any) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _items_contain_field_value(items: list[Any], field: str, target: Any) -> bool:
     for item in items:
         if not isinstance(item, dict) or field not in item:
@@ -786,6 +861,12 @@ def _items_contain_field_value(items: list[Any], field: str, target: Any) -> boo
         if actual == target or str(actual) == str(target):
             return True
     return False
+
+
+def _stub_search_score(item: dict[str, Any]) -> int:
+    if "score" not in item:
+        return 9
+    return safe_nonnegative_int(item.get("score"))
 
 
 def _response_cards_have_standard_order(cards: dict[str, Any]) -> bool:

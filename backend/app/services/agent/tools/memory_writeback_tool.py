@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlmodel import Session
 
+from app.services.agent.list_utils import string_list
 from app.services.agent.memory.preference_service import AgentPreferenceService
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ class MemoryWritebackInput:
 
 
 class MemoryWritebackTool:
-    """Agent tool for persisting the current turn's compact query context."""
+    """写回当前轮可复用查询上下文，支持后续无 history 追问。"""
 
     name = "memory_writeback"
 
@@ -87,23 +88,15 @@ def _build_writeback_context(tool_input: MemoryWritebackInput) -> dict[str, Any]
 
 
 def _copy_list(target: dict[str, Any], key: str, raw: object) -> None:
-    if isinstance(raw, list):
-        values = [str(item).strip() for item in raw if str(item).strip()]
-    elif isinstance(raw, str) and raw.strip():
-        values = [raw.strip()]
-    else:
-        values = []
+    values = string_list(raw, limit=12)
     if values:
-        target[key] = values[:12]
+        target[key] = values
 
 
 def _copy_first(target: dict[str, Any], key: str, raw: object) -> None:
-    if isinstance(raw, list):
-        values = [str(item).strip() for item in raw if str(item).strip()]
-        if values:
-            target[key] = values[0]
-    elif isinstance(raw, str) and raw.strip():
-        target[key] = raw.strip()
+    values = string_list(raw, limit=1)
+    if values:
+        target[key] = values[0]
 
 
 def _evidence_value(evidence: list[object], field: str) -> object:

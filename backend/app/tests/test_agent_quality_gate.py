@@ -19,6 +19,10 @@ def test_agent_quality_gate_reports_combined_regression_status():
     assert report["evidence"]["failed_case_ids"] == {}
     assert "api_chat_e2e" in report["evidence"]["gate_checks"]
     assert "analysis_evidence_conclusion_format" in report["evidence"]["gate_checks"]
+    assert "semantic_direction_assertions" in report["evidence"]["gate_checks"]
+    assert "answer_semantic_assertions" in report["evidence"]["gate_checks"]
+    assert "source_constraint_assertions" in report["evidence"]["gate_checks"]
+    assert "context_continuity_multi_turn" in report["evidence"]["gate_checks"]
     assert report["evidence"]["suite_reports"]["core"]["conclusion"]["ready_for_regression_gate"] is True
     assert report["evidence"]["suite_reports"]["e2e"]["conclusion"]["ready_for_regression_gate"] is True
     assert report["conclusion"]["status"] == "passed"
