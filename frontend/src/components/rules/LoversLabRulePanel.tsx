@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useRuleEditorStore } from "@/stores/ruleEditorStore";
 import type { LoversLabRuleConfig } from "@/types";
+import { parseIntegerInput } from "@/utils/numberInput";
 
 type UpdateDetection = NonNullable<LoversLabRuleConfig["updateDetection"]>;
 
@@ -366,11 +367,16 @@ export const LoversLabRulePanel: React.FC = () => {
         max={365}
         placeholder={t("rules.loverslab.updatedSinceDaysPlaceholder")}
         value={loverslabDraft.updatedSinceDays ?? ""}
-        onChange={(e) =>
-          updateLoversLabConfig({
-            updatedSinceDays: e.target.value === "" ? undefined : Number(e.target.value),
-          })
-        }
+        onChange={(e) => {
+          const value = parseIntegerInput(e.target.value, {
+            min: 1,
+            max: 365,
+            allowEmpty: true,
+          });
+          if (value !== null) {
+            updateLoversLabConfig({ updatedSinceDays: value });
+          }
+        }}
       />
       <p className="text-xs text-gray-500">
         {usesRssAccess
@@ -384,11 +390,12 @@ export const LoversLabRulePanel: React.FC = () => {
         min={1}
         max={100}
         value={loverslabDraft.maxItemsPerRun ?? ""}
-        onChange={(e) =>
-          updateLoversLabConfig({
-            maxItemsPerRun: e.target.value === "" ? undefined : Number(e.target.value),
-          })
-        }
+        onChange={(e) => {
+          const value = parseIntegerInput(e.target.value, { min: 1, max: 100 });
+          if (value != null) {
+            updateLoversLabConfig({ maxItemsPerRun: value });
+          }
+        }}
       />
       <p className="text-xs text-gray-500">{t("rules.loverslab.maxItemsPerRunHelp")}</p>
       {usesRssAccess ? <p className="text-xs text-amber-700">{t("rules.loverslab.rssNotice")}</p> : null}

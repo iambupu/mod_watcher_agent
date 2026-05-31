@@ -28,30 +28,14 @@ import {
   removeFavorite,
   checkUpdate,
 } from "@/api/favorites";
-import { generateModIntroduction, regenerateModSummary } from "@/api/mods";
-import { fetchJobRun, runFavoriteCheck } from "@/api/jobs";
+import { generateModIntroduction } from "@/api/mods";
+import { pollJobRun, runFavoriteCheck } from "@/api/jobs";
+import { useSummaryRegeneration } from "@/hooks/useSummaryRegeneration";
 import { useUIStore } from "@/stores/uiStore";
+import { parseFavoriteCheckEntries } from "@/utils/favoriteCheckMetadata";
+import { isAdultContent } from "@/utils/modAdult";
+import { nonNegativeNumberValue } from "@/utils/numberInput";
 import type { AdultPolicy, Favorite, ModSource, SummaryMode } from "@/types";
-
-type FavoriteCheckJobEntry = {
-  favorite_id: number;
-  title?: string | null;
-  update_detected?: boolean;
-  last_checked_at?: string | null;
-  notification_sent?: boolean;
-  error?: string | null;
-};
-
-function parseFavoriteCheckEntries(metadataJson?: string | null): FavoriteCheckJobEntry[] {
-  if (!metadataJson) return [];
-  try {
-    const metadata = JSON.parse(metadataJson);
-    const favorites = metadata?.results?.favorites;
-    return Array.isArray(favorites) ? favorites : [];
-  } catch {
-    return [];
-  }
-}
 
 function SkeletonCard() {
   return (
@@ -96,7 +80,6 @@ const Favorites: React.FC = () => {
   const [adultPolicy, setAdultPolicy] = useState<AdultPolicy>("include");
   const [contentLanguage, setContentLanguage] = useState("any");
   const [pendingRemoveId, setPendingRemoveId] = useState<number | null>(null);
-  const [regeneratingSummaryIds, setRegeneratingSummaryIds] = useState<Set<number>>(new Set());
   const checkAllRunRef = useRef(0);
 
   useEffect(() => {
@@ -156,8 +139,8 @@ const Favorites: React.FC = () => {
 
     const scoreBySort = (favorite: Favorite): number | string => {
       const mod = favorite.mod;
-      if (sort === "downloads") return mod.downloads ?? 0;
-      if (sort === "endorsements") return mod.endorsements ?? 0;
+      if (sort === "downloads") return nonNegativeNumberValue(mod.downloads) ?? 0;
+      if (sort === "endorsements") return nonNegativeNumberValue(mod.endorsements) ?? 0;
       if (sort === "updated_at_remote") return mod.updated_at_remote || "";
       return mod.first_seen_at || "";
     };
@@ -167,8 +150,9 @@ const Favorites: React.FC = () => {
       const mod = fav.mod;
       if (source && mod.source !== source) return false;
       if (game && mod.game !== game && mod.game_domain !== game) return false;
-      if (adultPolicy === "exclude" && mod.adult_content) return false;
-      if (adultPolicy === "only" && !mod.adult_content) return false;
+      const adultContent = isAdultContent(mod.adult_content);
+      if (adultPolicy === "exclude" && adultContent) return false;
+      if (adultPolicy === "only" && !adultContent) return false;
       if (!matchesContentLanguage(fav)) return false;
       if (!term) return true;
       return [mod.title, mod.translated_title_zh, mod.original_summary, mod.translated_summary, fav.userNote]
@@ -205,30 +189,6 @@ const Favorites: React.FC = () => {
     },
   });
 
-  const regenerateSummaryMutation = useMutation({
-    mutationFn: regenerateModSummary,
-    onMutate: async (modId: number) => {
-      setRegeneratingSummaryIds((prev) => {
-        const next = new Set(prev);
-        next.add(modId);
-        return next;
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["favorites"] });
-      setTimeout(() => queryClient.invalidateQueries({ queryKey: ["favorites"] }), 5000);
-    },
-    onSettled: (_data, _error, modId) => {
-      setRegeneratingSummaryIds((prev) => {
-        const next = new Set(prev);
-        if (typeof modId === "number") {
-          next.delete(modId);
-        }
-        return next;
-      });
-    },
-  });
-
   const checkAllMutation = useMutation({
     mutationFn: runFavoriteCheck,
   });
@@ -238,9 +198,13 @@ const Favorites: React.FC = () => {
     return result.content;
   };
 
-  const handleRegenerateSummary = (modId: number) => {
-    regenerateSummaryMutation.mutate(modId);
-  };
+  const { regenerateSummary: handleRegenerateSummary, regeneratingSummaryIds } = useSummaryRegeneration({
+    t,
+    setStatus: setCheckingAllStatus,
+    primaryQueryKey: ["favorites"],
+    extraQueryKeys: [["mods"]],
+    refetch,
+  });
 
   const handleToggleTracking = (id: number, enabled: boolean) => {
     toggleMutation.mutate({ id, data: { trackingEnabled: enabled } });
@@ -288,39 +252,39 @@ const Favorites: React.FC = () => {
       const result = await checkAllMutation.mutateAsync();
       if (!isCurrentRun()) return;
       setCheckingAllStatus(t("favorites.checkAllQueued", { jobId: result.job_id }));
-      for (let i = 0; i < 60; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        if (!isCurrentRun()) return;
-        const job = await fetchJobRun(result.job_id);
-        if (!isCurrentRun()) return;
-        if (job.status === "queued" || job.status === "running") {
+      const pollResult = await pollJobRun(result.job_id, {
+        isActive: isCurrentRun,
+        onRunning: () => {
           setCheckingAllStatus(t("favorites.checkAllRunning", { jobId: result.job_id }));
-          continue;
-        }
-        if (job.status === "failed") {
-          setCheckingAllStatus(t("favorites.checkAllFailed", { error: job.error_message || "job failed" }));
-          return;
-        }
-        const entries = parseFavoriteCheckEntries(job.metadata_json);
-        const failed = entries.filter((entry) => entry.error).length;
-        const notified = entries.filter((entry) => entry.notification_sent).length;
-        const updatedTitles = entries
-          .filter((entry) => entry.update_detected)
-          .map((entry) => entry.title || `#${entry.favorite_id}`)
-          .slice(0, 3)
-          .join(", ");
-        setCheckingAllStatus(t("favorites.checkAllDoneDetailed", {
-          scanned: job.items_scanned,
-          matched: job.items_matched,
-          failed,
-          notified,
-          updated: updatedTitles || t("favorites.none"),
-        }));
-        queryClient.invalidateQueries({ queryKey: ["favorites"] });
-        queryClient.invalidateQueries({ queryKey: ["updates"] });
+        },
+      });
+      if (pollResult.status === "cancelled") return;
+      if (pollResult.status === "timeout") {
+        setCheckingAllStatus(t("favorites.checkAllTimeout"));
         return;
       }
-      setCheckingAllStatus(t("favorites.checkAllTimeout"));
+      const job = pollResult.job;
+      if (job.status === "failed") {
+        setCheckingAllStatus(t("favorites.checkAllFailed", { error: job.error_message || "job failed" }));
+        return;
+      }
+      const entries = parseFavoriteCheckEntries(job.metadata_json);
+      const failed = entries.filter((entry) => entry.error).length;
+      const notified = entries.filter((entry) => entry.notification_sent).length;
+      const updatedTitles = entries
+        .filter((entry) => entry.update_detected)
+        .map((entry) => entry.title || `#${entry.favorite_id}`)
+        .slice(0, 3)
+        .join(", ");
+      setCheckingAllStatus(t("favorites.checkAllDoneDetailed", {
+        scanned: job.items_scanned,
+        matched: job.items_matched,
+        failed,
+        notified,
+        updated: updatedTitles || t("favorites.none"),
+      }));
+      queryClient.invalidateQueries({ queryKey: ["favorites"] });
+      queryClient.invalidateQueries({ queryKey: ["updates"] });
     } catch (e) {
       if (!isCurrentRun()) return;
       setCheckingAllStatus(t("favorites.checkUpdateFailed", {

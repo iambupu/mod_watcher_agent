@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/Button";
 import { useUIStore } from "@/stores/uiStore";
 import { ModalHeader, ModalShell } from "@/components/ui/Modal";
 import { Panel } from "@/components/ui/Panel";
+import { parseJsonStringArray } from "@/utils/json";
+import { isAdultContent } from "@/utils/modAdult";
 import { formatModSummary } from "@/utils/modSummary";
 import { formatModTitle } from "@/utils/modTitle";
 import type { ModItem } from "@/types";
@@ -24,14 +26,6 @@ interface ModCardProps {
   footerContent?: React.ReactNode;
 }
 
-function parseTags(tagsJson: string): string[] {
-  try {
-    return JSON.parse(tagsJson);
-  } catch {
-    return [];
-  }
-}
-
 export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onToggleFavorite, showBottomFavoriteAction = true, onIgnore, onRegenerateSummary, regeneratingSummary = false, onGenerateIntroduction, generatingIntroduction = false, footerContent }) => {
   const { t } = useTranslation();
   const summaryMode = useUIStore((s) => s.summaryMode);
@@ -41,7 +35,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
   const [introduction, setIntroduction] = useState(mod.ai_introduction || "");
   const [introError, setIntroError] = useState("");
   const summaryRef = useRef<HTMLParagraphElement | null>(null);
-  const tags = parseTags(mod.tags_json || "[]");
+  const tags = parseJsonStringArray(mod.tags_json);
   const displayTitle = formatModTitle(mod, summaryMode);
 
   const gameLabel = mod.game || mod.game_domain || "";
@@ -115,7 +109,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
         <div className="absolute left-3 top-3">
           <div className="flex max-w-[calc(100%-3rem)] flex-wrap gap-2">
             <SourceBadge source={mod.source} className="bg-white/95 shadow-sm backdrop-blur-sm" />
-            {mod.adult_content === true && (
+            {isAdultContent(mod.adult_content) && (
               <span
                 className="inline-flex items-center rounded-md border border-red-200 bg-red-50/95 px-2 py-0.5 text-xs font-semibold text-red-700 shadow-sm backdrop-blur-sm"
                 title="Adult content"

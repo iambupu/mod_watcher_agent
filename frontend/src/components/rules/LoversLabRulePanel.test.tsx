@@ -171,6 +171,24 @@ describe("LoversLabRulePanel", () => {
     });
   });
 
+  it("clamps numeric settings to backend limits", async () => {
+    const user = userEvent.setup();
+    render(<LoversLabRulePanel />);
+
+    const updatedInput = screen.getByPlaceholderText("rules.loverslab.updatedSinceDaysPlaceholder");
+    await user.clear(updatedInput);
+    await user.type(updatedInput, "999");
+
+    const maxItemsInput = screen.getAllByRole("spinbutton").find((input) => input !== updatedInput);
+    expect(maxItemsInput).toBeDefined();
+    await user.clear(maxItemsInput!);
+    await user.type(maxItemsInput!, "999");
+
+    const state = useRuleEditorStore.getState().draft.loverslabDraft;
+    expect(state.updatedSinceDays).toBe(365);
+    expect(state.maxItemsPerRun).toBe(100);
+  });
+
   it("hides_rss_fields_for_page_mode", async () => {
     useRuleEditorStore.setState({
       draft: {

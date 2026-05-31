@@ -29,13 +29,20 @@ import {
   type AgentHistoryItem,
   type AgentModMatch,
   type AgentAudit,
+  type AgentResponseCards as ApiAgentResponseCards,
 } from "@/api/agent";
-import { addFavorite, fetchFavorites, getFavoriteModId, removeFavorite } from "@/api/favorites";
+import { addFavorite, favoriteIdByModId, fetchFavorites, removeFavorite } from "@/api/favorites";
 import { fetchModGames } from "@/api/mods";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { fetchSettings } from "@/api/settings";
 import { useUIStore } from "@/stores/uiStore";
+import { isAdultContent } from "@/utils/modAdult";
+import { formatModSummary } from "@/utils/modSummary";
 import { formatModTitle } from "@/utils/modTitle";
+
+type ChatResponseCards = Omit<ApiAgentResponseCards, "next_steps"> & {
+  nextSteps?: ApiAgentResponseCards["next_steps"];
+};
 
 interface ChatMessage {
   id: string;
@@ -44,15 +51,7 @@ interface ChatMessage {
   sessionId: string;
   createdAt?: string;
   matches?: AgentModMatch[];
-  responseCards?: {
-    analysis?: string[];
-    evidence?: string[];
-    conclusion?: string[];
-    understanding?: string[];
-    filters?: string[];
-    results?: string[];
-    nextSteps?: string[];
-  };
+  responseCards?: ChatResponseCards;
   llmProvider?: string;
   llmModel?: string;
   audit?: AgentAudit;
@@ -75,9 +74,7 @@ interface AssistantSections {
   nextSteps: string[];
 }
 
-type AgentResponseCards = NonNullable<AgentConversationMessage["response_cards"]>;
-
-const toChatResponseCards = (cards?: AgentResponseCards): ChatMessage["responseCards"] | undefined => {
+const toChatResponseCards = (cards?: ApiAgentResponseCards): ChatResponseCards | undefined => {
   if (!cards) return undefined;
   return {
     analysis: cards.analysis,
@@ -90,7 +87,7 @@ const toChatResponseCards = (cards?: AgentResponseCards): ChatMessage["responseC
   };
 };
 
-const toApiResponseCards = (cards?: ChatMessage["responseCards"]): AgentConversationMessage["response_cards"] | undefined => {
+const toApiResponseCards = (cards?: ChatResponseCards): AgentConversationMessage["response_cards"] | undefined => {
   if (!cards) return undefined;
   return {
     analysis: cards.analysis,
@@ -126,6 +123,7 @@ const scopeFieldLabel = (field: string): string => {
   if (key === "game") return "游戏";
   if (key === "source") return "来源";
   if (key === "keywords") return "关键词";
+  if (key === "category" || key === "categories") return "类型/风格";
   return field;
 };
 
@@ -134,6 +132,37 @@ const reviewTargetLabel = (target: string): string => {
   if (key === "memory_signals") return "记忆信号";
   if (key === "context_slots") return "上下文槽位";
   return target;
+};
+
+const sourceCandidateQuestion = (candidate: string): string => {
+  const label = sourceCandidateLabel(candidate);
+  return `继续查 ${label} 来源的结果`;
+};
+
+const scopeFieldQuestion = (field: string): string => {
+  const key = field.trim().toLowerCase();
+  if (key === "game") return "我想限定目标游戏";
+  if (key === "source") return "我想指定检索来源";
+  if (key === "keywords") return "我想补充更具体的关键词";
+  if (key === "category" || key === "categories") return "我想确认类型或风格";
+  return `我想补充${scopeFieldLabel(field)}`;
+};
+
+const reviewTargetQuestion = (target: string): string => {
+  const key = target.trim().toLowerCase();
+  if (key === "memory_signals") return "请解释你参考了哪些记忆信号";
+  if (key === "context_slots") return "请解释你继承了哪些上下文条件";
+  if (key === "analysis_evidence") return "请说明你理解这个需求的依据";
+  return `请解释${reviewTargetLabel(target)}`;
+};
+
+const conflictFieldQuestion = (field: string): string => {
+  const key = field.trim().toLowerCase();
+  if (key === "game") return "这次目标游戏应该按哪个来查？";
+  if (key === "source") return "这次应该优先查哪个来源？";
+  if (key === "keywords") return "这次应该保留哪些关键词？";
+  if (key === "category" || key === "categories") return "这次应该按哪种类型或风格来查？";
+  return `这次${scopeFieldLabel(field)}应该按哪个来查？`;
 };
 
 const extractAssistantSections = (text: string): AssistantSections => {
@@ -269,9 +298,17 @@ const AssistantResponseCard: React.FC<{
     narrowScopeFields.length > 0 ||
     reviewTargets.length > 0 ||
     conflictFields.length > 0;
+  const shouldShowAnswerBody = Boolean(responseCards && text.trim());
 
   return (
     <div className="space-y-3 text-[14px]">
+      {shouldShowAnswerBody && (
+        <MarkdownText
+          text={text}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+        />
+      )}
+
       {sections.analysis.length > 0 && (
         <div className={`${sectionClass} border-slate-200 bg-white`}>
           <p className="mb-1 text-[12px] font-semibold tracking-wide text-slate-700">{t("agent.section.analysis")}</p>
@@ -371,7 +408,7 @@ const AssistantResponseCard: React.FC<{
                   onClick={() => onApplySourceCandidate?.(candidate.id)}
                   className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-amber-700 transition hover:bg-amber-100"
                 >
-                  {`扩展到 ${candidate.label}`}
+                  {sourceCandidateQuestion(candidate.label)}
                 </button>
               ))}
           </div>
@@ -385,7 +422,7 @@ const AssistantResponseCard: React.FC<{
                 onClick={() => onApplyScopeField?.(field)}
                 className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-amber-700 transition hover:bg-amber-100"
               >
-                {`补充${scopeFieldLabel(field)}`}
+                {scopeFieldQuestion(field)}
               </button>
             ))}
           </div>
@@ -399,7 +436,7 @@ const AssistantResponseCard: React.FC<{
                 onClick={() => onApplyReviewTarget?.(target)}
                 className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-amber-700 transition hover:bg-amber-100"
               >
-                {`查看${reviewTargetLabel(target)}`}
+                {reviewTargetQuestion(target)}
               </button>
             ))}
           </div>
@@ -413,7 +450,7 @@ const AssistantResponseCard: React.FC<{
                 onClick={() => onApplyConflictField?.(field)}
                 className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-amber-700 transition hover:bg-amber-100"
               >
-                {`确认${scopeFieldLabel(field)}`}
+                {conflictFieldQuestion(field)}
               </button>
             ))}
           </div>
@@ -436,18 +473,25 @@ const AgentMatchCard: React.FC<{
   const displayTitle = formatModTitle(item, summaryMode);
   const translated = (item.translated_summary || "").trim();
   const original = (item.original_summary || "").trim();
-  const hasSummary = Boolean(translated || original);
-  const mergedSummary = [translated, original].filter(Boolean).join("\n");
-  const canToggleSummary = mergedSummary.length > 120 || mergedSummary.includes("\n\n");
+  const summaryText = formatModSummary({
+    original,
+    translated,
+    mode: summaryMode,
+  }).trim();
+  const matchReason = (item.rank_reason || "").trim();
+  const description = summaryText || matchReason || t("mod.noSummary");
+  const canToggleSummary = description.length > 120 || description.includes("\n\n");
   const sourceClass =
     item.source?.toLowerCase() === "nexusmods"
       ? "border-indigo-200 bg-indigo-50 text-indigo-700"
       : "border-slate-200 bg-slate-100 text-slate-700";
-  const safetyLabel = item.adult_content === true ? "NSFW" : item.adult_content === false ? "SFW" : "";
+  const hasAdultFlag = item.adult_content !== null && item.adult_content !== undefined;
+  const adultContent = isAdultContent(item.adult_content);
+  const safetyLabel = hasAdultFlag ? (adultContent ? "NSFW" : "SFW") : "";
   const safetyClass =
-    item.adult_content === true
+    hasAdultFlag && adultContent
       ? "border-rose-200 bg-rose-50 text-rose-700"
-      : item.adult_content === false
+      : hasAdultFlag
         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
         : "";
 
@@ -461,7 +505,7 @@ const AgentMatchCard: React.FC<{
         <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-600">
           {item.game}
         </span>
-        {item.adult_content !== null && item.adult_content !== undefined && (
+        {hasAdultFlag && (
           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${safetyClass}`}>
             {safetyLabel}
           </span>
@@ -470,18 +514,19 @@ const AgentMatchCard: React.FC<{
       <div className="mt-1 text-[12px] text-slate-500">
         {item.author || "unknown"}
       </div>
-      {hasSummary && (
-        <div className="mt-2 space-y-1.5">
-          <p
-            className={`mt-0.5 whitespace-pre-wrap text-[13px] leading-6 text-slate-700 ${
-              expanded ? "" : "line-clamp-3"
-            }`}
-          >
-            {expanded ? mergedSummary : mergedSummary}
-          </p>
-        </div>
-      )}
-      {hasSummary && canToggleSummary && (
+      <div className="mt-2 space-y-1.5">
+        {summaryText ? null : matchReason ? (
+          <p className="text-[11px] font-medium text-slate-400">{t("agent.matchReason")}</p>
+        ) : null}
+        <p
+          className={`mt-0.5 whitespace-pre-wrap text-[13px] leading-6 text-slate-700 ${
+            expanded ? "" : "line-clamp-3"
+          } ${summaryText || matchReason ? "" : "text-slate-400"}`}
+        >
+          {description}
+        </p>
+      </div>
+      {canToggleSummary && (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -542,6 +587,9 @@ const AgentChat: React.FC = () => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const loadedRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
+  const saveRetryTimerRef = useRef<number | null>(null);
+  const copiedTimerRef = useRef<number | null>(null);
+  const scrollTimerRef = useRef<number | null>(null);
   const savingRef = useRef(false);
   const pendingSaveRef = useRef<{ data: ChatMessage[]; sessionId: string; clientUpdatedAt: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -552,11 +600,8 @@ const AgentChat: React.FC = () => {
     staleTime: 30_000,
   });
   const favoriteByModId = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const fav of favoritesQuery.data || []) {
-      map.set(getFavoriteModId(fav), fav.id);
-    }
-    return map;
+    const map = favoriteIdByModId(favoritesQuery.data);
+    return map instanceof Map ? map : new Map<number, number>();
   }, [favoritesQuery.data]);
 
   const conversationQuery = useQuery({
@@ -641,6 +686,21 @@ const AgentChat: React.FC = () => {
     if (activeSessionId) {
       window.sessionStorage.setItem(`agent:selected-model:${activeSessionId}`, key);
     }
+  };
+
+  const scheduleViewportScroll = (top: "bottom" | number, delayMs = 30) => {
+    if (scrollTimerRef.current) {
+      window.clearTimeout(scrollTimerRef.current);
+    }
+    scrollTimerRef.current = window.setTimeout(() => {
+      scrollTimerRef.current = null;
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      viewport.scrollTo({
+        top: top === "bottom" ? viewport.scrollHeight : top,
+        behavior: "smooth",
+      });
+    }, delayMs);
   };
 
   const createWelcomeMessage = (sessionId: string, id = "welcome"): ChatMessage => ({
@@ -728,7 +788,11 @@ const AgentChat: React.FC = () => {
             clientUpdatedAt: new Date().toISOString(),
           };
         }
-        window.setTimeout(() => {
+        if (saveRetryTimerRef.current) {
+          window.clearTimeout(saveRetryTimerRef.current);
+        }
+        saveRetryTimerRef.current = window.setTimeout(() => {
+          saveRetryTimerRef.current = null;
           flushPendingSave();
         }, 1000);
       },
@@ -755,6 +819,15 @@ const AgentChat: React.FC = () => {
     return () => {
       if (saveTimerRef.current) {
         window.clearTimeout(saveTimerRef.current);
+      }
+      if (saveRetryTimerRef.current) {
+        window.clearTimeout(saveRetryTimerRef.current);
+      }
+      if (copiedTimerRef.current) {
+        window.clearTimeout(copiedTimerRef.current);
+      }
+      if (scrollTimerRef.current) {
+        window.clearTimeout(scrollTimerRef.current);
       }
     };
   }, []);
@@ -833,9 +906,7 @@ const AgentChat: React.FC = () => {
         },
       ]);
       if (activeSessionIdRef.current === variables.sessionId) {
-        setTimeout(() => {
-          viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight, behavior: "smooth" });
-        }, 30);
+        scheduleViewportScroll("bottom");
       }
     },
     onError: (error, variables) => {
@@ -867,9 +938,7 @@ const AgentChat: React.FC = () => {
       providerOverride: selectedModelOption?.provider,
       modelOverride: selectedModelOption?.model,
     });
-    setTimeout(() => {
-      viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight, behavior: "smooth" });
-    }, 30);
+    scheduleViewportScroll("bottom");
   };
 
   const toggleFavoriteMutation = useMutation({
@@ -920,9 +989,7 @@ const AgentChat: React.FC = () => {
         },
       ]);
       if (activeSessionIdRef.current === variables.sessionId) {
-        setTimeout(() => {
-          viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight, behavior: "smooth" });
-        }, 30);
+        scheduleViewportScroll("bottom");
       }
     },
   });
@@ -940,7 +1007,7 @@ const AgentChat: React.FC = () => {
     const source = normalizeSourceCandidate(candidate);
     if (source === "nexusmods" || source === "loverslab") {
       setSelectedSource(source);
-      setInput((prev) => (prev.trim() ? prev : `继续检索，优先 ${source} 来源`));
+      setInput((prev) => (prev.trim() ? prev : sourceCandidateQuestion(source)));
       window.requestAnimationFrame(() => inputRef.current?.focus());
     }
   };
@@ -949,12 +1016,14 @@ const AgentChat: React.FC = () => {
     const key = field.trim().toLowerCase();
     const template =
       key === "game"
-        ? "目标游戏是 "
+        ? "我想限定目标游戏为 "
         : key === "source"
-          ? "优先来源是 "
+          ? "我想优先查 "
           : key === "keywords"
-            ? "补充关键词："
-            : `补充${field}：`;
+            ? "我想补充关键词："
+            : key === "category" || key === "categories"
+              ? "我想按这个类型或风格继续查："
+              : `${scopeFieldQuestion(field)}：`;
     setInput((prev) => (prev.trim() ? prev : template));
     window.requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -963,16 +1032,18 @@ const AgentChat: React.FC = () => {
     const key = target.trim().toLowerCase();
     const template =
       key === "memory_signals"
-        ? "请按记忆信号复核："
+        ? "请解释你参考了哪些记忆信号。"
         : key === "context_slots"
-          ? "请按上下文槽位复核："
-          : `请复核${target}：`;
+          ? "请解释你继承了哪些上下文条件。"
+          : key === "analysis_evidence"
+            ? "请说明你理解这个需求的依据。"
+            : `${reviewTargetQuestion(target)}。`;
     setInput((prev) => (prev.trim() ? prev : template));
     window.requestAnimationFrame(() => inputRef.current?.focus());
   };
 
   const applyConflictField = (field: string) => {
-    const template = `确认${scopeFieldLabel(field)}：`;
+    const template = conflictFieldQuestion(field);
     setInput((prev) => (prev.trim() ? prev : template));
     window.requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -1017,7 +1088,13 @@ const AgentChat: React.FC = () => {
         }
       }
       setCopiedId(id);
-      setTimeout(() => setCopiedId(""), 1000);
+      if (copiedTimerRef.current) {
+        window.clearTimeout(copiedTimerRef.current);
+      }
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopiedId("");
+      }, 1000);
     } catch {
       setCopiedId("");
     }
@@ -1047,9 +1124,7 @@ const AgentChat: React.FC = () => {
       });
       setMessages(nextMessages);
       setClearConfirmOpen(false);
-      setTimeout(() => {
-        viewportRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-      }, 20);
+      scheduleViewportScroll(0, 20);
     } catch (error) {
       setMessages((prev) => [
         ...prev,

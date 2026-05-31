@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { DEFAULT_RULE_INTERVAL_MINUTES } from "@/constants/rules";
 import type {
   RuleEditorDraft,
   ModSource,
@@ -16,7 +17,7 @@ function createEmptyDraft(): RuleEditorDraft {
   return {
     name: "",
     enabled: true,
-    intervalMinutes: 360,
+    intervalMinutes: DEFAULT_RULE_INTERVAL_MINUTES,
     commonFilters: { ...EMPTY_COMMON_FILTERS },
     nexusmodsDraft: {
       gameDomainName: "",
@@ -70,7 +71,10 @@ export const useRuleEditorStore = create<RuleEditorState>((set, get) => ({
     })),
 
   switchSource: (source) =>
-    set((s) => ({ activeSource: source, isDirty: s.editingRuleId !== null })),
+    set((s) => ({
+      activeSource: source,
+      isDirty: s.isDirty || source !== s.activeSource,
+    })),
 
   updateCommonFilter: (patch) =>
     set((s) => ({
@@ -123,7 +127,7 @@ export const useRuleEditorStore = create<RuleEditorState>((set, get) => ({
       draft: {
         name: rule.name,
         enabled: rule.enabled,
-        intervalMinutes: rule.intervalMinutes || 360,
+        intervalMinutes: rule.intervalMinutes || DEFAULT_RULE_INTERVAL_MINUTES,
         commonFilters: { ...defaults.commonFilters, ...rule.filters },
         nexusmodsDraft,
         loverslabDraft,

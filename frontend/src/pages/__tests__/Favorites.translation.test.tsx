@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { useUIStore } from '@/stores/uiStore';
@@ -134,5 +134,41 @@ describe('Favorites - translated_summary display', () => {
     await waitFor(() => {
       expect(screen.getByText('Test Mod')).toBeInTheDocument();
     });
+  });
+
+  it('sorts numeric metric strings by numeric value', async () => {
+    useUIStore.setState({ summaryMode: 'original' });
+    vi.mocked(favoritesApi.fetchFavorites).mockResolvedValue([
+      makeFavorite({
+        id: 1,
+        mod: {
+          ...baseMod,
+          id: 1,
+          title: 'Low Downloads',
+          downloads: '20' as unknown as number,
+          updated_at_remote: '2025-01-01T00:00:00Z',
+        },
+      }),
+      makeFavorite({
+        id: 2,
+        modId: 2,
+        mod: {
+          ...baseMod,
+          id: 2,
+          title: 'High Downloads',
+          downloads: '100' as unknown as number,
+          updated_at_remote: '2025-01-02T00:00:00Z',
+        },
+      }),
+    ]);
+
+    renderFavorites();
+
+    const sortSelect = await screen.findByLabelText('discover.sortBy');
+    fireEvent.change(sortSelect, { target: { value: 'downloads' } });
+
+    const high = await screen.findByText('High Downloads');
+    const low = await screen.findByText('Low Downloads');
+    expect(high.compareDocumentPosition(low) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

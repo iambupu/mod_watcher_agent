@@ -1,5 +1,9 @@
 import { get, post, patch, del } from "./client";
 import type { QueuedJob } from "./jobs";
+import { DEFAULT_RULE_INTERVAL_MINUTES } from "@/constants/rules";
+import { arrayOrEmpty } from "@/utils/array";
+import { parseBoolean } from "@/utils/boolean";
+import { parseJsonText } from "@/utils/json";
 import type {
   WatchRule,
   RuleTestRequest,
@@ -17,7 +21,7 @@ export type WatchRuleUpdate = Partial<WatchRuleCreate>;
 interface BackendRule {
   id: number;
   name: string;
-  enabled: boolean;
+  enabled: unknown;
   intervalMinutes: number;
   source: RuleSource;
   sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig;
@@ -31,8 +35,8 @@ function fromBackend(r: BackendRule): WatchRule {
   return {
     id: r.id,
     name: r.name,
-    enabled: r.enabled,
-    intervalMinutes: r.intervalMinutes || 360,
+    enabled: parseBoolean(r.enabled),
+    intervalMinutes: r.intervalMinutes || DEFAULT_RULE_INTERVAL_MINUTES,
     source: r.source,
     sourceConfig: r.sourceConfig,
     filters: r.filters,
@@ -68,7 +72,7 @@ function toBackendUpdate(rule: WatchRuleUpdate): Record<string, unknown> {
 
 export async function fetchRules(): Promise<WatchRule[]> {
   const raw = await get<BackendRule[]>("/rules");
-  return raw.map(fromBackend);
+  return arrayOrEmpty<BackendRule>(raw).map(fromBackend);
 }
 
 export async function fetchRuleById(id: number): Promise<WatchRule> {
@@ -120,12 +124,7 @@ export async function importRulesByUrl(url: string): Promise<{ imported: number;
 
 export async function importRulesFromLocalFile(file: File): Promise<{ imported: number; skipped: number }> {
   const text = await file.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error("Invalid JSON file");
-  }
+  const parsed = parseJsonText(text);
   const rules = Array.isArray(parsed)
     ? parsed
     : (parsed && typeof parsed === "object" && Array.isArray((parsed as { rules?: unknown[] }).rules)
