@@ -1,14 +1,14 @@
 import { get, post } from "./client";
 import { nonNegativeInteger, normalizeListResponse } from "./listResponse";
 import { boundedIntegerParam } from "./params";
-import type { NotificationList } from "@/types";
+import type { NotificationItem, NotificationList } from "@/types";
 import { positiveIntegerIds } from "@/utils/ids";
 
 export function fetchNotifications(offset = 0, limit = 30): Promise<NotificationList> {
   return get<NotificationList>("/notifications", {
     offset: boundedIntegerParam(offset, { min: 0 }),
     limit: boundedIntegerParam(limit, { min: 1, max: 200 }),
-  }).then(normalizeListResponse);
+  }).then((data) => normalizeListResponse<NotificationItem>(data));
 }
 
 export function markNotificationsRead(ids: number[]): Promise<{ updated: number }> {
