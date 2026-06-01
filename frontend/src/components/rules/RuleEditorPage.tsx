@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/Button";
 import { Switch } from "@/components/ui/Switch";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { RuleBasicSection } from "@/components/rules/RuleBasicSection";
+import { Panel } from "@/components/ui/Panel";
 import { SourceTabs } from "@/components/rules/SourceTabs";
 import { NexusModsRulePanel } from "@/components/rules/NexusModsRulePanel";
 import { LoversLabRulePanel } from "@/components/rules/LoversLabRulePanel";
@@ -29,7 +30,14 @@ import {
   updateRule,
   testRule,
 } from "@/api/rules";
+import { parseWholeIntegerInput } from "@/utils/numberInput";
 import type { CommonRuleFilters, RuleTestResponse, RuleTestRequest, WatchRule } from "@/types";
+
+function parseRuleRouteId(id: string | undefined): number | null {
+  if (!id) return null;
+  const value = parseWholeIntegerInput(id, { min: 1 });
+  return typeof value === "number" ? value : null;
+}
 
 export const RuleEditorPage: React.FC = () => {
   const { t } = useTranslation();
@@ -37,7 +45,7 @@ export const RuleEditorPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
 
-  const editingRuleId = id ? Number(id) : null;
+  const editingRuleId = parseRuleRouteId(id);
   const isEditMode = editingRuleId !== null;
 
   const activeSource = useRuleEditorStore((s) => s.activeSource);
@@ -196,13 +204,13 @@ export const RuleEditorPage: React.FC = () => {
                 <Clock3 size={16} />
                 {isDirty ? t("rules.unsavedChanges") : t("rules.noUnsavedChanges")}
               </span>
-              <div className="flex h-10 items-center rounded-lg border border-slate-200 bg-white px-3 shadow-sm">
+              <Panel as="div" padding="none" className="flex h-10 items-center px-3">
                 <Switch
                   checked={enabled}
                   onCheckedChange={(checked) => setBasicInfo({ enabled: checked })}
                   label={t("rules.basic.enabledLabel")}
                 />
-              </div>
+              </Panel>
               <Button type="button" onClick={handleSave} disabled={saveDisabled} className="h-10 rounded-lg px-4">
                 <Save size={16} />
                 <span className="ml-2">{t("rules.actions.saveRule")}</span>
@@ -266,7 +274,7 @@ export const RuleEditorPage: React.FC = () => {
             </div>
 
             <aside className="space-y-4 xl:sticky xl:top-6 xl:self-start">
-              <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <Panel as="section" padding="md" className="space-y-3">
                 <div className="flex items-center justify-end">
                   <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${
                     testStatusOk ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
@@ -276,7 +284,7 @@ export const RuleEditorPage: React.FC = () => {
                   </span>
                 </div>
                 <RuleTestResultPanel result={testResult} />
-              </section>
+              </Panel>
 
               <section className="rounded-lg border border-blue-100 bg-blue-50/60 p-4 text-sm text-slate-600">
                 <p className="font-bold text-slate-800">{t("rules.editorTipTitle")}</p>
@@ -302,7 +310,7 @@ function RuleStepper() {
   ];
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 shadow-sm">
+    <Panel padding="none" className="space-y-0 px-5 py-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
         {steps.map((step, index) => (
           <div key={step} className="flex items-center gap-2">
@@ -317,7 +325,7 @@ function RuleStepper() {
           </div>
         ))}
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -333,7 +341,7 @@ function RuleSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <Panel as="section" padding="none" className="p-5">
       <div className="mb-4 flex items-start gap-3">
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-50 text-sm font-bold text-blue-700">
           {index}
@@ -344,6 +352,6 @@ function RuleSection({
         </div>
       </div>
       {children}
-    </section>
+    </Panel>
   );
 }

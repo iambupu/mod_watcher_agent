@@ -60,7 +60,7 @@ async def run_job(job_run_id: int, handler: JobHandler) -> None:
             job_run = session.get(JobRun, job_run_id)
             if job_run is None:
                 return
-            mark_job_failed(session, job_run, exc)
+            mark_job_failed(session, job_run, exc, getattr(exc, "metadata", None))
         return
 
     with Session(engine) as session:

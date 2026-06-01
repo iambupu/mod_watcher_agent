@@ -1,5 +1,7 @@
 """Tests for mods API routes."""
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -7,6 +9,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.db import get_session
 from app.main import app as fastapi_app
+from app.models.favorite import Favorite
 from app.models.mod import Mod
 from app.models.settings import Setting
 from app.models.summary import ModSummary
@@ -188,6 +191,29 @@ class TestListMods:
 
         assert response.json()["items"][0]["title"] == "Improved Camera Control"
 
+    def test_search_fallback_matches_translated_title(self, client, session, monkeypatch):
+        monkeypatch.setattr(
+            "app.services.mod_service.ModService._ensure_sqlite_fts_ready",
+            lambda self: False,
+        )
+        mod = Mod(
+            source="nexusmods",
+            external_id="translated-title",
+            game="Stellar Blade",
+            title="Ocean String",
+            translated_title_zh="海洋弦",
+            url="https://example.com/ocean-string",
+            first_seen_at="2025-01-01T00:00:00",
+            last_seen_at="2025-01-01T00:00:00",
+        )
+        session.add(mod)
+        session.commit()
+
+        response = client.get("/api/mods?search=海洋弦")
+
+        assert response.status_code == 200
+        assert response.json()["items"][0]["title"] == "Ocean String"
+
     def test_game_filter(self, client, session):
         mods = [
             Mod(source="nexusmods", external_id="1", game="Skyrim Special Edition",
@@ -293,6 +319,12 @@ class TestListMods:
             Mod(source="nexusmods", external_id="3", game="Fallout 4",
                 game_domain="fallout4", title="Mod3",
                 url="https://c.com", first_seen_at="2025-01-01T00:00:00", last_seen_at="2025-01-01T00:00:00"),
+            Mod(source="loverslab", external_id="4", game="X-Change Life",
+                game_domain=None, title="LL Mod1",
+                url="https://d.com", first_seen_at="2025-01-01T00:00:00", last_seen_at="2025-01-01T00:00:00"),
+            Mod(source="loverslab", external_id="5", game="X-Change Life",
+                game_domain="loverslab", title="LL Mod2",
+                url="https://e.com", first_seen_at="2025-01-01T00:00:00", last_seen_at="2025-01-01T00:00:00"),
         ]
         session.add_all(mods)
         session.commit()
@@ -306,6 +338,7 @@ class TestListMods:
                 "label": "Skyrim Special Edition",
                 "count": 2,
             },
+            {"value": "X-Change Life", "label": "X-Change Life", "count": 2},
             {"value": "fallout4", "label": "Fallout 4", "count": 1},
         ]
 
@@ -333,7 +366,7 @@ class TestListMods:
         assert item["original_summary"] == "Original summary"
         assert item["translated_summary"] == "中文摘要"
 
-    def test_regenerate_summary_deletes_existing_target_language_summary(self, client, session):
+    def test_regenerate_summary_keeps_existing_target_language_summary_until_job_succeeds(self, client, session):
         mod = Mod(source="nexusmods", external_id="1", game="Skyrim Special Edition",
                   game_domain="skyrimspecialedition", title="Mod1",
                   original_summary="Original summary",
@@ -354,10 +387,54 @@ class TestListMods:
         response = client.post(f"/api/mods/{mod.id}/summary/regenerate")
         assert response.status_code == 200
         assert response.json()["status"] == "queued"
+        assert isinstance(response.json()["job_id"], int)
 
         response = client.get("/api/mods")
         assert response.status_code == 200
-        assert response.json()["items"][0]["translated_summary"] is None
+        assert response.json()["items"][0]["translated_summary"] == "旧摘要"
+
+    def test_regenerate_summary_enqueues_locked_single_summary_handler(self, client, session, monkeypatch):
+        captured: dict[str, object] = {}
+
+        def fake_enqueue_job_run(job_run_id, handler):
+            captured["job_run_id"] = job_run_id
+            captured["handler"] = handler
+
+        async def fake_generate_single_summary_payload_locked(job_session, *, mod_id, language, summary_type):  # noqa: ARG001
+            captured["payload"] = {
+                "mod_id": mod_id,
+                "language": language,
+                "summary_type": summary_type,
+            }
+            return {"items_scanned": 1, "items_matched": 1}
+
+        monkeypatch.setattr("app.api.routes_mods.enqueue_job_run", fake_enqueue_job_run)
+        monkeypatch.setattr(
+            "app.api.routes_mods.generate_single_summary_payload_locked",
+            fake_generate_single_summary_payload_locked,
+        )
+        mod = Mod(source="nexusmods", external_id="locked-route", game="Skyrim Special Edition",
+                  game_domain="skyrimspecialedition", title="Locked Route",
+                  original_summary="Original summary",
+                  url="https://a.com", first_seen_at="2025-01-01T00:00:00", last_seen_at="2025-01-01T00:00:00")
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+
+        response = client.post(f"/api/mods/{mod.id}/summary/regenerate")
+
+        assert response.status_code == 200
+        assert response.json()["job_id"] == captured["job_run_id"]
+        assert callable(captured["handler"])
+
+        result = asyncio.run(captured["handler"]())
+
+        assert result == {"items_scanned": 1, "items_matched": 1}
+        assert captured["payload"] == {
+            "mod_id": mod.id,
+            "language": "zh-CN",
+            "summary_type": "brief",
+        }
 
     def test_list_queues_missing_summaries_when_provider_chain_enabled(self, client, session, monkeypatch):
         queued: list[tuple[list[int], str]] = []
@@ -410,6 +487,16 @@ class TestListMods:
         assert data["total"] == 1
         assert data["items"][0]["title"] == "Cool Sword"
 
+    def test_list_mods_rejects_non_positive_limit(self, client):
+        response = client.get("/api/mods?limit=0")
+
+        assert response.status_code == 422
+
+    def test_list_ignored_mods_rejects_non_positive_limit(self, client):
+        response = client.get("/api/mods/ignored?limit=0")
+
+        assert response.status_code == 422
+
     def test_ignored_list_and_unignore_restore_mod(self, client, session):
         visible = make_mod(external_id="visible", title="Visible Mod")
         ignored = make_mod(external_id="ignored", title="Hidden Mod", ignored=True)
@@ -433,6 +520,60 @@ class TestListMods:
         restored_response = client.get("/api/mods")
         assert restored_response.status_code == 200
         assert restored_response.json()["total"] == 2
+
+    def test_recommendations_use_favorite_preference_profile(self, client, session):
+        favorite_mod = make_mod(
+            external_id="fav",
+            game="Stellar Blade",
+            category="Outfits",
+            title="Favorited Outfit",
+            downloads=10,
+        )
+        profile_match = make_mod(
+            external_id="match",
+            game="Stellar Blade",
+            category="Outfits",
+            title="Profile Matched Outfit",
+            downloads=50,
+        )
+        popular_unrelated = make_mod(
+            external_id="popular",
+            game="Fallout 4",
+            category="Weapons",
+            title="Popular Unrelated Weapon",
+            downloads=999999,
+        )
+        session.add_all([favorite_mod, profile_match, popular_unrelated])
+        session.commit()
+        session.refresh(favorite_mod)
+        session.add(Favorite(
+            mod_id=favorite_mod.id,
+            created_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:00",
+        ))
+        session.add(Setting(
+            key="agent_preferences_dirty",
+            value="true",
+            updated_at="2025-01-01T00:00:00",
+        ))
+        session.commit()
+
+        response = client.get("/api/mods/recommendations?limit=1")
+
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert [item["title"] for item in items] == ["Profile Matched Outfit"]
+
+    def test_recommendations_fall_back_to_downloads_without_profile(self, client, session):
+        low = make_mod(external_id="low", title="Low Downloads", downloads=10)
+        high = make_mod(external_id="high", title="High Downloads", downloads=1000)
+        session.add_all([low, high])
+        session.commit()
+
+        response = client.get("/api/mods/recommendations?limit=1")
+
+        assert response.status_code == 200
+        assert response.json()["items"][0]["title"] == "High Downloads"
 
 
 class TestGetMod:

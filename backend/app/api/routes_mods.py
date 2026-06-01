@@ -1,14 +1,15 @@
-import asyncio
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlmodel import Session
 
-from app.db import get_session
+from app.db import engine, get_session
 from app.jobs.generate_summaries import (
+    generate_single_summary_payload_locked,
     run_missing_summaries_job,
     run_single_summary_job,
 )
+from app.jobs.manual_jobs import create_job_run, enqueue_job_run
 from app.schemas.mod import ModGameOption, ModList, ModRead
 from app.services.mod_service import ModService
 
@@ -17,17 +18,18 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 
 @router.get("", response_model=ModList)
-async def list_mods(
+def list_mods(
     background_tasks: BackgroundTasks,
     session: SessionDep,
     game: str | None = Query(default=None),
     source: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    content_language: str | None = Query(default=None),
     adult_content: Literal["include", "exclude", "only"] | None = Query(default=None),
     sort_by: str = Query(default="first_seen_at"),
     sort_order: str = Query(default="desc"),
     offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
 ):
     """List discovered mods with optional filters."""
     mod_service = ModService(session)
@@ -35,6 +37,7 @@ async def list_mods(
         game=game,
         source=source,
         search=search,
+        content_language=content_language,
         adult_content=adult_content,
         sort_by=sort_by,
         sort_order=sort_order,
@@ -49,40 +52,48 @@ async def list_mods(
 
 
 @router.get("/games", response_model=list[ModGameOption])
-async def list_mod_games(
+def list_mod_games(
     session: SessionDep,
 ):
     """Return game filter options aggregated from the current mod list."""
     rows = ModService(session).list_game_options()
-    options: list[ModGameOption] = []
-    seen: set[str] = set()
+    merged: dict[str, ModGameOption] = {}
     for game_domain, game_name, count in rows:
-        value = game_domain or game_name
+        value = game_name if game_domain == "loverslab" else game_domain or game_name
         label = game_name or game_domain
-        if not value or not label or value in seen:
+        if not value or not label:
             continue
-        seen.add(value)
-        options.append(ModGameOption(value=value, label=label, count=count))
-    return options
+        if value in merged:
+            existing = merged[value]
+            merged[value] = ModGameOption(
+                value=existing.value,
+                label=existing.label,
+                count=existing.count + count,
+            )
+        else:
+            merged[value] = ModGameOption(value=value, label=label, count=count)
+    return sorted(merged.values(), key=lambda option: (-option.count, option.label))
 
 
 @router.get("/ignored", response_model=ModList)
-async def list_ignored_mods(
+def list_ignored_mods(
     session: SessionDep,
     game: str | None = Query(default=None),
     source: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    content_language: str | None = Query(default=None),
     adult_content: Literal["include", "exclude", "only"] | None = Query(default=None),
     sort_by: str = Query(default="first_seen_at"),
     sort_order: str = Query(default="desc"),
     offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
 ):
     """List ignored mods so users can restore them."""
     displays, total, _language, _missing_ids = ModService(session).list_mod_displays(
         game=game,
         source=source,
         search=search,
+        content_language=content_language,
         adult_content=adult_content,
         sort_by=sort_by,
         sort_order=sort_order,
@@ -94,8 +105,24 @@ async def list_ignored_mods(
     return ModList(items=response_items, total=total)
 
 
+@router.get("/recommendations", response_model=ModList)
+def list_recommended_mods(
+    background_tasks: BackgroundTasks,
+    session: SessionDep,
+    limit: int = Query(default=5, ge=1, le=20),
+):
+    """Return mods associated with the user's stored preference profile."""
+    mod_service = ModService(session)
+    displays, total, language, missing_ids = mod_service.list_recommended_mod_displays(limit=limit)
+    if missing_ids and mod_service.translation_enabled():
+        background_tasks.add_task(run_missing_summaries_job, missing_ids, language)
+
+    response_items = [ModRead.model_validate(item).model_dump() for item in displays]
+    return ModList(items=response_items, total=total)
+
+
 @router.get("/{mod_id}", response_model=ModRead)
-async def get_mod(
+def get_mod(
     mod_id: int,
     session: SessionDep,
 ):
@@ -117,9 +144,24 @@ async def regenerate_mod_summary(
     if mod is None:
         raise HTTPException(status_code=404, detail="Mod not found")
     language = mod_service.get_summary_language()
-    mod_service.delete_summary_if_exists(mod_id, language, "brief")
-    asyncio.create_task(run_single_summary_job(mod_id, language, "brief"))
-    return {"status": "queued", "mod_id": mod_id, "language": language}
+    job = create_job_run(
+        session,
+        "llm_regenerate_summary",
+        metadata={"mod_id": mod_id, "language": language, "summary_type": "brief"},
+    )
+
+    async def handler() -> dict:
+        """Run single summary regeneration in a fresh job session."""
+        with Session(engine) as job_session:
+            return await generate_single_summary_payload_locked(
+                job_session,
+                mod_id=mod_id,
+                language=language,
+                summary_type="brief",
+            )
+
+    enqueue_job_run(int(job.id), handler)
+    return {"status": "queued", "job_id": job.id, "mod_id": mod_id, "language": language}
 
 
 @router.post("/{mod_id}/introduction/generate")
@@ -151,7 +193,7 @@ async def generate_mod_introduction(
 
 
 @router.post("/{mod_id}/ignore")
-async def ignore_mod(
+def ignore_mod(
     mod_id: int,
     session: SessionDep,
 ):
@@ -162,7 +204,7 @@ async def ignore_mod(
 
 
 @router.post("/{mod_id}/unignore")
-async def unignore_mod(
+def unignore_mod(
     mod_id: int,
     session: SessionDep,
 ):

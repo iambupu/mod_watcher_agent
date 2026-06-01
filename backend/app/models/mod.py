@@ -1,5 +1,5 @@
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -7,6 +7,14 @@ class Mod(SQLModel, table=True):
     __tablename__ = "mods"
     __table_args__ = (
         UniqueConstraint("source", "external_id", name="uq_mod_source_external_id"),
+        Index("ix_mods_ignored_first_seen_at", "ignored", "first_seen_at"),
+        Index("ix_mods_ignored_downloads", "ignored", "downloads"),
+        Index("ix_mods_ignored_endorsements", "ignored", "endorsements"),
+        Index("ix_mods_ignored_updated_at_remote", "ignored", "updated_at_remote"),
+        Index("ix_mods_game_ignored", "game", "ignored"),
+        Index("ix_mods_game_domain_ignored", "game_domain", "ignored"),
+        Index("ix_mods_source_ignored", "source", "ignored"),
+        Index("ix_mods_category_ignored", "category", "ignored"),
         {"sqlite_autoincrement": True},
     )
 
@@ -16,6 +24,7 @@ class Mod(SQLModel, table=True):
     game: str = Field(max_length=255)
     game_domain: str | None = Field(default=None, max_length=255)
     title: str = Field(max_length=512)
+    translated_title_zh: str | None = Field(default=None, max_length=512)
     url: str = Field(max_length=1024)
     author: str | None = Field(default=None, max_length=255)
     category: str | None = Field(default=None, max_length=255)

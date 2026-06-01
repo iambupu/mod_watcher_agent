@@ -6,11 +6,10 @@ from sqlmodel import Session, select
 
 from app.models.settings import Setting
 from app.services.llm_provider_config import default_provider_configs
+from app.utils.boolean import parse_bool
 
 
 class SettingsService:
-    DEFAULTS: dict[str, str] = {}
-
     @staticmethod
     def _default_llm_providers() -> list[dict]:
         """内部辅助函数，用于拆分上层流程中的局部规则。"""
@@ -42,7 +41,7 @@ class SettingsService:
             "discord_webhook_url": "",
             "llm_provider": os.getenv("LLM_PROVIDER", "openai"),
             "llm_model": os.getenv("LLM_MODEL", ""),
-            "llm_api_key": "",
+            "llm_api_key": os.getenv("LLM_API_KEY", ""),
             "llm_base_url": os.getenv("LLM_BASE_URL", ""),
             "llm_providers_json": json.dumps(cls._default_llm_providers(), ensure_ascii=False),
             "auto_start": "false",
@@ -56,14 +55,14 @@ class SettingsService:
             "proxy_username": "",
             "proxy_password": "",
             "access_profile": os.getenv("MW_ACCESS_PROFILE", "local_relaxed"),
-            "allow_lan": "true" if os.getenv("MW_ALLOW_LAN", "").strip().lower() in {"1", "true", "yes", "on"} else "false",
+            "allow_lan": "true" if parse_bool(os.getenv("MW_ALLOW_LAN")) else "false",
             "bind_host": os.getenv("MW_BIND_HOST", "127.0.0.1"),
         }
 
     def __init__(self, session: Session) -> None:
         """初始化实例并保存运行所需的依赖。"""
         self.session = session
-        self.DEFAULTS = self.build_defaults()
+        self.DEFAULTS: dict[str, str] = self.build_defaults()
 
     def init_defaults(self) -> None:
         """处理当前模块的业务逻辑并返回结果。"""

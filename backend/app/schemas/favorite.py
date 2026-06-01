@@ -4,6 +4,36 @@ from pydantic import BaseModel
 from app.schemas.mod import ModRead
 
 
+class FavoriteImportCreate(BaseModel):
+    source: str
+    external_id: str
+    game: str = ""
+    game_domain: str | None = None
+    title: str
+    translated_title_zh: str | None = None
+    url: str
+    author: str | None = None
+    category: str | None = None
+    tags_json: str = "[]"
+    original_summary: str | None = None
+    version: str | None = None
+    created_at_remote: str | None = None
+    updated_at_remote: str | None = None
+    published_at_remote: str | None = None
+    downloads: int | None = None
+    unique_downloads: int | None = None
+    endorsements: int | None = None
+    views: int | None = None
+    likes: int | None = None
+    adult_content: bool | None = None
+    thumbnail_url: str | None = None
+    raw_json: str | None = None
+    tracking_enabled: bool = True
+    notify_on_update: bool = True
+    user_note: str | None = None
+    user_tags_json: str = "[]"
+
+
 class FavoriteCreate(BaseModel):
     mod_id: int
     tracking_enabled: bool = True

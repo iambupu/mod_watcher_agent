@@ -1,5 +1,6 @@
 from app.schemas.favorite import (
     FavoriteCreate,
+    FavoriteImportCreate,
     FavoriteRead,
     FavoriteUpdate,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "RuleTestRequest",
     "RuleTestResponse",
     "FavoriteCreate",
+    "FavoriteImportCreate",
     "FavoriteUpdate",
     "FavoriteRead",
     "UpdateEventRead",

@@ -56,6 +56,7 @@ async def test_loverslab_search_scrape_tool_parses_duckduckgo_results_and_persis
     assert results[0].tool_name == "loverslab_scrape_search"
     assert results[0].score >= 1
     assert len(persisted) == 1
+    assert persisted[0].external_id == "skyrim-special-edition:12345"
     assert persisted[0].title == "Follower Pack II"
     assert persisted[0].game == "Skyrim Special Edition"
     assert persisted[0].category == "Search Scrape (duckduckgo)"

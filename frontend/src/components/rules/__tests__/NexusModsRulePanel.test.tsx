@@ -104,6 +104,16 @@ describe("NexusModsRulePanel", () => {
     fireEvent.change(input, { target: { value: "abc" } });
 
     expect(screen.getByText("Days must be a valid number")).toBeInTheDocument();
+    expect(mockUpdateNexusConfig).not.toHaveBeenCalled();
+  });
+
+  it("clamps updated since days to backend maximum", async () => {
+    render(<NexusModsRulePanel />);
+
+    const input = screen.getByPlaceholderText("e.g. 7") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "999" } });
+
+    expect(mockUpdateNexusConfig).toHaveBeenCalledWith({ updatedSinceDays: 365 });
   });
 
   it("renders sort by select with correct options", () => {

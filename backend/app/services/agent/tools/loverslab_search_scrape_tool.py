@@ -49,7 +49,7 @@ class SearchScrapeResult:
 
 
 class LoversLabSearchScrapeTool:
-    """Agent tool that scrapes public search result pages for LoversLab links."""
+    """抓取公开搜索结果页中的 LoversLab 链接。"""
 
     name = "loverslab_scrape_search"
 
@@ -57,11 +57,17 @@ class LoversLabSearchScrapeTool:
         """初始化实例并保存运行所需的依赖。"""
         self.session = session
         self.settings = SettingsService(session)
+        self.last_status = "not_started"
+        self.last_reason: str | None = None
 
     async def run(self, tool_input: LoversLabSearchScrapeInput) -> list[SearchResult]:
         """执行任务流程并返回结果。"""
+        self.last_status = "succeeded"
+        self.last_reason = None
         enabled = (self.settings.get("loverslab_search_scrape_enabled") or "true").strip().lower()
         if enabled not in {"1", "true", "yes", "on"}:
+            self.last_status = "skipped"
+            self.last_reason = "disabled"
             return []
 
         engine = (self.settings.get("loverslab_search_scrape_engine") or "duckduckgo").strip().lower()
@@ -69,6 +75,8 @@ class LoversLabSearchScrapeTool:
         try:
             html = await self._fetch_search_page(query=query, engine=engine, limit=tool_input.limit)
         except httpx.HTTPError:
+            self.last_status = "degraded"
+            self.last_reason = "http_error"
             return []
 
         results = self._parse_results(html, engine)

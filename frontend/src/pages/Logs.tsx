@@ -16,11 +16,14 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { FilterInput, FilterSelect } from "@/components/ui/FilterControls";
 import { Badge } from "@/components/ui/Badge";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { MarkdownText } from "@/components/MarkdownText";
 import { fetchLogs, openLogDirectory } from "@/api/logging";
 import { fetchJobRuns, fetchSchedulerStatus, pauseScheduler, resumeScheduler, type JobRun, type SchedulerJob } from "@/api/jobs";
+import { metadataRuleId, parseJobMetadata } from "@/utils/jobMetadata";
+import { formatLocalDateTime } from "@/utils/time";
 
 const levelBadge: Record<string, "default" | "info" | "warning" | "danger"> = {
   DEBUG: "default",
@@ -171,30 +174,33 @@ const Logs: React.FC = () => {
 
             {activeTab === "logs" && (
             <div className="mb-4 flex gap-2 items-center">
-              <select
-                className="border rounded px-2 py-1.5 text-sm"
+              <FilterSelect
                 value={level}
-                onChange={(e) => {
-                  setLevel(e.target.value);
+                onValueChange={(value) => {
+                  setLevel(value);
                   setExpandedIndex(null);
                 }}
+                controlSize="sm"
+                containerClassName="w-28"
+                className="w-full"
               >
                 <option value="ALL">{t("logs.levelAll")}</option>
                 <option value="DEBUG">DEBUG</option>
                 <option value="INFO">INFO</option>
                 <option value="WARNING">WARNING</option>
                 <option value="ERROR">ERROR</option>
-              </select>
+              </FilterSelect>
 
-              <input
-                className="border rounded px-3 py-1.5 text-sm w-48"
-                type="text"
+              <FilterInput
                 placeholder={t("logs.searchPlaceholder")}
                 value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
+                onValueChange={(value) => {
+                  setSearch(value);
                   setExpandedIndex(null);
                 }}
+                containerClassName="w-48"
+                className="h-10 text-sm placeholder:text-gray-400"
+                controlSize="sm"
               />
 
               <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isLoading}>
@@ -360,8 +366,7 @@ const SCHEDULED_JOB_MATCHERS: Array<{ ids: string[]; names: string[] }> = [
 function findSchedulerJob(task: JobRun, schedulerJobs: SchedulerJob[]): SchedulerJob | undefined {
   const normalized = task.job_name.toLowerCase();
   if (normalized === "run_rule_discovery") {
-    const metadata = parseTaskMetadata(task.metadata_json);
-    const ruleId = Number(metadata.rule_id || 0);
+    const ruleId = metadataRuleId(parseJobMetadata(task.metadata_json));
     if (ruleId > 0) {
       const exactRuleJobId = `discover_rule_${ruleId}`;
       const exact = schedulerJobs.find((job) => job.id === exactRuleJobId);
@@ -387,8 +392,8 @@ function TaskRow({
   showNextRun: boolean;
 }) {
   const { t } = useTranslation();
-  const metadata = parseTaskMetadata(task.metadata_json);
-  const ruleId = Number(metadata.rule_id || 0);
+  const metadata = parseJobMetadata(task.metadata_json);
+  const ruleId = metadataRuleId(metadata);
   const ruleName = String(metadata.rule_name || "");
   const llmModel = String(metadata.llm_model || metadata.model || "");
   const isRuleRun = task.job_name === "run_rule_discovery";
@@ -447,19 +452,5 @@ function TaskRow({
 }
 
 function formatLogTime(value?: string): string {
-  if (!value) return "-";
-  const normalized = value.includes("T") ? value : value.replace(" ", "T");
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
-function parseTaskMetadata(raw?: string | null): Record<string, unknown> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+  return formatLocalDateTime(value);
 }

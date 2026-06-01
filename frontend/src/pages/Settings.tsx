@@ -5,11 +5,15 @@ import { Loader2, ArrowUp, ArrowDown } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { LanguageSelect } from "@/components/LanguageSelect";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { ApiError, getSecurityToken, setSecurityToken } from "@/api/client";
+import { DEFAULT_LLM_PROVIDERS, DEFAULT_PROVIDER_BASE_URLS } from "@/constants/llmProviders";
+import { SETTINGS_NUMERIC_BOUNDS } from "@/constants/settings";
+import { clampIntegerInput } from "@/utils/numberInput";
 
 import { NotificationSettings } from "@/components/NotificationSettings";
-import { DEFAULT_LLM_PROVIDERS, DEFAULT_PROVIDER_BASE_URLS, fetchSettings, updateSettings, testLlmProviders, testTelegram, testDiscord, exportSettings, importSettings, setAutoStart as applyAutoStart, type LlmProviderTestResult } from "@/api/settings";
+import { fetchSettings, updateSettings, testLlmProviders, testTelegram, testDiscord, exportSettings, importSettings, setAutoStart as applyAutoStart, type LlmProviderTestResult } from "@/api/settings";
 import type { UserSettings, UILanguage, LlmProvider, LlmProviderConfig } from "@/types";
 
 const PROVIDER_OPTIONS = DEFAULT_LLM_PROVIDERS;
@@ -87,6 +91,27 @@ const Settings: React.FC = () => {
   const [proxyErrors, setProxyErrors] = useState<{ host?: string; port?: string }>({});
   const [importMsg, setImportMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const statusTimerRef = useRef<number | null>(null);
+
+  const clearStatusTimer = () => {
+    if (statusTimerRef.current) {
+      window.clearTimeout(statusTimerRef.current);
+      statusTimerRef.current = null;
+    }
+  };
+
+  const scheduleStatusReset = (clearImportMessage = false) => {
+    clearStatusTimer();
+    statusTimerRef.current = window.setTimeout(() => {
+      statusTimerRef.current = null;
+      setSaved(false);
+      if (clearImportMessage) {
+        setImportMsg(null);
+      }
+    }, 3000);
+  };
+
+  useEffect(() => clearStatusTimer, []);
 
   useEffect(() => {
     if (settings) {
@@ -159,7 +184,7 @@ const Settings: React.FC = () => {
       setSaved(true);
       setSaveError(null);
       setFieldErrors({});
-      setTimeout(() => setSaved(false), 3000);
+      scheduleStatusReset();
     },
     onError: (err: Error) => {
       setSaveError(err.message);
@@ -260,7 +285,7 @@ const Settings: React.FC = () => {
       const result = await importSettings(file);
       setImportMsg({ type: "success", text: t("settings.importSuccess", { count: result.imported }) });
       setSaved(true);
-      setTimeout(() => { setSaved(false); setImportMsg(null); }, 3000);
+      scheduleStatusReset(true);
       queryClient.invalidateQueries({ queryKey: ["settings"] });
     } catch {
       setImportMsg({ type: "error", text: t("settings.importError") });
@@ -347,28 +372,18 @@ const Settings: React.FC = () => {
                 <CardContent className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">{t("settings.uiLanguage")}</label>
-                    <select
+                    <LanguageSelect
                       value={uiLanguage}
-                      onChange={(e) => handleLanguageChange(e.target.value as UILanguage)}
-                      className="h-9 w-full rounded-md border border-gray-300 px-3 text-sm"
-                    >
-                      <option value="zh-CN">中文</option>
-                      <option value="en-US">English</option>
-                      <option value="ja-JP">日本語</option>
-                    </select>
+                      onChange={handleLanguageChange}
+                    />
                     <p className="text-xs leading-5 text-gray-500">{t("settings.uiLanguageHint")}</p>
                   </div>
                   <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">{t("settings.summaryLanguage")}</label>
-                    <select
+                    <LanguageSelect
                       value={summaryLanguage}
-                      onChange={(e) => setSummaryLanguage(e.target.value as UILanguage)}
-                      className="h-9 w-full rounded-md border border-gray-300 px-3 text-sm"
-                    >
-                      <option value="zh-CN">中文</option>
-                      <option value="en-US">English</option>
-                      <option value="ja-JP">日本語</option>
-                    </select>
+                      onChange={setSummaryLanguage}
+                    />
                     <p className="text-xs leading-5 text-gray-500">{t("settings.summaryLanguageHint")}</p>
                   </div>
                 </CardContent>
@@ -383,10 +398,12 @@ const Settings: React.FC = () => {
                     <Input
                       label={t("settings.summaryReportInterval")}
                       type="number"
-                      min={0}
-                      max={10080}
+                      min={SETTINGS_NUMERIC_BOUNDS.summaryReportIntervalMinutes.min}
+                      max={SETTINGS_NUMERIC_BOUNDS.summaryReportIntervalMinutes.max}
                       value={summaryReportInterval}
-                      onChange={(e) => setSummaryReportInterval(Number(e.target.value))}
+                      onChange={(e) => setSummaryReportInterval(clampIntegerInput(e.target.value, {
+                        ...SETTINGS_NUMERIC_BOUNDS.summaryReportIntervalMinutes,
+                      }))}
                     />
                     <label className="flex flex-col gap-1">
                       <span className="text-sm font-medium text-gray-700">
@@ -418,26 +435,32 @@ const Settings: React.FC = () => {
                   <Input
                     label={t("settings.watchdogCheckInterval")}
                     type="number"
-                    min={1}
-                    max={1440}
+                    min={SETTINGS_NUMERIC_BOUNDS.watchdogCheckIntervalMinutes.min}
+                    max={SETTINGS_NUMERIC_BOUNDS.watchdogCheckIntervalMinutes.max}
                     value={watchdogCheckInterval}
-                    onChange={(e) => setWatchdogCheckInterval(Math.max(1, Number(e.target.value) || 10))}
+                    onChange={(e) => setWatchdogCheckInterval(clampIntegerInput(e.target.value, {
+                      ...SETTINGS_NUMERIC_BOUNDS.watchdogCheckIntervalMinutes,
+                    }))}
                   />
                   <Input
                     label={t("settings.watchdogGraceMinutes")}
                     type="number"
-                    min={1}
-                    max={1440}
+                    min={SETTINGS_NUMERIC_BOUNDS.watchdogGraceMinutes.min}
+                    max={SETTINGS_NUMERIC_BOUNDS.watchdogGraceMinutes.max}
                     value={watchdogGraceMinutes}
-                    onChange={(e) => setWatchdogGraceMinutes(Math.max(1, Number(e.target.value) || 60))}
+                    onChange={(e) => setWatchdogGraceMinutes(clampIntegerInput(e.target.value, {
+                      ...SETTINGS_NUMERIC_BOUNDS.watchdogGraceMinutes,
+                    }))}
                   />
                   <Input
                     label={t("settings.watchdogMaxCatchupPerRun")}
                     type="number"
-                    min={1}
-                    max={20}
+                    min={SETTINGS_NUMERIC_BOUNDS.watchdogMaxCatchupPerRun.min}
+                    max={SETTINGS_NUMERIC_BOUNDS.watchdogMaxCatchupPerRun.max}
                     value={watchdogMaxCatchupPerRun}
-                    onChange={(e) => setWatchdogMaxCatchupPerRun(Math.max(1, Number(e.target.value) || 3))}
+                    onChange={(e) => setWatchdogMaxCatchupPerRun(clampIntegerInput(e.target.value, {
+                      ...SETTINGS_NUMERIC_BOUNDS.watchdogMaxCatchupPerRun,
+                    }))}
                   />
                 </div>
                 <p className="text-xs leading-5 text-gray-500">{t("settings.watchdogHint")}</p>

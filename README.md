@@ -23,6 +23,7 @@
 - [常见问题与排查](#常见问题与排查)
 - [配置说明（常用）](#配置说明常用)
   - [`.env` 高级设置（普通用户可忽略）](#env-高级设置普通用户可忽略)
+- [Chrome 收藏扩展](#chrome-收藏扩展)
 - [功能一览](#功能一览)
 - [开发与贡献](#开发与贡献)
   - [打包 Release](#打包-release)
@@ -147,7 +148,7 @@ Docker 默认：
 
 ## 配置说明（常用）
 
-- `DATABASE_URL`：默认 `sqlite:///./mod_watcher.db`（Docker 推荐 `sqlite:////app/data/mod_watcher.db`）。
+- `DATABASE_URL`：默认 `sqlite:///./backend/mod_watcher.db`（Docker 推荐 `sqlite:////app/data/mod_watcher.db`）。
 - `NEXUS_API_KEY`：建议配置以启用 NexusMods 源。
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `DISCORD_WEBHOOK_URL`：外部通知。
 - LLM 相关：`LLM_PROVIDER`、`LLM_API_KEY`、`LLM_MODEL`、`LLM_BASE_URL`。
@@ -170,6 +171,25 @@ Docker 默认：
 - 开发者：需要时直接改 `backend/.env`，并重启服务让配置生效
 - 优先级：设置页保存的配置（数据库）会覆盖 `backend/.env` / 环境变量提供的默认值
 
+## Chrome 收藏扩展
+
+Release 包会包含 `chrome-extension/`。它用于在 Nexus Mods 或 LoversLab 的 Mod 页面一键导入到本地数据库并加入收藏。
+
+安装：
+
+1. 先运行 `.\start-user.bat`，确认 `http://localhost:17500` 可打开。
+2. 打开 Chrome 的 `chrome://extensions`。
+3. 启用「开发者模式」。
+4. 点击「加载已解压的扩展程序」，选择 Release 包内的 `chrome-extension` 文件夹。
+
+使用：
+
+1. 打开支持的 Mod 页面：`https://www.nexusmods.com/{game_domain}/mods/{mod_id}` 或 `https://www.loverslab.com/files/file/{file_id}-...`。
+2. 点击扩展图标，确认游戏名、成人内容标记和可选备注。
+3. 点击「收藏当前 Mod」。
+
+如果设置页选择了 `local_strict` 或 `shared_lan` 访问配置，需要在扩展中填写 `MW_ADMIN_TOKEN`。扩展只保存页面公开元数据，不下载、不镜像 Mod 文件。
+
 ## 功能一览
 
 - 发现：从 NexusMods / LoversLab 拉取并转换为卡片。
@@ -182,6 +202,7 @@ Docker 默认：
 ## 开发与贡献
 
 - 代码风格、依赖请参阅 [DEPENDENCIES.md](./DEPENDENCIES.md) 和 [CODE_STYLE.md](./CODE_STYLE.md)。
+- 项目文档入口请参阅 [docs/agent-technical-implementation.md](./docs/agent-technical-implementation.md)，其中包含 Agent 当前实现链路与检索排障入口。
 - 欢迎贡献：fork → 新分支 → 提交 PR，并在 PR 描述中说明变更。
 
 ### 打包 Release

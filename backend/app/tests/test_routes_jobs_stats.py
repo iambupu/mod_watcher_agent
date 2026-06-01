@@ -9,6 +9,7 @@ from app.api import routes_jobs
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models.favorite import Favorite
+from app.models.job_run import JobRun
 from app.models.mod import Mod
 from app.models.update_event import ModUpdateEvent
 from app.models.watch_rule import WatchRule
@@ -138,6 +139,38 @@ def test_scheduler_status_reports_paused_state(monkeypatch):
     assert data["state"] == STATE_PAUSED
 
 
+def test_recent_job_runs_rejects_unbounded_limit():
+    client = TestClient(fastapi_app)
+
+    response = client.get("/api/jobs/runs/recent?limit=1000")
+
+    assert response.status_code == 422
+
+
+def test_recent_job_runs_accepts_max_dashboard_limit(monkeypatch):
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+
+    def override_get_session():
+        with Session(engine) as session:
+            yield session
+
+    fastapi_app.dependency_overrides[get_session] = override_get_session
+    client = TestClient(fastapi_app)
+
+    try:
+        with Session(engine) as session:
+            session.add(JobRun(job_name="job", status="succeeded", started_at="2026-05-18T00:00:00+00:00"))
+            session.commit()
+
+        response = client.get("/api/jobs/runs/recent?limit=200")
+
+        assert response.status_code == 200
+        assert response.json()["items"][0]["job_name"] == "job"
+    finally:
+        fastapi_app.dependency_overrides.clear()
+
+
 def test_scheduler_pause_and_resume_return_actual_state(monkeypatch):
     class FakeScheduler:
         state = STATE_RUNNING
@@ -161,3 +194,27 @@ def test_scheduler_pause_and_resume_return_actual_state(monkeypatch):
     assert resume_response.status_code == 200
     assert resume_response.json()["running"] is True
     assert resume_response.json()["state"] == STATE_RUNNING
+
+
+def test_discovery_result_counter_ignores_bool_and_normalizes_dirty_counts():
+    scanned, matched = routes_jobs._count_numeric_values({
+        "rule-a": "3",
+        "rule-b": True,
+        "rule-c": -1,
+        "rule-d": "bad",
+    })
+
+    assert scanned == 4
+    assert matched == 3
+
+
+def test_favorite_check_result_counter_parses_dirty_boolean_flags():
+    scanned, matched = routes_jobs._count_favorite_check_result({
+        "fav-a": {"update_detected": "true"},
+        "fav-b": {"update_detected": "false"},
+        "fav-c": {"update_detected": 1},
+        "fav-d": {"update_detected": "bad"},
+    })
+
+    assert scanned == 4
+    assert matched == 2

@@ -42,14 +42,19 @@
 
 `backend/app/services/agent/` 的职责边界：
 
-- `chat_service.py`：请求入口、限流、配置读取、query plan 生成、调用搜索编排器和回答服务、组装响应。
-- `query_planner.py`：自然语言与 UI scope 到结构化查询计划的转换。
-- `tools/`：单一来源搜索工具。Local DB、NexusMods、LoversLab Google、LoversLab scrape 需要统一输入/输出契约。
-- `result_merger.py`：本地/在线结果合并、source/external_id 去重、排序、distinctive term 过滤、adult_content 最终过滤。
-- `answer_service.py`：LLM 回答与详情解析 prompt。
-- `response_builder.py`：把已确定结果转换为前端 response cards。
+- `chat_service.py`：兼容入口和外层配置适配，不继续承载多步编排、工具调用或结果融合细节。
+- `runtime.py`：组装请求依赖、调用 workflow、把 graph 输出适配为 `AgentChatResponse`，并负责会话持久化边界。
+- `workflows/`：Agent 状态机和阶段编排；只传递状态、调度 tool、汇总 evidence，不内嵌具体搜索或站点逻辑。
+- `context/`：短期上下文摘要、上下文窗口和会话上下文选择。
+- `memory/`：长期偏好、最近查询上下文、收藏画像和当前轮写回；不得作为 LangGraph checkpoint 的唯一事实源。
+- `planning/`：查询诊断、工具规划、检索计划和并行执行策略。
+- `retrievers/`：本地 FTS、结构化 SQL、向量和外部来源检索抽象。
+- `ranking/`：候选融合、去重、重排和相关性评分。
+- `reflection/`：计划、检索结果和回答质量自检；对外只输出可审计摘要，不泄漏原始推理链。
+- `tools/`：可独立运行的单一能力单元，包括上下文摘要、记忆读取/写回、查询诊断、工具规划、查询规划、本地/向量/web 检索、融合排序、候选物化、候选校验、回答生成和 response cards 构建。Web search 只是工具之一，不允许耦合进 Agent 主流程。
+- `response_builder.py` / `conversation_service.py`：把已确定结果转换、规范化并持久化为前端 response cards；新增 card 字段必须完整保留。
 
-确定性规则必须在代码中实现并由测试覆盖，不交给 LLM 判断。
+确定性约束必须在代码中实现并由测试覆盖，不交给 LLM 判断。LLM 可以参与理解、规划和解释，但硬过滤、工具输入输出契约、记忆写回和 evidence trace 必须可审计。
 
 ### 2.2 前端
 

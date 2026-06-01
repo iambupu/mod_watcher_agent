@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X, CheckCheck, BellOff, Loader2, AlertCircle } from "lucide-react";
+import { CheckCheck, BellOff, Loader2, AlertCircle } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   fetchNotifications,
@@ -8,6 +8,7 @@ import {
   markAllNotificationsRead,
   fetchUnreadCount,
 } from "@/api/notifications";
+import { ModalHeader, ModalShell } from "@/components/ui/Modal";
 import { MarkdownText } from "@/components/MarkdownText";
 import type { NotificationItem } from "@/types";
 
@@ -73,70 +74,68 @@ export function NotificationCenter({ open, onClose }: NotificationCenterProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      {/* backdrop */}
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      {/* panel */}
-      <div className="relative w-full max-w-md bg-white shadow-xl flex flex-col h-full">
-        {/* header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      closeOnBackdrop
+      closeOnEscape
+      size="drawer-right"
+      panelClassName="rounded-none"
+    >
+      <ModalHeader
+        title={
           <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-gray-900">{t("notifications.title")}</h2>
+            <span className="text-base font-semibold text-gray-900">{t("notifications.title")}</span>
             {unreadCount > 0 && (
               <span className="inline-flex items-center justify-center rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold text-white">
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             )}
           </div>
-          <div className="flex items-center gap-1">
-            {unreadCount > 0 && (
-              <button
-                type="button"
-                onClick={handleMarkAllRead}
-                className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                title={t("notifications.markAllRead")}
-              >
-                <CheckCheck size={16} />
-              </button>
-            )}
+        }
+        onClose={onClose}
+        closeAriaLabel={t("common.close")}
+        actions={
+          unreadCount > 0 ? (
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleMarkAllRead}
               className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+              title={t("notifications.markAllRead")}
             >
-              <X size={18} />
+              <CheckCheck size={16} />
             </button>
+          ) : null
+        }
+        className="px-4 py-3 border-b border-gray-200 shrink-0 mb-0"
+      />
+      <div className="flex-1 overflow-y-auto">
+        {isLoading ? (
+          <div className="flex items-center justify-center h-full text-gray-400">
+            <Loader2 className="animate-spin" size={24} />
           </div>
-        </div>
-        {/* list */}
-        <div className="flex-1 overflow-y-auto">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-full text-gray-400">
-              <Loader2 className="animate-spin" size={24} />
-            </div>
-          ) : isError ? (
-            <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
-              <AlertCircle size={40} className="text-red-400" />
-              <p className="text-sm">{t("notifications.loadError")}</p>
-            </div>
-          ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
-              <BellOff size={40} />
-              <p className="text-sm">{t("notifications.empty")}</p>
-            </div>
-          ) : (
-            items.map((item) => (
-              <NotificationRow
-                key={item.id}
-                item={item}
-                channelLabel={channelLabel}
-                onMarkRead={handleMarkRead}
-              />
-            ))
-          )}
-        </div>
+        ) : isError ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
+            <AlertCircle size={40} className="text-red-400" />
+            <p className="text-sm">{t("notifications.loadError")}</p>
+          </div>
+        ) : items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
+            <BellOff size={40} />
+            <p className="text-sm">{t("notifications.empty")}</p>
+          </div>
+        ) : (
+          items.map((item) => (
+            <NotificationRow
+              key={item.id}
+              item={item}
+              channelLabel={channelLabel}
+              onMarkRead={handleMarkRead}
+            />
+          ))
+        )}
       </div>
-    </div>
+    </ModalShell>
   );
 }
 

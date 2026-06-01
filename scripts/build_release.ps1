@@ -71,6 +71,177 @@ function Copy-TreeFiltered {
     }
 }
 
+function Test-NpmEpkgInstallFailure {
+    param([string[]]$Output)
+
+    $epmPatterns = @(
+        "EPERM",
+        "operation is not permitted",
+        "unlink",
+        "EEXIST",
+        "resource is busy",
+        "permission denied",
+        "spawn"
+    )
+
+    foreach ($line in $Output) {
+        if ($null -eq $line) {
+            continue
+        }
+        foreach ($pattern in $epmPatterns) {
+            if ($line -match $pattern) {
+                return $true
+            }
+        }
+    }
+    return $false
+}
+
+function Stop-FrontendNodeProcesses {
+    param([string]$FrontendDir)
+
+    $frontendDirLower = (Resolve-Path $FrontendDir).Path.ToLowerInvariant()
+    $stoppedAny = $false
+
+    $frontendMarker = [regex]::Escape($frontendDirLower)
+    try {
+        $nodeProcesses = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction Stop
+        foreach ($process in $nodeProcesses) {
+            $commandLine = if ($process.CommandLine) { $process.CommandLine.ToLowerInvariant() } else { "" }
+            if (-not $commandLine) {
+                continue
+            }
+            if ($commandLine -match $frontendMarker -or
+                $commandLine -match "npm" -or
+                $commandLine -match "rollup" -or
+                $commandLine -match "vite" ) {
+                try {
+                    Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+                    $stoppedAny = $true
+                    Write-Host "[!] stopped node process PID=$($process.ProcessId) to release frontend npm locks" -ForegroundColor DarkYellow
+                } catch {
+                    Write-Host "[warn] unable to stop node process PID=$($process.ProcessId): $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+        }
+    } catch {
+        Write-Host "[warn] cannot enumerate node command-line metadata. Falling back to broad node cleanup." -ForegroundColor Yellow
+    }
+
+    if (-not $stoppedAny) {
+        $nodeProcesses = Get-Process -Name node -ErrorAction SilentlyContinue
+        if ($nodeProcesses) {
+            Write-Host "[warn] stopping all node.exe processes as fallback to clear file locks." -ForegroundColor Yellow
+            foreach ($process in $nodeProcesses) {
+                try {
+                    Stop-Process -Id $process.Id -Force -ErrorAction Stop
+                    $stoppedAny = $true
+                } catch {
+                    Write-Host "[warn] unable to stop fallback node PID=$($process.Id): $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+        }
+    }
+
+    return $stoppedAny
+}
+
+function Clear-FrontendNpmNativeArtifacts {
+    param(
+        [string]$FrontendDir,
+        [switch]$FullClean
+    )
+
+    if ($FullClean) {
+        $fullNodeModules = Join-Path $FrontendDir "node_modules"
+        if (Test-Path $fullNodeModules) {
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -LiteralPath $fullNodeModules
+        }
+        return
+    }
+
+    $candidatePaths = @(
+        "node_modules\@rollup"
+    )
+    foreach ($relative in $candidatePaths) {
+        $target = Join-Path $FrontendDir $relative
+        if (Test-Path $target) {
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -LiteralPath $target
+        }
+    }
+}
+
+function Invoke-NpmCommand {
+    param(
+        [string]$FrontendDir,
+        [string]$Command
+    )
+
+    $cmdPath = if ($env:ComSpec) { $env:ComSpec } else { "cmd" }
+    $cmd = New-Object System.Diagnostics.ProcessStartInfo
+    $cmd.FileName = $cmdPath
+    $cmd.Arguments = "/c $Command"
+    $cmd.WorkingDirectory = $FrontendDir
+    $cmd.UseShellExecute = $false
+    $cmd.RedirectStandardOutput = $true
+    $cmd.RedirectStandardError = $true
+    $cmd.CreateNoWindow = $true
+
+    $process = [System.Diagnostics.Process]::Start($cmd)
+    $stdOut = $process.StandardOutput.ReadToEnd()
+    $stdErr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    $exitCode = $process.ExitCode
+
+    $npmOutput = @()
+    if ($stdOut) { $npmOutput += $stdOut -split "`r?`n" }
+    if ($stdErr) { $npmOutput += $stdErr -split "`r?`n" }
+    return @{ ExitCode = $exitCode; Output = $npmOutput }
+}
+
+function Invoke-FrontendNpmInstall {
+    param(
+        [string]$FrontendDir
+    )
+
+    $installCmd = if (Test-Path (Join-Path $FrontendDir "package-lock.json")) { "npm ci" } else { "npm install" }
+    $fallbackInstallCmd = "${installCmd} --ignore-scripts"
+    $npmOutput = @()
+
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $cmdToRun = if ($attempt -eq 1) { $installCmd } else { $fallbackInstallCmd }
+        Write-Host "[frontend] npm install attempt $attempt/2..." -ForegroundColor Gray
+        Push-Location $FrontendDir
+        try {
+            Write-Host "[frontend] running: $cmdToRun" -ForegroundColor Gray
+            $result = Invoke-NpmCommand -FrontendDir $FrontendDir -Command $cmdToRun
+            $exitCode = $result.ExitCode
+            $npmOutput = $result.Output
+
+            if ($exitCode -eq 0) {
+                return $npmOutput
+            }
+            $LASTEXITCODE = $exitCode
+            Write-Host $npmOutput -ForegroundColor Yellow
+        }
+        finally {
+            Pop-Location
+        }
+
+        if (-not (Test-NpmEpkgInstallFailure -Output $npmOutput)) {
+            break
+        }
+        $null = Stop-FrontendNodeProcesses -FrontendDir $FrontendDir
+        Write-Host "[!] npm install hit file-lock related failure; cleaning frontend native artifacts and retrying..." -ForegroundColor Yellow
+        Clear-FrontendNpmNativeArtifacts -FrontendDir $FrontendDir -FullClean:$true
+        Start-Sleep -Seconds 1
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "npm install failed"
+    }
+    return $npmOutput
+}
+
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $root
 Set-Location $root
@@ -103,15 +274,13 @@ if (-not $SkipFrontendBuild) {
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
         throw "Node.js is required to build the frontend. Install Node 20/22 LTS or pass -SkipFrontendBuild (not recommended)."
     }
-    Push-Location (Join-Path $root "frontend")
+    $frontendDir = Join-Path $root "frontend"
+    Push-Location $frontendDir
     try {
-        if (Test-Path (Join-Path $root "frontend\package-lock.json")) {
-            npm ci
-        } else {
-            npm install
-        }
-        if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-        npm run build
+        Invoke-FrontendNpmInstall -FrontendDir $frontendDir | Out-Null
+        $buildResult = Invoke-NpmCommand -FrontendDir $frontendDir -Command "npm run build"
+        Write-Host $buildResult.Output -ForegroundColor Yellow
+        $LASTEXITCODE = $buildResult.ExitCode
         if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
     } finally {
         Pop-Location
@@ -158,6 +327,10 @@ Copy-TreeFiltered -Src (Join-Path $root "backend") -Dst (Join-Path $stagingRoot 
 
 New-Item -ItemType Directory -Force -Path (Join-Path $stagingRoot "frontend\dist") | Out-Null
 Copy-TreeFiltered -Src (Join-Path $root "frontend\dist") -Dst (Join-Path $stagingRoot "frontend\dist") -ExcludeRelGlobs @()
+
+if (Test-Path (Join-Path $root "chrome-extension")) {
+    Copy-TreeFiltered -Src (Join-Path $root "chrome-extension") -Dst (Join-Path $stagingRoot "chrome-extension") -ExcludeRelGlobs @()
+}
 
 Write-Host "[4/4] Creating zip..." -ForegroundColor Cyan
 Compress-Archive -Path (Join-Path $stagingRoot "*") -DestinationPath $zipPath -Force

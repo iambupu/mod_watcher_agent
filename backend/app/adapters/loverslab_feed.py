@@ -14,20 +14,27 @@ import re
 import sys
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 import feedparser
 import httpx
 from selectolax.parser import HTMLParser
 
 from app.adapters.base import BaseAdapter
-from app.adapters.loverslab_common import loverslab_mod_item_from_raw
+from app.adapters.loverslab_common import (
+    is_allowed_loverslab_url,
+    loverslab_mod_item_from_raw,
+    validate_loverslab_url,
+)
 from app.models.mod_item import ModItem
 from app.schemas.watch_rule import LoversLabRuleConfig
+from app.services.loverslab.constants import LOVERSLAB_HOSTS, LOVERSLAB_STATIC_HOSTS
+from app.services.loverslab.url_utils import extract_loverslab_file_id_from_url
+from app.utils.time import parse_utc_datetime
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_HOSTS = {"www.loverslab.com", "loverslab.com", "static.loverslab.com"}
+ALLOWED_HOSTS = LOVERSLAB_HOSTS | LOVERSLAB_STATIC_HOSTS
 MAX_FEED_BYTES = 5 * 1024 * 1024  # 5 MB
 REQUEST_TIMEOUT = 30.0
 MAX_ENTRIES_PER_FEED_URL = 20
@@ -51,6 +58,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     def __init__(self, **kwargs: Any) -> None:
         """初始化实例并保存运行所需的依赖。"""
+        _ = kwargs
         self._client: httpx.AsyncClient | None = None
 
     # ── HTTP helpers ────────────────────────────────────────────────────
@@ -96,7 +104,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     async def _fetch_feed_bytes(self, url: str) -> bytes:
         """Stream-fetch *url* with Content-Length and chunk-size guards."""
-        current_url = self._validate_loverslab_url(url)
+        current_url = validate_loverslab_url(url, kind="RSS", allowed_hosts=ALLOWED_HOSTS)
         client = await self._get_client()
         for _ in range(5):
             async with client.stream("GET", current_url) as response:
@@ -104,7 +112,7 @@ class LoversLabFeedAdapter(BaseAdapter):
                     location = response.headers.get("Location")
                     if not location:
                         raise ValueError("Redirect response missing Location header")
-                    current_url = self._validate_loverslab_url(urljoin(current_url, location))
+                    current_url = validate_loverslab_url(urljoin(current_url, location), kind="RSS", allowed_hosts=ALLOWED_HOSTS)
                     continue
 
                 return await self._read_checked_feed_response(response)
@@ -115,7 +123,7 @@ class LoversLabFeedAdapter(BaseAdapter):
         response.raise_for_status()
 
         final_url = str(response.url)
-        if not self._is_allowed_loverslab_url(final_url):
+        if not is_allowed_loverslab_url(final_url, ALLOWED_HOSTS):
             raise ValueError(f"Redirected to disallowed host: {final_url}")
 
         cl = response.headers.get("Content-Length")
@@ -133,23 +141,6 @@ class LoversLabFeedAdapter(BaseAdapter):
             if len(data) > MAX_FEED_BYTES:
                 raise ValueError("RSS payload too large")
         return bytes(data)
-
-    @classmethod
-    def _validate_loverslab_url(cls, url: str) -> str:
-        """校验内部输入是否符合业务约束。"""
-        normalized = (url or "").strip()
-        parsed = urlsplit(normalized)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("LoversLab RSS URL must be an absolute http(s) URL")
-        if not cls._is_allowed_loverslab_url(normalized):
-            raise ValueError(f"LoversLab RSS URL host is not allowed: {normalized}")
-        return normalized
-
-    @staticmethod
-    def _is_allowed_loverslab_url(url: str) -> bool:
-        """判断内部条件是否成立。"""
-        host = (urlsplit(url).hostname or "").lower()
-        return host in ALLOWED_HOSTS
 
     @staticmethod
     def _is_cloudflare_body(text: str) -> bool:
@@ -207,6 +198,7 @@ class LoversLabFeedAdapter(BaseAdapter):
         self, external_id: str, game_domain: str | None = None
     ) -> ModItem | None:
         """请求外部数据并返回标准化结果。"""
+        _ = (external_id, game_domain)
         return None
 
     def normalize(self, raw_item: dict) -> ModItem:
@@ -281,9 +273,9 @@ class LoversLabFeedAdapter(BaseAdapter):
           1. ``/files/file/<digits>`` from the link.
           2. ``sha256(canonicalised_url)[:16]`` hash fallback.
         """
-        matched = re.search(r"/files/file/(\d+)", link)
-        if matched:
-            return matched.group(1)
+        file_id = extract_loverslab_file_id_from_url(link)
+        if file_id:
+            return file_id
         canonical = LoversLabFeedAdapter._canonicalize_url(link)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
@@ -370,10 +362,9 @@ class LoversLabFeedAdapter(BaseAdapter):
         for key in ("updated", "published"):
             raw = entry.get(key)
             if raw:
-                try:
-                    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                except (ValueError, TypeError):
-                    continue
+                parsed = parse_utc_datetime(raw)
+                if parsed is not None:
+                    return parsed
         return None
 
     @staticmethod
@@ -389,8 +380,7 @@ class LoversLabFeedAdapter(BaseAdapter):
                 pass
         raw = entry.get("published") or entry.get("pubDate")
         if raw:
-            try:
-                return datetime.fromisoformat(raw.replace("Z", "+00:00")).isoformat()
-            except (ValueError, TypeError):
-                pass
+            parsed = parse_utc_datetime(raw)
+            if parsed is not None:
+                return parsed.isoformat()
         return None

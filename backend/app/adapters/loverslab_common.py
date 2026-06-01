@@ -1,7 +1,27 @@
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.models.mod_item import ModItem
+from app.utils.boolean import parse_bool
+from app.utils.time import parse_utc_datetime
+
+
+def is_allowed_loverslab_url(url: str, allowed_hosts: set[str]) -> bool:
+    """判断内部条件是否成立。"""
+    host = (urlsplit(url).hostname or "").lower()
+    return host in allowed_hosts
+
+
+def validate_loverslab_url(url: str, *, kind: str, allowed_hosts: set[str]) -> str:
+    """校验内部输入是否符合业务约束。"""
+    normalized = (url or "").strip()
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"LoversLab {kind} URL must be an absolute http(s) URL")
+    if not is_allowed_loverslab_url(normalized, allowed_hosts):
+        raise ValueError(f"LoversLab {kind} URL host is not allowed: {normalized}")
+    return normalized
 
 
 def parse_loverslab_updated_at(value: Any) -> datetime | None:
@@ -15,12 +35,9 @@ def parse_loverslab_updated_at(value: Any) -> datetime | None:
     if not text:
         return None
 
-    try:
-        iso = text.replace("Z", "+00:00")
-        parsed = datetime.fromisoformat(iso)
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-    except ValueError:
-        pass
+    parsed = parse_utc_datetime(text)
+    if parsed is not None:
+        return parsed
 
     for fmt in ("%b %d, %Y %H:%M", "%b %d, %Y", "%B %d, %Y %H:%M", "%B %d, %Y"):
         try:
@@ -48,6 +65,6 @@ def loverslab_mod_item_from_raw(raw_item: dict) -> ModItem:
         tags=raw_item.get("tags", []),
         thumbnail_url=raw_item.get("thumbnail_url") or "",
         updated_at=parse_loverslab_updated_at(raw_item.get("updated_at_remote")),
-        is_adult=raw_item.get("adult_content", False),
+        is_adult=parse_bool(raw_item.get("adult_content")),
         raw=raw_item,
     )

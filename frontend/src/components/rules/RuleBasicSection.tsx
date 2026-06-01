@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/Input";
+import { MAX_RULE_INTERVAL_MINUTES, MIN_RULE_INTERVAL_MINUTES } from "@/constants/rules";
 import { useRuleEditorStore } from "@/stores/ruleEditorStore";
+import { parseIntegerInput } from "@/utils/numberInput";
 
 export const RuleBasicSection: React.FC = () => {
   const { t } = useTranslation();
@@ -34,8 +36,8 @@ export const RuleBasicSection: React.FC = () => {
       <Input
         label={t("rules.basic.intervalMinutesLabel")}
         type="number"
-        min={1}
-        max={1440}
+        min={MIN_RULE_INTERVAL_MINUTES}
+        max={MAX_RULE_INTERVAL_MINUTES}
         value={intervalText}
         onChange={(e) => {
           const raw = e.target.value.trim();
@@ -43,16 +45,21 @@ export const RuleBasicSection: React.FC = () => {
           if (!raw) {
             return;
           }
-          const parsed = Number(raw);
-          if (!Number.isFinite(parsed) || parsed < 1) {
+          const parsed = parseIntegerInput(raw, { min: MIN_RULE_INTERVAL_MINUTES, max: MAX_RULE_INTERVAL_MINUTES });
+          if (parsed == null) {
             return;
           }
-          setBasicInfo({ intervalMinutes: Math.min(1440, Math.floor(parsed)) });
+          setBasicInfo({ intervalMinutes: parsed });
         }}
         onBlur={() => {
-          const parsed = Number(intervalText);
-          if (!Number.isFinite(parsed) || parsed < 1) {
+          const parsed = parseIntegerInput(intervalText, {
+            min: MIN_RULE_INTERVAL_MINUTES,
+            max: MAX_RULE_INTERVAL_MINUTES,
+          });
+          if (parsed == null) {
             setIntervalText(String(intervalMinutes));
+          } else {
+            setIntervalText(String(parsed));
           }
         }}
         className="h-10 rounded-lg border-slate-300"

@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Search,
   Play,
   Loader2,
   RefreshCw,
@@ -15,41 +14,74 @@ import {
   EyeOff,
   Clock,
   Undo2,
-  X,
   Gamepad2,
   Database,
   ShieldCheck,
   Languages,
-  Info,
   TrendingUp,
+  DownloadCloud,
+  Search,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { ModalHeader, ModalShell } from "@/components/ui/Modal";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { FilterBarButton, FilterButtonGroup, FilterInput, FilterSelect } from "@/components/ui/FilterControls";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { ModCard } from "@/components/ModCard";
 import { ModStatsLine } from "@/components/ModStatsLine";
 import { SourceBadge } from "@/components/SourceBadge";
+import { ModFilterPanel } from "@/components/ModFilterPanel";
+import { Panel } from "@/components/ui/Panel";
 import {
   fetchIgnoredMods,
   fetchModGames,
   fetchMods,
   generateModIntroduction,
   ignoreMod,
-  regenerateModSummary,
   unignoreMod,
 } from "@/api/mods";
-import { fetchJobRun, runDiscoveryAll } from "@/api/jobs";
-import { addFavorite, fetchFavorites, removeFavorite } from "@/api/favorites";
+import { importNexusModsGame, pollJobRun, runDiscoveryAll } from "@/api/jobs";
+import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavorites, removeFavorite } from "@/api/favorites";
+import { useSummaryRegeneration } from "@/hooks/useSummaryRegeneration";
 import { useUIStore } from "@/stores/uiStore";
 import { formatModSummary } from "@/utils/modSummary";
-import type { Favorite, ModItem, ModSource, AdultPolicy, SummaryMode } from "@/types";
+import { formatModTitle } from "@/utils/modTitle";
+import { isAdultContent } from "@/utils/modAdult";
+import { parseIntegerInput, parseWholeIntegerInput } from "@/utils/numberInput";
+import type { ModItem, ModSource, AdultPolicy, SummaryMode } from "@/types";
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE_OPTIONS = [20, 50, 80, 180] as const;
+type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
+const DEFAULT_PAGE_SIZE: PageSize = 20;
+const DISCOVER_PAGE_SIZE_STORAGE_KEY = "modWatcher.discover.pageSize";
 type DiscoverViewMode = "card" | "list";
+
+function isPageSize(value: number): value is PageSize {
+  return PAGE_SIZE_OPTIONS.includes(value as PageSize);
+}
+
+function getInitialPageSize(): PageSize {
+  if (typeof window === "undefined") return DEFAULT_PAGE_SIZE;
+  try {
+    const stored = parseWholeIntegerInput(window.localStorage.getItem(DISCOVER_PAGE_SIZE_STORAGE_KEY) || "");
+    return typeof stored === "number" && isPageSize(stored) ? stored : DEFAULT_PAGE_SIZE;
+  } catch {
+    return DEFAULT_PAGE_SIZE;
+  }
+}
+
+function savePageSize(pageSize: PageSize) {
+  try {
+    window.localStorage.setItem(DISCOVER_PAGE_SIZE_STORAGE_KEY, String(pageSize));
+  } catch {
+    // Ignore storage failures so the selector remains usable in restricted browsers.
+  }
+}
 
 function SkeletonCard() {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden animate-pulse">
+    <Panel padding="none" className="overflow-hidden animate-pulse">
       <div className="aspect-[300/169] bg-gray-200" />
       <div className="p-4 space-y-2">
         <div className="h-4 bg-gray-200 rounded w-3/4" />
@@ -62,45 +94,7 @@ function SkeletonCard() {
         <div className="h-3 bg-gray-200 rounded w-2/3" />
         <div className="h-9 bg-gray-200 rounded mt-2" />
       </div>
-    </div>
-  );
-}
-
-function ToolbarSelect({
-  label,
-  value,
-  onChange,
-  icon,
-  children,
-  className = "",
-}: {
-  label: string;
-  value: string;
-  onChange: (event: React.ChangeEvent<HTMLSelectElement>) => void;
-  icon: React.ReactNode;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <label className={`block min-w-0 ${className}`}>
-      <span className="mb-1.5 block text-xs font-semibold text-slate-500">{label}</span>
-      <span className="relative block">
-        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
-          {icon}
-        </span>
-        <select
-          value={value}
-          onChange={onChange}
-          className="h-11 w-full appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-9 text-sm font-semibold text-slate-700 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-        >
-          {children}
-        </select>
-        <ChevronRight
-          size={15}
-          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rotate-90 text-slate-400"
-        />
-      </span>
-    </label>
+    </Panel>
   );
 }
 
@@ -126,18 +120,25 @@ const Discover: React.FC = () => {
   const [searchText, setSearchText] = useState("");
   const [search, setSearch] = useState("");
   const [source, setSource] = useState<ModSource | "">("");
+  const [contentLanguage, setContentLanguage] = useState("any");
   const [sort, setSort] = useState("updated_at_remote");
   const [adultPolicy, setAdultPolicy] = useState<AdultPolicy>("include");
   const [viewMode, setViewMode] = useState<DiscoverViewMode>("card");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(getInitialPageSize);
   const [isRunning, setIsRunning] = useState(false);
+  const [isImportingGame, setIsImportingGame] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importGameDomain, setImportGameDomain] = useState("");
+  const [pageInput, setPageInput] = useState("1");
   const [lastResult, setLastResult] = useState("");
   const [ignoredListOpen, setIgnoredListOpen] = useState(false);
-  const [regeneratingSummaryIds, setRegeneratingSummaryIds] = useState<Set<number>>(new Set());
-  const [metricsNoticeVisible, setMetricsNoticeVisible] = useState(true);
+  const [pendingHideModId, setPendingHideModId] = useState<number | null>(null);
+  const [pendingUnfavoriteModId, setPendingUnfavoriteModId] = useState<number | null>(null);
   const discoveryRunRef = useRef(0);
+  const gameImportRunRef = useRef(0);
 
-  const offset = (page - 1) * PAGE_SIZE;
+  const offset = (page - 1) * pageSize;
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -160,29 +161,21 @@ const Discover: React.FC = () => {
     queryFn: fetchFavorites,
   });
 
-  const favoriteByModId = useMemo(() => {
-    const pairs = new Map<number, Favorite>();
-    for (const favorite of favorites) {
-      const modId = getFavoriteModId(favorite);
-      if (modId !== undefined) {
-        pairs.set(modId, favorite);
-      }
-    }
-    return pairs;
-  }, [favorites]);
+  const favoriteByModId = useMemo(() => mapFavoritesByModId(favorites), [favorites]);
 
   const queryParams = useMemo(
     () => ({
       game: game || undefined,
       search: search || undefined,
       source: source || undefined,
+      contentLanguage: contentLanguage === "any" ? undefined : contentLanguage,
       adultContent: adultPolicy,
       sortBy: sort,
       sortOrder: "desc" as const,
       offset,
-      limit: PAGE_SIZE,
+      limit: pageSize,
     }),
-    [adultPolicy, game, offset, search, sort, source]
+    [adultPolicy, contentLanguage, game, offset, pageSize, search, sort, source]
   );
 
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -202,28 +195,19 @@ const Discover: React.FC = () => {
     enabled: ignoredListOpen,
   });
 
-  const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
+  const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
   const updatedLabel = isLoading ? t("common.loading") : t("discover.listLoaded");
 
-  const handleGameChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setGame(e.target.value);
-    setPage(1);
-  };
+  useEffect(() => {
+    if (!data || totalPages <= 0) return;
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [data, page, totalPages]);
 
-  const handleSourceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setSource(e.target.value as ModSource | "");
-    setPage(1);
-  };
-
-  const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setSort(e.target.value);
-    setPage(1);
-  };
-
-  const handleAdultChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setAdultPolicy(e.target.value as AdultPolicy);
-    setPage(1);
-  };
+  useEffect(() => {
+    setPageInput(String(page));
+  }, [page]);
 
   const handleRunDiscovery = async () => {
     const runToken = discoveryRunRef.current + 1;
@@ -235,23 +219,24 @@ const Discover: React.FC = () => {
       const result = await runDiscoveryAll();
       if (!isCurrentRun()) return;
       setLastResult(t("jobs.queued", { jobId: result.job_id }));
-      for (let i = 0; i < 60; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        if (!isCurrentRun()) return;
-        const job = await fetchJobRun(result.job_id);
-        if (!isCurrentRun()) return;
-        if (job.status === "queued" || job.status === "running") {
+      const pollResult = await pollJobRun(result.job_id, {
+        isActive: isCurrentRun,
+        onRunning: (job) => {
           setLastResult(t("jobs.running", { jobId: result.job_id, status: t(`jobs.status.${job.status}`) }));
-          continue;
-        }
-        if (job.status === "failed") {
-          setLastResult(t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }));
-          return;
-        }
-        setLastResult(t("jobs.foundMods", { count: job.items_matched }));
-        refetch();
+        },
+      });
+      if (pollResult.status === "cancelled") return;
+      if (pollResult.status === "timeout") {
+        setLastResult(t("jobs.timeout"));
         return;
       }
+      const job = pollResult.job;
+      if (job.status === "failed") {
+        setLastResult(t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }));
+        return;
+      }
+      setLastResult(t("jobs.foundMods", { count: job.items_matched }));
+      refetch();
     } catch (e) {
       if (isCurrentRun()) {
         setLastResult(t("jobs.failed", { error: (e as Error).message }));
@@ -263,9 +248,58 @@ const Discover: React.FC = () => {
     }
   };
 
+  const handleImportNexusGame = async () => {
+    const gameDomainName = importGameDomain.trim().toLowerCase();
+    if (!gameDomainName) {
+      setLastResult(t("discover.importGameRequired"));
+      return;
+    }
+    const runToken = gameImportRunRef.current + 1;
+    gameImportRunRef.current = runToken;
+    setIsImportingGame(true);
+    setLastResult("");
+    const isCurrentRun = () => gameImportRunRef.current === runToken;
+    try {
+      const result = await importNexusModsGame({ gameDomainName });
+      if (!isCurrentRun()) return;
+      setLastResult(t("discover.importQueued", { jobId: result.job_id, game: gameDomainName }));
+      setImportDialogOpen(false);
+      setImportGameDomain("");
+      const pollResult = await pollJobRun(result.job_id, {
+        attempts: 120,
+        isActive: isCurrentRun,
+        onRunning: (job) => {
+          setLastResult(t("jobs.running", { jobId: result.job_id, status: t(`jobs.status.${job.status}`) }));
+        },
+      });
+      if (pollResult.status === "cancelled") return;
+      if (pollResult.status === "timeout") {
+        setLastResult(t("jobs.timeout"));
+        return;
+      }
+      const job = pollResult.job;
+      if (job.status === "failed") {
+        setLastResult(t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }));
+        return;
+      }
+      setLastResult(t("discover.importFinished", { created: job.items_matched, scanned: job.items_scanned }));
+      queryClient.invalidateQueries({ queryKey: ["mod-games"] });
+      refetch();
+    } catch (e) {
+      if (isCurrentRun()) {
+        setLastResult(t("jobs.failed", { error: (e as Error).message }));
+      }
+    } finally {
+      if (isCurrentRun()) {
+        setIsImportingGame(false);
+      }
+    }
+  };
+
   useEffect(() => {
     return () => {
       discoveryRunRef.current += 1;
+      gameImportRunRef.current += 1;
     };
   }, []);
 
@@ -278,7 +312,14 @@ const Discover: React.FC = () => {
   });
 
   const handleIgnore = (modId: number) => {
-    ignoreMutation.mutate(modId);
+    setPendingHideModId(modId);
+  };
+
+  const handleConfirmHide = () => {
+    if (pendingHideModId === null) return;
+    ignoreMutation.mutate(pendingHideModId, {
+      onSettled: () => setPendingHideModId(null),
+    });
   };
 
   const unignoreMutation = useMutation({
@@ -305,36 +346,27 @@ const Discover: React.FC = () => {
   });
 
   const handleToggleFavorite = (modId: number) => {
+    if (favoriteByModId.has(modId)) {
+      setPendingUnfavoriteModId(modId);
+      return;
+    }
     favoriteMutation.mutate(modId);
   };
 
-  const regenerateSummaryMutation = useMutation({
-    mutationFn: regenerateModSummary,
-    onMutate: async (modId: number) => {
-      setRegeneratingSummaryIds((prev) => {
-        const next = new Set(prev);
-        next.add(modId);
-        return next;
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["mods"] });
-      setTimeout(() => queryClient.invalidateQueries({ queryKey: ["mods"] }), 5000);
-    },
-    onSettled: (_data, _error, modId) => {
-      setRegeneratingSummaryIds((prev) => {
-        const next = new Set(prev);
-        if (typeof modId === "number") {
-          next.delete(modId);
-        }
-        return next;
-      });
-    },
-  });
-
-  const handleRegenerateSummary = (modId: number) => {
-    regenerateSummaryMutation.mutate(modId);
+  const handleConfirmUnfavorite = () => {
+    if (pendingUnfavoriteModId === null) return;
+    favoriteMutation.mutate(pendingUnfavoriteModId, {
+      onSettled: () => setPendingUnfavoriteModId(null),
+    });
   };
+
+  const { regenerateSummary: handleRegenerateSummary, regeneratingSummaryIds } = useSummaryRegeneration({
+    t,
+    setStatus: setLastResult,
+    primaryQueryKey: ["mods"],
+    extraQueryKeys: [["favorites"]],
+    refetch,
+  });
 
   const generateIntroductionMutation = useMutation({
     mutationFn: generateModIntroduction,
@@ -362,8 +394,21 @@ const Discover: React.FC = () => {
       pages.push(i);
     }
 
+    const jumpToPage = () => {
+      const clamped = parseIntegerInput(pageInput, { min: 1, max: totalPages });
+      if (clamped === null || clamped === undefined) {
+        setPageInput(String(page));
+        return;
+      }
+      if (clamped !== page) {
+        setPage(clamped);
+      } else {
+        setPageInput(String(clamped));
+      }
+    };
+
     return (
-      <div className="flex items-center justify-center gap-1 mt-8">
+      <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
         <Button
           variant="outline"
           size="sm"
@@ -410,6 +455,25 @@ const Discover: React.FC = () => {
         >
           <ChevronRight size={16} />
         </Button>
+        <div className="ml-2 inline-flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            max={totalPages}
+            value={pageInput}
+            onChange={(e) => setPageInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                jumpToPage();
+              }
+            }}
+            className="h-9 w-24 rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            aria-label={t("discover.pageJumpInputLabel")}
+          />
+          <Button type="button" variant="outline" size="sm" onClick={jumpToPage}>
+            {t("discover.pageJumpAction")}
+          </Button>
+        </div>
       </div>
     );
   };
@@ -426,132 +490,161 @@ const Discover: React.FC = () => {
                 <h1 className="text-3xl font-bold tracking-normal text-slate-950">{t("discover.title")}</h1>
                 <p className="mt-2 text-sm font-medium text-slate-500">{t("discover.subtitle")}</p>
               </div>
-              <Button
-                onClick={handleRunDiscovery}
-                disabled={isRunning}
-                className="h-12 rounded-lg bg-blue-600 px-5 text-base shadow-sm shadow-blue-200 hover:bg-blue-700"
-              >
-                {isRunning ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <Play size={18} />
-                )}
-                <span className="ml-2">
-                  {isRunning ? t("discover.running") : t("discover.runDiscovery")}
-                </span>
-              </Button>
+              <div className="flex items-center gap-3">
+                <Button
+                  type="button"
+                  onClick={() => setImportDialogOpen(true)}
+                  className="h-12 rounded-lg bg-slate-900 px-4 text-white shadow-sm hover:bg-slate-800"
+                >
+                  <DownloadCloud size={17} />
+                  <span className="ml-2">{t("discover.importGame")}</span>
+                </Button>
+                <Button
+                  onClick={handleRunDiscovery}
+                  disabled={isRunning}
+                  className="h-12 rounded-lg bg-blue-600 px-5 text-base shadow-sm shadow-blue-200 hover:bg-blue-700"
+                >
+                  {isRunning ? (
+                    <Loader2 size={18} className="animate-spin" />
+                  ) : (
+                    <Play size={18} />
+                  )}
+                  <span className="ml-2">
+                    {isRunning ? t("discover.running") : t("discover.runDiscovery")}
+                  </span>
+                </Button>
+              </div>
             </div>
 
-            <section className="mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-              <label className="mb-4 block">
-                <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t("discover.search")}</span>
-                <span className="relative block">
-                  <Search
-                    size={18}
-                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
-                  />
-                  <input
-                    value={searchText}
-                    onChange={(e) => setSearchText(e.target.value)}
-                    placeholder={t("discover.searchPlaceholder")}
-                    className="h-11 w-full rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-10 text-sm font-semibold text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  />
-                  {searchText && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearchText("");
-                        setSearch("");
-                        setPage(1);
-                      }}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                      aria-label={t("common.close")}
-                    >
-                      <X size={16} />
-                    </button>
-                  )}
-                </span>
-              </label>
-
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1.05fr_1.05fr_1fr_1fr_0.75fr]">
-                <ToolbarSelect
-                  label={t("discover.game")}
-                  value={game}
-                  onChange={handleGameChange}
-                  icon={<Gamepad2 size={18} />}
-                >
+            <ModFilterPanel
+              searchValue={searchText}
+              searchLabel={t("discover.search")}
+              searchPlaceholder={t("discover.searchPlaceholder")}
+              closeAriaLabel={t("common.close")}
+              onSearchChange={setSearchText}
+              onSearchClear={() => {
+                setSearchText("");
+                setSearch("");
+                setPage(1);
+              }}
+              fields={[
+                {
+                  key: "game",
+                  label: t("discover.game"),
+                  value: game,
+                  onChange: (value) => {
+                    setGame(value);
+                    setPage(1);
+                  },
+                  icon: <Gamepad2 size={18} />,
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[320px]",
+                  children: (
+                    <>
                       <option value="">{t("discover.allGames")}</option>
                       {gameOptions.map((g) => (
                         <option key={g.value} value={g.value}>
                           {g.label} ({g.count})
                         </option>
                       ))}
-                </ToolbarSelect>
-
-                <ToolbarSelect
-                  label={t("discover.source")}
-                  value={source}
-                  onChange={handleSourceChange}
-                  icon={<Database size={18} />}
-                >
+                    </>
+                  ),
+                },
+                {
+                  key: "source",
+                  label: t("discover.source"),
+                  value: source,
+                  onChange: (value) => {
+                    setSource(value as ModSource | "");
+                    setPage(1);
+                  },
+                  icon: <Database size={18} />,
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[320px]",
+                  children: (
+                    <>
                       <option value="">{t("discover.allSources")}</option>
                       <option value="nexusmods">{t("discover.sourceNexusmods")}</option>
                       <option value="loverslab">{t("discover.sourceLoverslab")}</option>
-                </ToolbarSelect>
-
-                <ToolbarSelect
-                  label={t("discover.sortBy")}
-                  value={sort}
-                  onChange={handleSortChange}
-                  icon={<Clock size={18} />}
-                >
+                    </>
+                  ),
+                },
+                {
+                  key: "sort",
+                  label: t("discover.sortBy"),
+                  value: sort,
+                  onChange: (value) => {
+                    setSort(value);
+                    setPage(1);
+                  },
+                  icon: <Clock size={18} />,
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  children: (
+                    <>
                       {SORTS.map((s) => (
                         <option key={s.value} value={s.value}>
                           {s.label}
                         </option>
                       ))}
-                </ToolbarSelect>
-
-                <ToolbarSelect
-                  label={t("discover.adultPolicy")}
-                  value={adultPolicy}
-                  onChange={handleAdultChange}
-                  icon={<ShieldCheck size={18} />}
-                >
+                    </>
+                  ),
+                },
+                {
+                  key: "adultPolicy",
+                  label: t("discover.adultPolicy"),
+                  value: adultPolicy,
+                  onChange: (value) => {
+                    setAdultPolicy(value as AdultPolicy);
+                    setPage(1);
+                  },
+                  icon: <ShieldCheck size={18} />,
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  children: (
+                    <>
                       {ADULT_OPTIONS.map((o) => (
                         <option key={o.value} value={o.value}>
                           {o.label}
                         </option>
                       ))}
-                </ToolbarSelect>
-
-                <ToolbarSelect
-                  label={t("settings.summaryMode")}
-                  value={summaryMode}
-                  onChange={(e) => setSummaryMode(e.target.value as SummaryMode)}
-                  icon={<Languages size={18} />}
-                >
+                    </>
+                  ),
+                },
+                {
+                  key: "contentLanguage",
+                  label: t("discover.contentLanguage"),
+                  value: contentLanguage,
+                  onChange: (value) => {
+                    setContentLanguage(value);
+                    setPage(1);
+                  },
+                  icon: <Languages size={18} />,
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  children: (
+                    <>
+                      <option value="any">{t("discover.contentLanguageAny")}</option>
+                      <option value="en">{t("discover.contentLanguageEn")}</option>
+                      <option value="zh">{t("discover.contentLanguageZh")}</option>
+                      <option value="ja">{t("discover.contentLanguageJa")}</option>
+                      <option value="ko">{t("discover.contentLanguageKo")}</option>
+                      <option value="ru">{t("discover.contentLanguageRu")}</option>
+                    </>
+                  ),
+                },
+                {
+                  key: "summaryMode",
+                  label: t("settings.summaryMode"),
+                  value: summaryMode,
+                  onChange: (value) => setSummaryMode(value as SummaryMode),
+                  icon: <Languages size={18} />,
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  children: (
+                    <>
                       <option value="original">{t("summary.original")}</option>
                       <option value="translated">{t("summary.translated")}</option>
                       <option value="bilingual">{t("summary.bilingual")}</option>
-                </ToolbarSelect>
-              </div>
-
-              {metricsNoticeVisible && (
-                <div className="mt-4 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-800">
-                  <Info size={18} className="mt-0.5 shrink-0" />
-                  <span className="min-w-0 flex-1">{t("discover.loverslabMetricsNotice")}</span>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-md p-0.5 text-amber-700 hover:bg-amber-100"
-                    onClick={() => setMetricsNoticeVisible(false)}
-                    aria-label={t("common.close")}
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              )}
-            </section>
+                    </>
+                  ),
+                },
+              ]}
+            />
 
             {lastResult && (
               <p className="mb-4 rounded-lg border border-blue-100 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700">
@@ -577,47 +670,64 @@ const Discover: React.FC = () => {
                 </button>
               </div>
 
-              <div className="flex items-center gap-3">
-                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
-                  <button
-                    type="button"
-                    className={`inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-semibold transition ${
-                      viewMode === "card"
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "text-slate-600 hover:bg-slate-50"
-                    }`}
-                    onClick={() => setViewMode("card")}
-                  >
-                    <LayoutGrid size={17} />
-                    {t("discover.viewCard")}
-                  </button>
-                  <button
-                    type="button"
-                    className={`inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-semibold transition ${
-                      viewMode === "list"
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "text-slate-600 hover:bg-slate-50"
-                    }`}
-                    onClick={() => setViewMode("list")}
-                  >
-                    <List size={17} />
-                    {t("discover.viewList")}
-                  </button>
-                </div>
-                <Button
+              <div className="flex flex-wrap items-center gap-3">
+                <FilterSelect
+                  inlineLabel={t("discover.pageSize")}
+                  value={String(pageSize)}
+                  onValueChange={(value) => {
+                    const nextPageSize = parseWholeIntegerInput(value);
+                    if (typeof nextPageSize !== "number" || !isPageSize(nextPageSize)) return;
+                    setPageSize(nextPageSize);
+                    savePageSize(nextPageSize);
+                    setPage(1);
+                  }}
+                >
+                  {PAGE_SIZE_OPTIONS.map((sizeOption) => (
+                    <option key={sizeOption} value={sizeOption}>
+                      {t("discover.pageSizeOption", { count: sizeOption })}
+                    </option>
+                  ))}
+                </FilterSelect>
+                <FilterButtonGroup
+                  containerClassName="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm"
+                  items={[
+                    {
+                      key: "card",
+                      label: (
+                        <>
+                          <LayoutGrid size={17} />
+                          {t("discover.viewCard")}
+                        </>
+                      ),
+                      active: viewMode === "card",
+                      onClick: () => setViewMode("card"),
+                    },
+                    {
+                      key: "list",
+                      label: (
+                        <>
+                          <List size={17} />
+                          {t("discover.viewList")}
+                        </>
+                      ),
+                      active: viewMode === "list",
+                      onClick: () => setViewMode("list"),
+                    },
+                  ]}
+                />
+                <FilterBarButton
                   type="button"
-                  variant="outline"
-                  className="h-11 rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-sm"
+                  className="text-slate-700"
                   onClick={() => setIgnoredListOpen(true)}
                 >
                   <EyeOff size={17} />
                   <span className="ml-2">{t("discover.hiddenList")}</span>
-                </Button>
+                </FilterBarButton>
               </div>
             </div>
 
             {isLoading ? (
-              <div className={viewMode === "card" ? "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" : "space-y-3"}>
+              <div className={viewMode === "card" ? "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5" : "space-y-3"}>
                 {Array.from({ length: 6 }).map((_, i) => (
                   <SkeletonCard key={i} />
                 ))}
@@ -645,13 +755,14 @@ const Discover: React.FC = () => {
             ) : (
               <>
                 {viewMode === "card" ? (
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
                     {data?.items.map((mod) => (
                       <ModCard
                         key={mod.id}
                         mod={mod}
                         isFavorited={favoriteByModId.has(mod.id)}
                         onToggleFavorite={() => handleToggleFavorite(mod.id)}
+                        showBottomFavoriteAction={false}
                         onIgnore={() => handleIgnore(mod.id)}
                         onRegenerateSummary={() => handleRegenerateSummary(mod.id)}
                         regeneratingSummary={regeneratingSummaryIds.has(mod.id)}
@@ -669,6 +780,7 @@ const Discover: React.FC = () => {
                         translated: mod.translated_summary,
                         mode: summaryMode,
                       });
+                      const displayTitle = formatModTitle(mod, summaryMode);
                       return (
                         <Card key={mod.id}>
                           <CardContent className="py-3">
@@ -676,7 +788,7 @@ const Discover: React.FC = () => {
                               <div className="min-w-0 flex-1 space-y-2">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <SourceBadge source={mod.source} />
-                                  {mod.adult_content === true && (
+                                  {isAdultContent(mod.adult_content) && (
                                     <span className="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
                                       NSFW
                                     </span>
@@ -692,10 +804,10 @@ const Discover: React.FC = () => {
                                   href={mod.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="block truncate text-base font-semibold text-gray-900 hover:text-blue-600"
-                                  title={mod.title}
+                                  className="block truncate whitespace-pre-line text-base font-semibold text-gray-900 hover:text-blue-600"
+                                  title={displayTitle}
                                 >
-                                  {mod.title}
+                                  {displayTitle}
                                 </a>
 
                                 <ModStatsLine
@@ -760,6 +872,108 @@ const Discover: React.FC = () => {
           onRestore={(modId) => unignoreMutation.mutate(modId)}
         />
       )}
+      {importDialogOpen && (
+        <ModalShell
+          open={importDialogOpen}
+          onClose={() => !isImportingGame && setImportDialogOpen(false)}
+          size="md"
+          panelClassName="max-w-lg"
+        >
+          <ModalHeader
+            title={t("discover.importGame")}
+            subtitle={t("discover.importGameDomain")}
+            onClose={!isImportingGame ? () => setImportDialogOpen(false) : undefined}
+            closeAriaLabel={t("common.close")}
+          />
+            <FilterInput
+              label={t("discover.importGameDomain")}
+              value={importGameDomain}
+              onValueChange={setImportGameDomain}
+              icon={<DownloadCloud size={18} className="text-slate-500" />}
+              placeholder={t("discover.importGamePlaceholder")}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  handleImportNexusGame();
+                }
+              }}
+              className="placeholder:text-slate-400"
+              fieldClassName="h-11 w-full rounded-lg border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-700"
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setImportDialogOpen(false)}
+                disabled={isImportingGame}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                type="button"
+                onClick={handleImportNexusGame}
+                disabled={isImportingGame}
+                className="bg-slate-900 text-white hover:bg-slate-800"
+              >
+                {isImportingGame ? <Loader2 size={17} className="animate-spin" /> : <DownloadCloud size={17} />}
+                <span className="ml-2">
+                  {isImportingGame ? t("discover.importingGame") : t("discover.importGame")}
+                </span>
+              </Button>
+            </div>
+        </ModalShell>
+      )}
+      {pendingUnfavoriteModId !== null && (
+        <ConfirmModal
+          open
+          onClose={!favoriteMutation.isPending ? () => setPendingUnfavoriteModId(null) : undefined}
+          onCancel={() => setPendingUnfavoriteModId(null)}
+          onConfirm={handleConfirmUnfavorite}
+          title={t("mod.unfavorite")}
+          closeAriaLabel={t("common.close")}
+          confirmLoading={favoriteMutation.isPending}
+          confirmDisabled={favoriteMutation.isPending}
+          confirmText={t("mod.unfavorite")}
+          confirmChildren={
+            <>
+              {favoriteMutation.isPending ? (
+                <Loader2 size={14} className="mr-1.5 animate-spin" />
+              ) : (
+                <Heart size={14} className="fill-white text-white" />
+              )}
+              <span className="ml-1.5">{t("mod.unfavorite")}</span>
+            </>
+          }
+          cancelText={t("common.cancel")}
+        >
+          {t("favorites.confirmRemove")}
+        </ConfirmModal>
+      )}
+      {pendingHideModId !== null && (
+        <ConfirmModal
+          open
+          onClose={!ignoreMutation.isPending ? () => setPendingHideModId(null) : undefined}
+          onCancel={() => setPendingHideModId(null)}
+          onConfirm={handleConfirmHide}
+          title={t("mod.ignore")}
+          closeAriaLabel={t("common.close")}
+          confirmLoading={ignoreMutation.isPending}
+          confirmDisabled={ignoreMutation.isPending}
+          confirmText={t("mod.ignore")}
+          confirmChildren={
+            <>
+              {ignoreMutation.isPending ? (
+                <Loader2 size={14} className="mr-1.5 animate-spin" />
+              ) : (
+                <EyeOff size={14} />
+              )}
+              <span className="ml-1.5">{t("mod.ignore")}</span>
+            </>
+          }
+          cancelText={t("common.cancel")}
+        >
+          {t("discover.confirmHide")}
+        </ConfirmModal>
+      )}
     </div>
   );
 };
@@ -780,26 +994,23 @@ function IgnoredModsDialog({
   onRestore: (modId: number) => void;
 }) {
   const { t } = useTranslation();
+  const summaryMode = useUIStore((s) => s.summaryMode);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-          <div>
-            <h3 className="text-base font-semibold text-gray-900">{t("discover.hiddenList")}</h3>
-            <p className="mt-0.5 text-xs text-gray-500">
-              {t("discover.hiddenListHint", { total })}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {loading ? (
+    <ModalShell
+      open
+      onClose={onClose}
+      size="lg"
+      panelClassName="flex max-h-[82vh] flex-col overflow-hidden"
+    >
+      <ModalHeader
+        title={t("discover.hiddenList")}
+        subtitle={t("discover.hiddenListHint", { total })}
+        onClose={onClose}
+        closeAriaLabel={t("common.close")}
+        className="mb-0 border-b border-gray-200 px-4 py-3"
+      />
+      <div className="flex-1 overflow-y-auto">
+        {loading ? (
             <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-500">
               <Loader2 size={16} className="animate-spin" />
               {t("common.loading")}
@@ -810,55 +1021,52 @@ function IgnoredModsDialog({
             </div>
           ) : (
             <div className="divide-y divide-gray-100">
-              {items.map((item) => (
-                <div key={item.id} className="flex items-start gap-3 px-4 py-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <SourceBadge source={item.source} />
-                      <span className="text-xs text-gray-500">{item.game || item.game_domain || "-"}</span>
+              {items.map((item) => {
+                const displayTitle = formatModTitle(item, summaryMode);
+                return (
+                  <div key={item.id} className="flex items-start gap-3 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <SourceBadge source={item.source} />
+                        <span className="text-xs text-gray-500">{item.game || item.game_domain || "-"}</span>
+                      </div>
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-1 block truncate whitespace-pre-line text-sm font-semibold text-gray-900 hover:text-blue-600"
+                        title={displayTitle}
+                      >
+                        {displayTitle}
+                      </a>
+                      {item.original_summary && (
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">
+                          {item.original_summary}
+                        </p>
+                      )}
                     </div>
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-1 block truncate text-sm font-semibold text-gray-900 hover:text-blue-600"
-                      title={item.title}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onRestore(item.id)}
+                      disabled={restoringId === item.id}
                     >
-                      {item.title}
-                    </a>
-                    {item.original_summary && (
-                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">
-                        {item.original_summary}
-                      </p>
-                    )}
+                      {restoringId === item.id ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <Undo2 size={14} />
+                      )}
+                      <span className="ml-1">{t("discover.restoreHidden")}</span>
+                    </Button>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onRestore(item.id)}
-                    disabled={restoringId === item.id}
-                  >
-                    {restoringId === item.id ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Undo2 size={14} />
-                    )}
-                    <span className="ml-1">{t("discover.restoreHidden")}</span>
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
-        </div>
       </div>
-    </div>
+    </ModalShell>
   );
-}
-
-function getFavoriteModId(favorite: Favorite): number | undefined {
-  const raw = favorite as Favorite & { mod_id?: number };
-  return raw.mod_id ?? favorite.modId;
 }
 
 export default Discover;

@@ -65,23 +65,12 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   const res = await fetch(url.toString(), {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: body === undefined ? undefined : JSON.stringify(body),
     credentials: "include",
   });
 
   if (!res.ok) {
-    let detail: unknown = "";
-    try {
-      const errorBody = await res.json();
-      detail = errorBody.detail ?? errorBody.message ?? "";
-    } catch {
-      // Response body is not JSON or is empty
-    }
-    const detailText = typeof detail === "string" ? detail : JSON.stringify(detail);
-    const message = detailText
-      ? `API Error ${res.status}: ${detailText}`
-      : `API Error: ${res.status} ${res.statusText}`;
-    throw new ApiError(message, res.status, detail);
+    throw await apiErrorFromResponse(res);
   }
 
   if (res.status === 204) {
@@ -89,6 +78,21 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   }
 
   return res.json();
+}
+
+export async function apiErrorFromResponse(res: Response): Promise<ApiError> {
+  let detail: unknown = "";
+  try {
+    const errorBody = await res.json();
+    detail = errorBody.detail ?? errorBody.message ?? "";
+  } catch {
+    // Response body is not JSON or is empty
+  }
+  const detailText = typeof detail === "string" ? detail : JSON.stringify(detail);
+  const message = detailText
+    ? `API Error ${res.status}: ${detailText}`
+    : `API Error: ${res.status} ${res.statusText}`;
+  return new ApiError(message, res.status, detail);
 }
 
 export async function get<T>(endpoint: string, params?: Record<string, string>): Promise<T> {

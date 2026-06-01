@@ -17,6 +17,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import AppSidebar from "@/components/layout/AppSidebar";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import {
   fetchRules,
   deleteRule,
@@ -26,7 +27,9 @@ import {
   importRulesByUrl,
   importRulesFromLocalFile,
 } from "@/api/rules";
-import { fetchJobRun, fetchJobRuns } from "@/api/jobs";
+import { fetchJobRuns, pollJobRun } from "@/api/jobs";
+import { metadataRuleId, parseJobMetadata } from "@/utils/jobMetadata";
+import { formatLocalDateTime } from "@/utils/time";
 import type { WatchRule, ModSource } from "@/types";
 
 const Rules: React.FC = () => {
@@ -100,32 +103,36 @@ const Rules: React.FC = () => {
 
   const pollRuleJob = async (jobId: number, ruleId: number, token: number) => {
     const isCurrentRun = () => mountedRef.current && ruleRunTokensRef.current.get(ruleId) === token;
-    for (let i = 0; i < 60; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      if (!isCurrentRun()) return;
-      const job = await fetchJobRun(jobId);
-      if (!isCurrentRun()) return;
-      if (job.status === "queued" || job.status === "running") {
+    const pollResult = await pollJobRun(jobId, {
+      isActive: isCurrentRun,
+      onRunning: (job) => {
         setRunStatus((prev) => ({
           ...prev,
           [ruleId]: t("jobs.running", { jobId, status: t(`jobs.status.${job.status}`) }),
         }));
-        continue;
-      }
-      if (job.status === "failed") {
-        setRunStatus((prev) => ({
-          ...prev,
-          [ruleId]: t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }),
-        }));
-        return;
-      }
+      },
+    });
+    if (pollResult.status === "cancelled") return;
+    if (pollResult.status === "timeout") {
       setRunStatus((prev) => ({
         ...prev,
-        [ruleId]: t("jobs.foundMods", { count: job.items_matched }),
+        [ruleId]: t("jobs.timeout"),
       }));
-      queryClient.invalidateQueries({ queryKey: ["rules"] });
       return;
     }
+    const job = pollResult.job;
+    if (job.status === "failed") {
+      setRunStatus((prev) => ({
+        ...prev,
+        [ruleId]: t("jobs.failed", { error: job.error_message || t("jobs.failedDefault") }),
+      }));
+      return;
+    }
+    setRunStatus((prev) => ({
+      ...prev,
+      [ruleId]: t("jobs.foundMods", { count: job.items_matched }),
+    }));
+    queryClient.invalidateQueries({ queryKey: ["rules"] });
   };
 
   const getSourceBadgeVariant = (
@@ -147,15 +154,7 @@ const Rules: React.FC = () => {
     const items = recentJobRuns?.items ?? [];
     for (const job of items) {
       if (job.job_name !== "run_rule_discovery") continue;
-      const raw = job.metadata_json;
-      if (!raw) continue;
-      let parsed: Record<string, unknown> = {};
-      try {
-        parsed = JSON.parse(raw) as Record<string, unknown>;
-      } catch {
-        parsed = {};
-      }
-      const ruleId = Number(parsed.rule_id || 0);
+      const ruleId = metadataRuleId(parseJobMetadata(job.metadata_json));
       if (!ruleId || map.has(ruleId)) continue;
       map.set(ruleId, job.finished_at || job.started_at);
     }
@@ -163,11 +162,7 @@ const Rules: React.FC = () => {
   }, [recentJobRuns?.items]);
 
   const formatTime = (value?: string) => {
-    if (!value) return t("rules.neverRun");
-    const normalized = value.includes("T") ? value : value.replace(" ", "T");
-    const date = new Date(normalized);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
+    return formatLocalDateTime(value, t("rules.neverRun"));
   };
 
   const handleExport = async () => {
@@ -188,12 +183,10 @@ const Rules: React.FC = () => {
     queryClient.invalidateQueries({ queryKey: ["job-runs-for-rules"] });
   };
 
-  const handleImportByUrl = async () => {
-    const url = window.prompt(t("rules.importByUrl"));
-    if (!url) return;
+  const runImport = async (importer: () => Promise<{ imported: number; skipped: number }>) => {
     setIsImporting(true);
     try {
-      const result = await importRulesByUrl(url);
+      const result = await importer();
       alert(t("rules.importDone", { imported: result.imported, skipped: result.skipped }));
       refreshAfterImport();
     } catch (err) {
@@ -203,20 +196,17 @@ const Rules: React.FC = () => {
     }
   };
 
+  const handleImportByUrl = async () => {
+    const url = window.prompt(t("rules.importByUrl"));
+    if (!url) return;
+    await runImport(() => importRulesByUrl(url));
+  };
+
   const handleImportLocal: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    setIsImporting(true);
-    try {
-      const result = await importRulesFromLocalFile(file);
-      alert(t("rules.importDone", { imported: result.imported, skipped: result.skipped }));
-      refreshAfterImport();
-    } catch (err) {
-      alert((err as Error).message || t("rules.importFailed"));
-    } finally {
-      setIsImporting(false);
-    }
+    await runImport(() => importRulesFromLocalFile(file));
   };
 
   return (
@@ -368,36 +358,33 @@ const Rules: React.FC = () => {
           )}
 
           {deleteTarget && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-              <div className="bg-white rounded-xl p-6 shadow-xl max-w-sm w-full mx-4">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  {t("rules.deleteTitle")}
-                </h3>
-                <p className="text-sm text-gray-600 mb-4">
-                  {t("rules.deleteConfirm", { name: deleteTarget.name })}
-                </p>
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setDeleteTarget(null)}
-                    disabled={deleteMutation.isPending}
-                  >
-                    {t("common.cancel")}
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => deleteMutation.mutate(deleteTarget.id)}
-                    disabled={deleteMutation.isPending}
-                  >
-                    {deleteMutation.isPending ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      t("common.delete")
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </div>
+            <ConfirmModal
+              open
+              onClose={!deleteMutation.isPending ? () => setDeleteTarget(null) : undefined}
+              onCancel={() => setDeleteTarget(null)}
+              onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
+              title={t("rules.deleteTitle")}
+              closeAriaLabel={t("common.close")}
+              confirmLoading={deleteMutation.isPending}
+              confirmDisabled={deleteMutation.isPending}
+              confirmText={t("common.delete")}
+              confirmChildren={
+                <>
+                  {deleteMutation.isPending ? (
+                    <Loader2 size={14} className="mr-1.5 animate-spin" />
+                  ) : (
+                    t("common.delete")
+                  )}
+                </>
+              }
+              cancelText={t("common.cancel")}
+              messageClassName="text-sm text-gray-600 mb-4"
+              size="sm"
+              panelClassName="max-w-sm mx-4 rounded-xl p-0"
+              actionsClassName="flex justify-end gap-2"
+            >
+              {t("rules.deleteConfirm", { name: deleteTarget.name })}
+            </ConfirmModal>
           )}
         </main>
       </div>

@@ -19,7 +19,6 @@ from app.services.settings_payload_service import (
     SettingsPayloadError,
     prepare_settings_update,
     redact_settings_for_response,
-    restore_masked_provider_api_keys,
     sanitize_export_settings,
     settings_import_items,
 )
@@ -27,8 +26,6 @@ from app.services.settings_service import SettingsService
 from app.services.windows_autostart_service import AutoStartUnsupportedError, set_windows_auto_start
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-
-_restore_masked_provider_api_keys = restore_masked_provider_api_keys
 
 
 class AutoStartRequest(BaseModel):

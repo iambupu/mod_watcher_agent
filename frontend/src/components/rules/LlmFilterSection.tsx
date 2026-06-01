@@ -1,6 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import type { LlmFilterConfig, LlmFilterMode, CommonRuleFilters } from "@/types";
+import { clampNumberInput } from "@/utils/numberInput";
 
 interface LlmFilterSectionProps {
   llmFilter?: LlmFilterConfig;
@@ -15,7 +16,11 @@ export const LlmFilterSection: React.FC<LlmFilterSectionProps> = ({
   const enabled = llmFilter?.enabled ?? false;
   const prompt = llmFilter?.prompt ?? "";
   const mode = llmFilter?.mode ?? "assist_only";
-  const minConfidence = llmFilter?.minConfidence ?? 0.5;
+  const minConfidence = clampNumberInput(String(llmFilter?.minConfidence ?? ""), {
+    min: 0,
+    max: 1,
+    fallback: 0.5,
+  });
 
   const handleToggleEnabled = () => {
     onChange({
@@ -51,7 +56,7 @@ export const LlmFilterSection: React.FC<LlmFilterSectionProps> = ({
         enabled,
         prompt,
         mode,
-        minConfidence: Number(e.target.value),
+        minConfidence: clampNumberInput(e.target.value, { min: 0, max: 1, fallback: minConfidence }),
       },
     });
   };

@@ -8,8 +8,14 @@ import httpx
 from sqlmodel import Session
 
 from app.logger import redact_sensitive_text
+from app.schemas.watch_rule import NotificationConfig
+from app.utils.boolean import parse_bool
+from app.utils.json import json_object
 
 logger = logging.getLogger(__name__)
+
+
+EXTERNAL_NOTIFICATION_CHANNELS = {"telegram", "discord"}
 
 
 @dataclass
@@ -27,6 +33,14 @@ def _is_http_url(url: str) -> bool:
         return False
 
 
+def _record_status_for_delivery(result: DeliveryResult) -> str:
+    if result.ok:
+        return "sent"
+    if result.skipped:
+        return "skipped"
+    return "failed"
+
+
 class NotificationService:
     """Service for sending notifications via Telegram and Discord."""
 
@@ -41,26 +55,30 @@ class NotificationService:
         channels: list[str] | None = None,
     ) -> tuple[bool, bool]:
         """发送内部通知或外部请求。"""
-        selected = set(["telegram", "discord"] if channels is None else channels)
+        selected = EXTERNAL_NOTIFICATION_CHANNELS if channels is None else set(channels) & EXTERNAL_NOTIFICATION_CHANNELS
         telegram_ok = False
         discord_ok = False
         if "telegram" in selected:
-            telegram_ok = await self.send_telegram_message(text)
+            telegram_result = await self.send_telegram_message_result(text)
+            telegram_ok = telegram_result.ok
             await self._record(
                 "telegram",
                 "chat",
                 subject,
                 text,
-                "sent" if telegram_ok else "failed",
+                _record_status_for_delivery(telegram_result),
+                telegram_result.reason,
             )
         if "discord" in selected:
-            discord_ok = await self.send_discord_webhook(text)
+            discord_result = await self.send_discord_webhook_result(text)
+            discord_ok = discord_result.ok
             await self._record(
                 "discord",
                 "webhook",
                 subject,
                 text,
-                "sent" if discord_ok else "failed",
+                _record_status_for_delivery(discord_result),
+                discord_result.reason,
             )
         return telegram_ok, discord_ok
 
@@ -72,9 +90,9 @@ class NotificationService:
         """发送通知或外部请求。"""
         from app.services.settings_service import SettingsService
         svc = SettingsService(self.session)
-        if svc.get("notifications_enabled") == "false":
+        if not parse_bool(svc.get("notifications_enabled"), default=True):
             return DeliveryResult(False, "Notification delivery is disabled", skipped=True)
-        if svc.get("telegram_enabled") == "false":
+        if not parse_bool(svc.get("telegram_enabled"), default=True):
             return DeliveryResult(False, "Telegram notification is disabled", skipped=True)
         from app.config import settings
         token = svc.get("telegram_bot_token") or settings.TELEGRAM_BOT_TOKEN
@@ -101,9 +119,9 @@ class NotificationService:
         """发送通知或外部请求。"""
         from app.services.settings_service import SettingsService
         svc = SettingsService(self.session)
-        if svc.get("notifications_enabled") == "false":
+        if not parse_bool(svc.get("notifications_enabled"), default=True):
             return DeliveryResult(False, "Notification delivery is disabled", skipped=True)
-        if svc.get("discord_enabled") == "false":
+        if not parse_bool(svc.get("discord_enabled"), default=True):
             return DeliveryResult(False, "Discord notification is disabled", skipped=True)
         from app.config import settings
         url = svc.get("discord_webhook_url") or settings.DISCORD_WEBHOOK_URL
@@ -181,13 +199,7 @@ class NotificationService:
     @staticmethod
     def parse_notification_config(rule):
         """解析输入内容并返回结构化结果。"""
-        import json
-
-        from app.schemas.watch_rule import NotificationConfig
-        try:
-            data = json.loads(rule.notification_json) if hasattr(rule, "notification_json") else {}
-        except (json.JSONDecodeError, TypeError):
-            data = {}
+        data = json_object(getattr(rule, "notification_json", None))
         return NotificationConfig(**data)
 
     async def notify_new_mods(self, mods, rule_name, notification_config=None):
@@ -196,7 +208,7 @@ class NotificationService:
             return {"telegram_ok": True, "discord_ok": True, "notified_count": 0}
         channels = None
         if notification_config is not None:
-            channels = [channel for channel in notification_config.channels if channel in {"telegram", "discord"}]
+            channels = [channel for channel in notification_config.channels if channel in EXTERNAL_NOTIFICATION_CHANNELS]
         safe_rule_name = escape(str(rule_name), quote=False)
         lines = [f"\U0001f195 <b>\u65b0 Mod \u53d1\u73b0</b> \u2014 \u89c4\u5219: {safe_rule_name}", f"\u5171 {len(mods)} \u4e2a:", ""]
         for m in mods[:5]:
@@ -209,7 +221,7 @@ class NotificationService:
                 lines.append(f"\u2022 {title}")
         text = "\n".join(lines)
         tg, dc = await self._send_and_record(f"New Mods: rule={rule_name}", text, channels=channels)
-        selected = set(["telegram", "discord"] if channels is None else channels)
+        selected = EXTERNAL_NOTIFICATION_CHANNELS if channels is None else set(channels) & EXTERNAL_NOTIFICATION_CHANNELS
         return {
             "telegram_ok": tg if "telegram" in selected else True,
             "discord_ok": dc if "discord" in selected else True,
@@ -234,5 +246,6 @@ class NotificationService:
                     telegram_ok = False
                 if not dc:
                     discord_ok = False
-                notified += 1
+                if tg or dc:
+                    notified += 1
         return {"telegram_ok": telegram_ok, "discord_ok": discord_ok, "notified_count": notified}

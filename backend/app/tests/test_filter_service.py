@@ -31,6 +31,11 @@ class FakeRuleV2:
         self.filters_json = _build_filters_json(**kwargs)
 
 
+class FakeRawRule:
+    def __init__(self, filters_json):
+        self.filters_json = filters_json
+
+
 _MOD_DEFAULTS = {
     "source": "nexusmods",
     "external_id": "1001",
@@ -76,7 +81,15 @@ def session_fixture(engine):
 # Integration tests via apply_filters
 # ---------------------------------------------------------------------------
 
+
 class TestApplyFiltersV2:
+    def test_invalid_stored_filters_fall_back_to_defaults(self, service, session):
+        mods = [_make_mod(title="Unfiltered Mod")]
+
+        result = service.apply_filters(FakeRawRule("[not-object]"), mods, session)
+
+        assert result == mods
+        assert service.stats == {"passed_deterministic": 1, "passed_llm": 1}
 
     def test_keyword_include(self, service, session):
         """includeKeywords: keep only mods matching at least one keyword."""
@@ -111,6 +124,19 @@ class TestApplyFiltersV2:
         assert len(result) == 1
         assert result[0]["external_id"] == "1"
 
+    def test_min_metric_filters_tolerate_string_values(self, service, session):
+        rule = FakeRuleV2(minDownloads=500, minEndorsements=20, minLikes=5)
+        mods = [
+            _make_mod(external_id="1", downloads="1000", endorsements="25", likes="6"),
+            _make_mod(external_id="2", downloads="many", endorsements="25", likes="6"),
+            _make_mod(external_id="3", downloads="1000", endorsements="-1", likes="6"),
+            _make_mod(external_id="4", downloads="1000", endorsements="25", likes="unknown"),
+        ]
+
+        result = service.apply_filters(rule, mods, session)
+
+        assert [item["external_id"] for item in result] == ["1"]
+
     def test_min_endorsements_filter(self, service, session):
         rule = FakeRuleV2(minEndorsements=20)
         mods = [
@@ -132,6 +158,17 @@ class TestApplyFiltersV2:
         assert len(result) == 1
         assert result[0]["external_id"] == "1"
 
+    def test_adult_content_string_false_is_not_treated_as_adult(self, service, session):
+        rule = FakeRuleV2(adultPolicy="exclude")
+        mods = [
+            _make_mod(external_id="1", title="String False Mod", adult_content="false"),
+            _make_mod(external_id="2", title="String True Mod", adult_content="true"),
+        ]
+
+        result = service.apply_filters(rule, mods, session)
+
+        assert [item["external_id"] for item in result] == ["1"]
+
     def test_adult_content_allow(self, service, session):
         """adultPolicy='include' keeps everything regardless of adult flag."""
         rule = FakeRuleV2(adultPolicy="include")
@@ -147,8 +184,10 @@ class TestApplyFiltersV2:
         assist_only means LLM result is advisory; mods still pass both
         deterministic AND LLM stages. Since we mock the LLM to approve all,
         everything should pass."""
+
         def llm_mock(mods, config):
             return mods
+
         svc = FilterService(llm_client=llm_mock)
         rule = FakeRuleV2(
             llmFilter={
@@ -167,8 +206,10 @@ class TestApplyFiltersV2:
 
     def test_llm_filter_must_pass(self, service, session):
         """LLM in must_pass mode: mods rejected by LLM are dropped."""
+
         def reject_second(mods, config):
             return [m for m in mods if m["external_id"] != "2"]
+
         svc = FilterService(llm_client=reject_second)
         rule = FakeRuleV2(
             llmFilter={
@@ -211,6 +252,18 @@ class TestApplyFiltersV2:
         assert len(result) == 1
         assert result[0]["external_id"] == "1"
 
+    def test_missing_metrics_reject_tolerates_string_values(self, service, session):
+        rule = FakeRuleV2(missingMetricsPolicy="reject")
+        mods = [
+            _make_mod(external_id="1", downloads="0", endorsements="0", likes="0"),
+            _make_mod(external_id="2", downloads="unknown", endorsements=None, likes=None),
+            _make_mod(external_id="3", downloads="1", endorsements="0", likes="0"),
+        ]
+
+        result = service.apply_filters(rule, mods, session)
+
+        assert [item["external_id"] for item in result] == ["3"]
+
     def test_no_filters_pass_all(self, service, session):
         """Default filters (all None/empty) pass every mod through."""
         rule = FakeRuleV2()
@@ -225,8 +278,8 @@ class TestApplyFiltersV2:
     def test_updated_within_days_passes_recent(self, service, session):
         rule = FakeRuleV2(updatedWithinDays=30)
         mods = [
-            _make_mod(external_id="1", **{"updated_at_remote": "2026-05-10T00:00:00+00:00"}),
-            _make_mod(external_id="2", **{"updated_at_remote": "2020-01-01T00:00:00+00:00"}),
+            _make_mod(external_id="1", updated_at_remote="2026-05-10T00:00:00+00:00"),
+            _make_mod(external_id="2", updated_at_remote="2020-01-01T00:00:00+00:00"),
         ]
         result = service.apply_filters(rule, mods, session)
         assert len(result) == 1
@@ -253,6 +306,7 @@ class TestApplyFiltersV2:
 # ---------------------------------------------------------------------------
 # Unit tests for internal helper methods
 # ---------------------------------------------------------------------------
+
 
 class TestKeywordFilter:
     def test_include_match(self, service):
@@ -284,18 +338,34 @@ class TestKeywordFilter:
 class TestAdultFilter:
     def test_include_passes_all(self, service):
         filters = CommonRuleFilters(adultPolicy="include")
-        assert service._get_deterministic_reject_reason(_make_mod(adult_content=True), filters) is None
-        assert service._get_deterministic_reject_reason(_make_mod(adult_content=False), filters) is None
+        assert (
+            service._get_deterministic_reject_reason(_make_mod(adult_content=True), filters) is None
+        )
+        assert (
+            service._get_deterministic_reject_reason(_make_mod(adult_content=False), filters)
+            is None
+        )
 
     def test_exclude_blocks_adult(self, service):
         filters = CommonRuleFilters(adultPolicy="exclude")
-        assert service._get_deterministic_reject_reason(_make_mod(adult_content=True), filters) == "adult_content_excluded"
-        assert service._get_deterministic_reject_reason(_make_mod(adult_content=False), filters) is None
+        assert (
+            service._get_deterministic_reject_reason(_make_mod(adult_content=True), filters)
+            == "adult_content_excluded"
+        )
+        assert (
+            service._get_deterministic_reject_reason(_make_mod(adult_content=False), filters)
+            is None
+        )
 
     def test_only_blocks_non_adult(self, service):
         filters = CommonRuleFilters(adultPolicy="only")
-        assert service._get_deterministic_reject_reason(_make_mod(adult_content=True), filters) is None
-        assert service._get_deterministic_reject_reason(_make_mod(adult_content=False), filters) == "adult_content_only_not_met"
+        assert (
+            service._get_deterministic_reject_reason(_make_mod(adult_content=True), filters) is None
+        )
+        assert (
+            service._get_deterministic_reject_reason(_make_mod(adult_content=False), filters)
+            == "adult_content_only_not_met"
+        )
 
 
 class TestDeduplicate:
@@ -327,3 +397,51 @@ class TestDeduplicate:
         mods = [_make_mod(external_id="2001"), _make_mod(external_id="2002")]
         result = service._deduplicate(mods, session)
         assert len(result) == 2
+
+    def test_existing_mod_with_new_version_is_kept(self, service, session):
+        existing = Mod(
+            source="nexusmods",
+            external_id="3001",
+            game="skyrim",
+            title="Existing Mod",
+            url="https://example.com/3001",
+            version="1.0.0",
+            updated_at_remote="2025-01-01T00:00:00+00:00",
+            first_seen_at="2025-01-01T00:00:00",
+            last_seen_at="2025-01-01T00:00:00",
+        )
+        session.add(existing)
+        session.commit()
+
+        mods = [
+            _make_mod(
+                external_id="3001", version="1.1.0", updated_at_remote="2025-01-01T00:00:00+00:00"
+            )
+        ]
+        result = service._deduplicate(mods, session)
+        assert len(result) == 1
+        assert result[0]["external_id"] == "3001"
+
+    def test_existing_mod_with_new_updated_at_is_kept(self, service, session):
+        existing = Mod(
+            source="nexusmods",
+            external_id="3002",
+            game="skyrim",
+            title="Existing Mod",
+            url="https://example.com/3002",
+            version="1.0.0",
+            updated_at_remote="2025-01-01T00:00:00+00:00",
+            first_seen_at="2025-01-01T00:00:00",
+            last_seen_at="2025-01-01T00:00:00",
+        )
+        session.add(existing)
+        session.commit()
+
+        mods = [
+            _make_mod(
+                external_id="3002", version="1.0.0", updated_at_remote="2025-01-02T00:00:00+00:00"
+            )
+        ]
+        result = service._deduplicate(mods, session)
+        assert len(result) == 1
+        assert result[0]["external_id"] == "3002"

@@ -6,13 +6,17 @@ from fastapi import HTTPException
 from sqlmodel import Session, delete, select
 
 from app.models.agent_message import AgentMessage
+from app.services.agent.memory.preference_service import AgentPreferenceService
 from app.services.agent.schemas import (
+    AgentAudit,
     AgentConversationMessage,
     AgentConversationState,
     AgentConversationStateSaveRequest,
     AgentModMatch,
 )
 from app.services.settings_service import SettingsService
+from app.utils.json import json_array, json_object
+from app.utils.time import parse_utc_datetime
 
 AGENT_CHAT_ACTIVE_SESSION_KEY = "agent_chat_active_session_id"
 AGENT_CHAT_LAST_UPDATE_PREFIX = "agent_chat_last_updated_at_"
@@ -23,22 +27,6 @@ MAX_CONVERSATION_CHARS = 120000
 def new_session_id() -> str:
     """处理当前模块的业务逻辑并返回结果。"""
     return f"sess_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
-
-
-def parse_utc_timestamp(raw: str | None) -> datetime | None:
-    """解析输入内容并返回结构化结果。"""
-    if not raw:
-        return None
-    value = raw.strip()
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
 
 
 def load_conversation_state(session: Session, settings: SettingsService) -> AgentConversationState:
@@ -54,25 +42,23 @@ def load_conversation_state(session: Session, settings: SettingsService) -> Agen
     for row in rows:
         matches: list[AgentModMatch] | None = None
         response_cards: dict[str, list[str]] | None = None
+        audit: AgentAudit | None = None
         if row.matches_json:
-            try:
-                raw_matches = json.loads(row.matches_json)
-                if isinstance(raw_matches, list):
-                    matches = [AgentModMatch(**item) for item in raw_matches if isinstance(item, dict)]
-            except Exception:
-                matches = None
+            parsed_matches = [
+                match
+                for item in json_array(row.matches_json)
+                if isinstance(item, dict) and (match := _safe_agent_mod_match(item)) is not None
+            ]
+            matches = parsed_matches or None
         if row.response_cards_json:
+            raw_cards = json_object(row.response_cards_json)
+            response_cards = _normalize_response_cards(raw_cards) if raw_cards else None
+        if row.audit_json:
+            raw_audit = json_object(row.audit_json)
             try:
-                raw_cards = json.loads(row.response_cards_json)
-                if isinstance(raw_cards, dict):
-                    response_cards = {
-                        "understanding": [str(x) for x in (raw_cards.get("understanding") or []) if str(x).strip()],
-                        "filters": [str(x) for x in (raw_cards.get("filters") or []) if str(x).strip()],
-                        "results": [str(x) for x in (raw_cards.get("results") or []) if str(x).strip()],
-                        "next_steps": [str(x) for x in (raw_cards.get("next_steps") or []) if str(x).strip()],
-                    }
+                audit = AgentAudit.model_validate(raw_audit) if raw_audit else None
             except Exception:
-                response_cards = None
+                audit = None
         parsed_messages.append(
             AgentConversationMessage(
                 id=row.message_id,
@@ -82,6 +68,7 @@ def load_conversation_state(session: Session, settings: SettingsService) -> Agen
                 created_at=row.created_at,
                 matches=matches,
                 response_cards=response_cards,
+                audit=audit,
                 llm_provider=row.llm_provider,
                 llm_model=row.llm_model,
             )
@@ -91,6 +78,13 @@ def load_conversation_state(session: Session, settings: SettingsService) -> Agen
         parsed_messages[-1].session_id if parsed_messages else new_session_id()
     )
     return AgentConversationState(messages=parsed_messages, active_session_id=active_session)
+
+
+def _safe_agent_mod_match(item: dict) -> AgentModMatch | None:
+    try:
+        return AgentModMatch(**item)
+    except Exception:
+        return None
 
 
 def save_conversation_state(
@@ -103,10 +97,10 @@ def save_conversation_state(
     now = datetime.now(UTC).isoformat()
     active_session = body.active_session_id.strip() or new_session_id()
     last_update_key = f"{AGENT_CHAT_LAST_UPDATE_PREFIX}{active_session}"
-    incoming_updated_at = parse_utc_timestamp(body.client_updated_at)
+    incoming_updated_at = parse_utc_datetime(body.client_updated_at)
     if body.client_updated_at and incoming_updated_at is None:
         raise HTTPException(status_code=422, detail="client_updated_at must be ISO timestamp")
-    persisted_updated_at = parse_utc_timestamp(settings.get(last_update_key))
+    persisted_updated_at = parse_utc_datetime(settings.get(last_update_key))
     if incoming_updated_at and persisted_updated_at and incoming_updated_at < persisted_updated_at:
         raise HTTPException(
             status_code=409,
@@ -122,6 +116,7 @@ def save_conversation_state(
             created_at=message.created_at or now,
             matches=message.matches or None,
             response_cards=message.response_cards or None,
+            audit=message.audit,
             llm_provider=message.llm_provider,
             llm_model=message.llm_model,
         )
@@ -161,6 +156,7 @@ def save_conversation_state(
         created_at = str(item.get("created_at") or now)
         matches_json = json.dumps(item.get("matches"), ensure_ascii=False) if item.get("matches") else None
         response_cards_json = json.dumps(item.get("response_cards"), ensure_ascii=False) if item.get("response_cards") else None
+        audit_json = json.dumps(item.get("audit"), ensure_ascii=False) if item.get("audit") else None
         llm_provider = str(item.get("llm_provider") or "") or None
         llm_model = str(item.get("llm_model") or "") or None
         existing = existing_by_message_id.get(message_id)
@@ -171,6 +167,7 @@ def save_conversation_state(
             existing.created_at = created_at
             existing.matches_json = matches_json
             existing.response_cards_json = response_cards_json
+            existing.audit_json = audit_json
             existing.llm_provider = llm_provider
             existing.llm_model = llm_model
             existing.sort_index = idx
@@ -185,6 +182,7 @@ def save_conversation_state(
                 created_at=created_at,
                 matches_json=matches_json,
                 response_cards_json=response_cards_json,
+                audit_json=audit_json,
                 llm_provider=llm_provider,
                 llm_model=llm_model,
                 sort_index=idx,
@@ -202,9 +200,24 @@ def save_conversation_state(
     else:
         session.exec(delete(AgentMessage).where(AgentMessage.session_id == active_session))
     session.commit()
+    AgentPreferenceService(session).mark_dirty()
     settings.set(AGENT_CHAT_ACTIVE_SESSION_KEY, active_session)
     settings.set(last_update_key, now)
     return load_conversation_state(session, settings)
+
+
+def _normalize_response_cards(raw_cards: dict) -> dict[str, list[str]]:
+    normalized: dict[str, list[str]] = {}
+    for key, values in raw_cards.items():
+        card_key = str(key or "").strip()
+        if not card_key:
+            continue
+        if not isinstance(values, list):
+            continue
+        normalized_values = [str(item).strip() for item in values if str(item).strip()]
+        if normalized_values:
+            normalized[card_key] = normalized_values
+    return normalized
 
 
 def start_new_conversation(settings: SettingsService) -> str:

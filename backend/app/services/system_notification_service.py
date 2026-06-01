@@ -6,6 +6,8 @@ from sqlmodel import Session, select
 from app.models.system_notification import SystemNotificationEvent
 from app.services.settings_service import SettingsService
 from app.services.windows_notifier import send_windows_notification
+from app.utils.boolean import parse_bool
+from app.utils.ids import positive_integer_ids
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +60,8 @@ class SystemNotificationService:
         """内部辅助函数，用于拆分上层流程中的局部规则。"""
         settings = SettingsService(self.session)
         return (
-            settings.get("notifications_enabled") != "false"
-            and settings.get("system_notifications_enabled") != "false"
+            parse_bool(settings.get("notifications_enabled"), default=True)
+            and parse_bool(settings.get("system_notifications_enabled"), default=True)
         )
 
     def get_recent_events(
@@ -76,14 +78,19 @@ class SystemNotificationService:
 
     def mark_seen(self, event_ids: list[int]) -> int:
         """标记状态变更并返回结果。"""
+        deduped_ids = positive_integer_ids(event_ids)
+        if not deduped_ids:
+            return 0
         stmt = select(SystemNotificationEvent).where(
-            SystemNotificationEvent.id.in_(event_ids)
+            SystemNotificationEvent.id.in_(deduped_ids)
         )
         events = self.session.exec(stmt).all()
         updated = 0
         for event in events:
-            event.seen = True
-            updated += 1
+            if not event.seen:
+                event.seen = True
+                self.session.add(event)
+                updated += 1
         self.session.commit()
         return updated
 
@@ -93,9 +100,7 @@ class SystemNotificationService:
         limit: int = 50,
     ) -> list[SystemNotificationEvent]:
         """读取并返回对应的数据。"""
-        if not event_ids:
-            return []
-        deduped_ids = sorted({event_id for event_id in event_ids if event_id > 0})
+        deduped_ids = positive_integer_ids(event_ids)
         if not deduped_ids:
             return []
         stmt = (

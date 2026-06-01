@@ -22,10 +22,18 @@ $nodeCmd = $null
 $npmCmd = $null
 
 function Test-LocalPortReady {
-    param([int]$Port)
+    param(
+        [int]$Port,
+        [int]$TimeoutMilliseconds = 750
+    )
     try {
         $tcp = New-Object System.Net.Sockets.TcpClient
-        $tcp.Connect("127.0.0.1", $Port)
+        $connect = $tcp.BeginConnect("127.0.0.1", $Port, $null, $null)
+        if (-not $connect.AsyncWaitHandle.WaitOne($TimeoutMilliseconds, $false)) {
+            $tcp.Close()
+            return $false
+        }
+        $tcp.EndConnect($connect)
         $tcp.Close()
         return $true
     }
@@ -136,8 +144,86 @@ function Ensure-EnvFile {
     }
 }
 
+function Get-BackendDependencyModules {
+    $pyprojectPath = Join-Path $root "backend\\pyproject.toml"
+    $fallbackModules = @(
+        "fastapi",
+        "uvicorn",
+        "sqlmodel",
+        "apscheduler",
+        "httpx",
+        "feedparser",
+        "selectolax",
+        "playwright",
+        "pydantic",
+        "dotenv",
+        "pydantic_settings",
+        "alembic",
+        "langgraph",
+        "pystray",
+        "PIL"
+    )
+    $importNameMap = @{
+        "pydantic-settings" = "pydantic_settings"
+        "python-dotenv" = "dotenv"
+        "Pillow" = "PIL"
+    }
+
+    if (-not (Test-Path $pyprojectPath)) {
+        return $fallbackModules
+    }
+
+    $rawDeps = @()
+    $inDependencies = $false
+    foreach ($line in Get-Content $pyprojectPath) {
+        if (-not $inDependencies) {
+            if ($line -match "^\s*dependencies\s*=\s*\[") {
+                $inDependencies = $true
+            }
+            continue
+        }
+        if ($line -match '^\s*\]') {
+            break
+        }
+        if ($line -match '^\s*"(.*?)"') {
+            $rawDeps += $Matches[1]
+        }
+    }
+
+    if (-not $rawDeps) {
+        return $fallbackModules
+    }
+
+    $modules = @()
+    foreach ($dep in $rawDeps) {
+        $normalized = $dep.Split(";")[0].Trim()
+        $normalized = $normalized.Split("[")[0].Trim()
+        $normalized = ($normalized -split '[<>=!~]')[0].Trim()
+        if (-not $normalized) {
+            continue
+        }
+
+        if ($importNameMap.ContainsKey($normalized)) {
+            $moduleName = $importNameMap[$normalized]
+        }
+        else {
+            $moduleName = $normalized.ToLower().Replace("-", "_")
+        }
+
+        if (-not ($modules -contains $moduleName)) {
+            $modules += $moduleName
+        }
+    }
+
+    if (-not $modules) {
+        return $fallbackModules
+    }
+    return $modules
+}
+
 function Ensure-BackendDependencies {
-    $depsReady = $false
+    $dependencyModules = Get-BackendDependencyModules
+    $missingDependencies = @()
     $oldErrPref = $ErrorActionPreference
     $oldNativePref = $null
     if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
@@ -146,11 +232,15 @@ function Ensure-BackendDependencies {
     }
     try {
         $ErrorActionPreference = "Continue"
-        & $venvPython -c "import uvicorn, pystray, PIL, playwright" *> $null
-        $depsReady = ($LASTEXITCODE -eq 0)
+        foreach ($module in $dependencyModules) {
+            & $venvPython -c "import $module" *> $null
+            if ($LASTEXITCODE -ne 0) {
+                $missingDependencies += $module
+            }
+        }
     }
     catch {
-        $depsReady = $false
+        $missingDependencies = @($dependencyModules)
     }
     finally {
         $ErrorActionPreference = $oldErrPref
@@ -158,10 +248,11 @@ function Ensure-BackendDependencies {
             $PSNativeCommandUseErrorActionPreference = $oldNativePref
         }
     }
-    if ($depsReady) {
+    if (-not $missingDependencies) {
         Write-Host "[1/3] Backend dependencies OK" -ForegroundColor Gray
         return
     }
+    Write-Host "[!] Backend dependencies check failed: missing Python modules -> $($missingDependencies -join ', ')" -ForegroundColor Yellow
     Write-Host "[1/3] Installing backend dependencies..." -ForegroundColor Gray
     Push-Location (Join-Path $root "backend")
     try {
@@ -463,7 +554,7 @@ function Wait-ServiceReady {
         [int]$BackendPort,
         [string]$FrontendMode,
         [int]$FrontendDevPort,
-        [int]$MaxWaitSeconds = 45
+        [int]$MaxWaitSeconds = 150
     )
 
     $elapsed = 0
@@ -544,7 +635,7 @@ if ($Tray) {
 
         Write-Host ""
         Write-Host "[Manager] Starting tray manager and probing service readiness..." -ForegroundColor Cyan
-        $ready = Wait-ServiceReady -BackendPort $backendPort -FrontendMode $frontendMode -FrontendDevPort $frontendDevPort -MaxWaitSeconds 45
+        $ready = Wait-ServiceReady -BackendPort $backendPort -FrontendMode $frontendMode -FrontendDevPort $frontendDevPort -MaxWaitSeconds 150
         if (-not $ready) {
             Write-Host "[X] Service probe timed out. Backend/frontend did not become ready in time." -ForegroundColor Red
             Write-Host "    Check logs: log\\tray.log, log\\backend_service.log, log\\frontend_service.log" -ForegroundColor Yellow
@@ -553,7 +644,9 @@ if ($Tray) {
 
         Write-Host "Startup checks completed and services are healthy." -ForegroundColor Green
         Write-Host "Press any key to close this window and keep running in tray mode..." -ForegroundColor Yellow
-        [void][System.Console]::ReadKey($true)
+        if (-not [System.Console]::IsInputRedirected) {
+            [void][System.Console]::ReadKey($true)
+        }
         exit 0
     }
     Write-Host "[Manager] Starting tray manager (frontend-mode=$frontendMode)..." -ForegroundColor Cyan

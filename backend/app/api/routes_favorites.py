@@ -6,6 +6,7 @@ from app.models.favorite import Favorite
 from app.models.mod import Mod
 from app.schemas.favorite import (
     FavoriteCreate,
+    FavoriteImportCreate,
     FavoriteRead,
     FavoriteUpdate,
 )
@@ -32,11 +33,23 @@ def _favorite_to_read(
     return data
 
 
+def _check_update_response(favorite: Favorite, event) -> dict:
+    return {
+        "favorite_id": favorite.id,
+        "mod_id": favorite.mod_id,
+        "update_detected": event is not None,
+        "update_event": UpdateEventRead.model_validate(event).model_dump() if event is not None else None,
+        "last_checked_at": favorite.last_checked_at,
+        "notification_sent": bool(getattr(event, "notification_sent", False)) if event is not None else False,
+    }
+
+
 @router.get("", response_model=list[FavoriteRead])
-async def list_favorites(
+def list_favorites(
     session: Session = Depends(get_session),
 ):
     """List all favorites."""
+    FavoriteService(session).reconcile_local_metadata_updates()
     items = session.exec(select(Favorite).order_by(Favorite.created_at.desc())).all()
     mod_ids = [item.mod_id for item in items if item.mod_id is not None]
     summary_by_mod = load_preferred_brief_summary_map(session, mod_ids)
@@ -56,12 +69,15 @@ async def create_favorite(
     try:
         fav = await service.add_favorite(data.mod_id, data.user_note)
         update_fields = {}
-        if data.tracking_enabled is not None and not data.tracking_enabled:
+        explicit_fields = data.model_fields_set
+        if "tracking_enabled" in explicit_fields:
             update_fields["tracking_enabled"] = data.tracking_enabled
-        if data.notify_on_update is not None and not data.notify_on_update:
+        if "notify_on_update" in explicit_fields:
             update_fields["notify_on_update"] = data.notify_on_update
-        if data.user_tags_json and data.user_tags_json != "[]":
+        if "user_tags_json" in explicit_fields:
             update_fields["user_tags_json"] = data.user_tags_json
+        if "user_note" in explicit_fields:
+            update_fields["user_note"] = data.user_note
         if update_fields:
             fav = await service.update_favorite(fav.id, **update_fields)
         summary_by_mod = load_preferred_brief_summary_map(session, [fav.mod_id])
@@ -70,12 +86,28 @@ async def create_favorite(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+@router.post("/import", response_model=FavoriteRead, status_code=201)
+async def import_favorite(
+    data: FavoriteImportCreate,
+    session: Session = Depends(get_session),
+):
+    """Import the current browser page as a mod and add it to favorites."""
+    service = FavoriteService(session)
+    try:
+        fav = await service.import_and_favorite(data)
+        summary_by_mod = load_preferred_brief_summary_map(session, [fav.mod_id])
+        return _favorite_to_read(session, fav, summary_by_mod)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.get("/{favorite_id}", response_model=FavoriteRead)
-async def get_favorite(
+def get_favorite(
     favorite_id: int,
     session: Session = Depends(get_session),
 ):
     """Get a single favorite by ID."""
+    FavoriteService(session).reconcile_local_metadata_updates()
     fav = session.get(Favorite, favorite_id)
     if fav is None:
         raise HTTPException(status_code=404, detail="Favorite not found")
@@ -110,18 +142,14 @@ async def check_favorite_update(
     try:
         event = await service.check_update(favorite_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail="Favorite not found") from e
-    if event is None:
-        return {
-            "favorite_id": favorite_id,
-            "update_detected": False,
-            "update_event": None,
-        }
-    return {
-        "favorite_id": favorite_id,
-        "update_detected": True,
-        "update_event": UpdateEventRead.model_validate(event).model_dump(),
-    }
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(status_code=404, detail="Favorite not found") from e
+        raise HTTPException(status_code=400, detail=detail) from e
+    fav = session.get(Favorite, favorite_id)
+    if fav is None:
+        raise HTTPException(status_code=404, detail="Favorite not found")
+    return _check_update_response(fav, event)
 
 
 @router.delete("/{favorite_id}", status_code=204)

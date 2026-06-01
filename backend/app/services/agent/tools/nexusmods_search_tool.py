@@ -9,14 +9,20 @@ from sqlmodel import Session, select
 from app.adapters.nexusmods import MOD_FIELDS, NexusModsAdapter, RateLimitError
 from app.models.mod import Mod
 from app.models.mod_item import ModItem
+from app.services.agent.filter_value_utils import optional_min_metric, optional_time_window
+from app.services.agent.planning.slot_normalization import normalize_limit
 from app.services.agent.search_types import SearchResult
 from app.services.agent.semantic_search import (
     base_keywords,
     semantic_query,
+    strip_scope,
     text_score,
-    unique_terms,
 )
 from app.services.settings_service import SettingsService
+from app.services.source_identity import canonical_external_id, find_existing_mod_by_identity
+from app.services.update_tracking_service import record_favorite_metadata_update
+from app.utils.boolean import parse_bool
+from app.utils.numeric import safe_nonnegative_int
 
 MAX_AGENT_NEXUS_RESULTS = 100
 DEFAULT_UPDATED_WINDOW_DAYS = 30
@@ -35,6 +41,8 @@ class NexusModsSearchInput:
     author: str | None = None
     min_downloads: int | None = None
     min_endorsements: int | None = None
+    min_views: int | None = None
+    min_likes: int | None = None
     updated_since_days: int | None = None
     sort_field: str = "updated_at_remote"
     sort_order: str = "desc"
@@ -42,7 +50,7 @@ class NexusModsSearchInput:
 
 
 class NexusModsSearchTool:
-    """Flexible Agent tool for Nexus Mods GraphQL mod search."""
+    """面向 Nexus Mods GraphQL 的受控 MOD 搜索工具。"""
 
     name = "nexusmods_search"
 
@@ -50,22 +58,36 @@ class NexusModsSearchTool:
         """初始化实例并保存运行所需的依赖。"""
         self.session = session
         self.settings = SettingsService(session)
+        self.last_status = "not_started"
+        self.last_reason: str | None = None
 
     async def run(self, tool_input: NexusModsSearchInput) -> list[SearchResult]:
         """执行任务流程并返回结果。"""
+        self.last_status = "succeeded"
+        self.last_reason = None
         api_key = (self.settings.get("nexus_api_key") or "").strip()
         if not api_key:
+            self.last_status = "skipped"
+            self.last_reason = "missing_credentials"
             return []
 
         search_input = self._with_default_game(tool_input)
         graphql_filter = self._build_filter(search_input)
         if not graphql_filter:
+            self.last_status = "skipped"
+            self.last_reason = "empty_filter"
             return []
 
         adapter = NexusModsAdapter(api_key=api_key)
         try:
             items = await self._fetch(adapter, search_input, graphql_filter)
-        except (RateLimitError, ValueError):
+        except RateLimitError:
+            self.last_status = "degraded"
+            self.last_reason = "rate_limited"
+            return []
+        except ValueError:
+            self.last_status = "degraded"
+            self.last_reason = "invalid_response"
             return []
 
         mods = self._upsert(items[:MAX_AGENT_NEXUS_RESULTS])
@@ -106,9 +128,13 @@ class NexusModsSearchTool:
         if tool_input.author:
             clauses.append(_clause("author", "MATCHES", tool_input.author))
         if tool_input.min_downloads is not None:
-            clauses.append({"downloads": [{"op": "GTE", "value": int(tool_input.min_downloads)}]})
+            clauses.append({"downloads": [{"op": "GTE", "value": safe_nonnegative_int(tool_input.min_downloads)}]})
         if tool_input.min_endorsements is not None:
-            clauses.append({"endorsements": [{"op": "GTE", "value": int(tool_input.min_endorsements)}]})
+            clauses.append({"endorsements": [{"op": "GTE", "value": safe_nonnegative_int(tool_input.min_endorsements)}]})
+        if tool_input.min_views is not None:
+            clauses.append({"views": [{"op": "GTE", "value": safe_nonnegative_int(tool_input.min_views)}]})
+        if tool_input.min_likes is not None:
+            clauses.append({"likes": [{"op": "GTE", "value": safe_nonnegative_int(tool_input.min_likes)}]})
 
         window_days = tool_input.updated_since_days
         if window_days is None:
@@ -161,13 +187,27 @@ class NexusModsSearchTool:
             fields = _mod_item_fields(item)
             if not fields["source"] or not fields["external_id"] or not fields["title"]:
                 continue
-            existing = self.session.exec(
-                select(Mod).where(
-                    Mod.source == fields["source"],
-                    Mod.external_id == fields["external_id"],
-                )
-            ).first()
+            fields["external_id"] = canonical_external_id(
+                fields["source"],
+                fields["external_id"],
+                fields.get("url") or "",
+            )
+            existing = find_existing_mod_by_identity(
+                self.session,
+                fields["source"],
+                fields["external_id"],
+                fields.get("url") or "",
+            )
             if existing:
+                record_favorite_metadata_update(
+                    self.session,
+                    existing,
+                    new_version=str(fields.get("version") or existing.version) if fields.get("version") else existing.version,
+                    new_updated_at=str(fields.get("updated_at_remote") or existing.updated_at_remote)
+                    if fields.get("updated_at_remote")
+                    else existing.updated_at_remote,
+                    detected_at=now,
+                )
                 for key, value in fields.items():
                     if key not in {"source", "external_id"}:
                         setattr(existing, key, value)
@@ -193,7 +233,7 @@ class NexusModsSearchTool:
         for mod in mods:
             if mod.id is None or mod.ignored:
                 continue
-            if isinstance(tool_input.adult_content, bool) and bool(mod.adult_content) != tool_input.adult_content:
+            if isinstance(tool_input.adult_content, bool) and parse_bool(mod.adult_content) != tool_input.adult_content:
                 continue
             score = _score(tool_input.query, mod)
             if has_keywords and score <= 0:
@@ -201,9 +241,9 @@ class NexusModsSearchTool:
             scored.append((max(score, 1), mod))
 
         if tool_input.sort_field == "downloads":
-            scored.sort(key=lambda item: (item[1].downloads or 0, item[0]), reverse=tool_input.sort_order != "asc")
+            scored.sort(key=lambda item: (safe_nonnegative_int(item[1].downloads), item[0]), reverse=tool_input.sort_order != "asc")
         elif tool_input.sort_field == "endorsements":
-            scored.sort(key=lambda item: (item[1].endorsements or 0, item[0]), reverse=tool_input.sort_order != "asc")
+            scored.sort(key=lambda item: (safe_nonnegative_int(item[1].endorsements), item[0]), reverse=tool_input.sort_order != "asc")
         elif tool_input.sort_field == "relevance":
             scored.sort(key=lambda item: (item[0], item[1].first_seen_at), reverse=True)
         else:
@@ -227,14 +267,21 @@ def nexus_tool_input_from_plan(session: Session, query: str, plan: dict[str, Any
     games = [str(value).strip() for value in (plan.get("games") or []) if str(value).strip()]
     game_domain = game_domains[0] if game_domains else _domain_for_game(session, games[0]) if games else None
     return NexusModsSearchInput(
-        query=query.split("[scope]", 1)[0].strip(),
+        query=strip_scope(query),
         game_domain=game_domain,
         game_name=None if game_domain else games[0] if games else None,
         categories=_category_hints(query, [str(value) for value in (plan.get("categories") or [])]),
+        tags=[str(value).strip() for value in (plan.get("tags") or []) if str(value).strip()] or None,
         adult_content=plan.get("adult_content") if isinstance(plan.get("adult_content"), bool) else None,
+        author=str(plan.get("author") or "").strip() or None,
+        min_downloads=optional_min_metric(plan.get("min_downloads")),
+        min_endorsements=optional_min_metric(plan.get("min_endorsements")),
+        min_views=optional_min_metric(plan.get("min_views")),
+        min_likes=optional_min_metric(plan.get("min_likes")),
+        updated_since_days=optional_time_window(plan.get("updated_since_days")),
         sort_field=str(plan.get("sort_field") or "updated_at_remote"),
         sort_order="asc" if str(plan.get("sort_order") or "").lower() == "asc" else "desc",
-        limit=int(plan.get("limit") or 8),
+        limit=normalize_limit(plan, default=8, maximum=20),
     )
 
 
@@ -255,11 +302,6 @@ def _clause(field: str, op: str, value: str) -> dict[str, Any]:
 def _keywords(query: str) -> list[str]:
     """内部辅助函数，用于拆分上层流程中的局部规则。"""
     return base_keywords(query)
-
-
-def _search_keywords(query: str, categories: list[str] | None) -> list[str]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
-    return semantic_query(query, categories).all_terms
 
 
 def _semantic_terms(query: str, categories: list[str] | None) -> list[str]:
@@ -313,11 +355,6 @@ def _category_hints(query: str, categories: list[str]) -> list[str]:
         if any(alias in key for alias in semantic.category_aliases):
             hints.append(category)
     return hints
-
-
-def _merge_unique_tokens(values: list[str]) -> list[str]:
-    """合并多个来源的数据并保持稳定顺序。"""
-    return unique_terms(values)
 
 
 def _is_recent(tool_input: NexusModsSearchInput) -> bool:

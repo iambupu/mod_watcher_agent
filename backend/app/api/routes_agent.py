@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -6,11 +7,7 @@ from sqlmodel import Session
 from app.db import get_session
 from app.services.agent import conversation_service as conversations
 from app.services.agent.chat_service import AgentService
-from app.services.agent.history import compress_history
-from app.services.agent.llm_config_service import get_llm_config
-from app.services.agent.mod_search_service import apply_query_plan, query_mods_with_plan
-from app.services.agent.query_planner import normalize_query_plan
-from app.services.agent.response_builder import build_response_cards
+from app.services.agent.runtime import AgentRuntime
 from app.services.agent.schemas import (
     AgentChatRequest,
     AgentChatResponse,
@@ -19,19 +16,12 @@ from app.services.agent.schemas import (
     AgentConversationStateSaveRequest,
     AgentModDetailRequest,
 )
+from app.services.agent.tracing.search_trace import elapsed_ms, start_trace
 from app.services.settings_service import SettingsService
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 SessionDep = Annotated[Session, Depends(get_session)]
-
-# Backward-compatible names for existing tests and internal imports.
-_apply_query_plan = apply_query_plan
-_build_response_cards = build_response_cards
-_compress_history = compress_history
-_get_llm_config = get_llm_config
-_load_conversation_state = conversations.load_conversation_state
-_normalize_query_plan = normalize_query_plan
-_query_mods_with_plan = query_mods_with_plan
+logger = logging.getLogger(__name__)
 
 
 @router.post("/chat", response_model=AgentChatResponse)
@@ -41,7 +31,29 @@ async def chat_with_agent(
     session: SessionDep,
 ):
     """处理当前模块的业务逻辑并返回结果。"""
-    return await AgentService(session).chat(body, request)
+    started_at = start_trace()
+    logger.info(
+        "agent.api path=/api/agent/chat status=started history=%s provider_override=%s model_override=%s",
+        len(body.history),
+        bool(body.provider_override),
+        bool(body.model_override),
+    )
+    try:
+        response = await AgentService(session).chat(body, request)
+    except Exception as exc:
+        logger.info(
+            "agent.api path=/api/agent/chat status=failed duration_ms=%s error_type=%s",
+            elapsed_ms(started_at),
+            type(exc).__name__,
+        )
+        raise
+    logger.info(
+        "agent.api path=/api/agent/chat status=succeeded duration_ms=%s matches=%s used_llm=%s",
+        elapsed_ms(started_at),
+        len(response.matches),
+        response.used_llm,
+    )
+    return response
 
 
 @router.post("/mod-detail", response_model=AgentChatResponse)
@@ -51,8 +63,7 @@ async def ask_mod_detail(
     session: SessionDep,
 ):
     """处理当前模块的业务逻辑并返回结果。"""
-    return await AgentService(session).ask_mod_detail(body, request)
-
+    return await AgentRuntime(session).ask_mod_detail(body, request)
 
 @router.get("/conversation-state", response_model=AgentConversationState)
 async def get_conversation_state(

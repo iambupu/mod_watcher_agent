@@ -39,6 +39,8 @@ def _make_feed_entry(
     tag_term="Skyrim",
     updated_parsed=None,
     published_parsed=None,
+    updated=None,
+    published=None,
     entry_id=None,
 ):
     entry = {
@@ -53,6 +55,10 @@ def _make_feed_entry(
         entry["updated_parsed"] = updated_parsed
     if published_parsed is not None:
         entry["published_parsed"] = published_parsed
+    if updated is not None:
+        entry["updated"] = updated
+    if published is not None:
+        entry["published"] = published
     if entry_id is not None:
         entry["id"] = entry_id
     return entry
@@ -118,6 +124,18 @@ class TestLoversLabFeedAdapterV2:
         assert result.updated_at == updated_dt
         assert result.is_adult is True
         assert result.raw is raw
+
+    def test_normalize_parses_string_adult_content(self):
+        adapter = LoversLabFeedAdapter()
+        raw = {
+            "external_id": "99999",
+            "title": "String Adult Flag",
+            "adult_content": "false",
+        }
+
+        result = adapter.normalize(raw)
+
+        assert result.is_adult is False
 
     @pytest.mark.asyncio
     async def test_source_config_parsed_calls_all_feed_urls(self):
@@ -206,6 +224,20 @@ class TestLoversLabFeedAdapterV2:
         assert "Hello World" in results[0].summary
         assert "alert(1)" not in results[0].summary
         assert isinstance(results[0].updated_at, datetime)
+
+    @pytest.mark.asyncio
+    async def test_string_feed_datetime_accepts_z_suffix(self):
+        adapter = LoversLabFeedAdapter()
+        adapter._fetch_feed_bytes = AsyncMock(return_value=b"<rss/>")
+        entry = _make_feed_entry(updated="2026-05-01T10:30:00Z", published="2026-05-01T09:00:00Z")
+        mock_feed = _make_mock_feed([entry])
+
+        with patch.object(feedparser, "parse", return_value=mock_feed):
+            results = await adapter.fetch(_make_valid_source_config_json())
+
+        assert len(results) == 1
+        assert results[0].updated_at == datetime(2026, 5, 1, 10, 30, tzinfo=UTC)
+        assert results[0].raw["published_at_remote"] == "2026-05-01T09:00:00+00:00"
 
     @pytest.mark.asyncio
     async def test_invalid_feed_raises_value_error(self):

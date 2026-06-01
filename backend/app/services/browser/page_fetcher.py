@@ -355,12 +355,6 @@ class BrowserPageFetcher:
         )
 
     @classmethod
-    def _system_browser_choice(cls) -> BrowserLaunchChoice | None:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
-        choices = cls._system_browser_choices()
-        return choices[0] if choices else None
-
-    @classmethod
     def _system_browser_choices(cls) -> list[BrowserLaunchChoice]:
         """内部辅助函数，用于拆分上层流程中的局部规则。"""
         choices: list[BrowserLaunchChoice] = []

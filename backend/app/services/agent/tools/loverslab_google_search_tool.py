@@ -5,9 +5,11 @@ import httpx
 from sqlmodel import Session
 
 from app.models.mod import Mod
-from app.services.agent.query_planner import detect_adult_constraint
+from app.services.agent.filter_value_utils import optional_time_window
+from app.services.agent.planning.query_intent import detect_adult_constraint
+from app.services.agent.planning.slot_normalization import normalize_limit
 from app.services.agent.search_types import SearchResult
-from app.services.agent.semantic_search import semantic_query
+from app.services.agent.semantic_search import semantic_query, strip_scope
 from app.services.agent.tools.loverslab_search_common import (
     REQUEST_TIMEOUT,
     LoversLabSearchRecord,
@@ -33,7 +35,7 @@ class LoversLabGoogleSearchInput:
 
 
 class LoversLabGoogleSearchTool:
-    """Agent tool that searches Google for indexed LoversLab pages."""
+    """通过 Google Custom Search 查找已索引的 LoversLab 页面。"""
 
     name = "loverslab_google_search"
 
@@ -41,18 +43,30 @@ class LoversLabGoogleSearchTool:
         """初始化实例并保存运行所需的依赖。"""
         self.session = session
         self.settings = SettingsService(session)
+        self.last_status = "not_started"
+        self.last_reason: str | None = None
 
     async def run(self, tool_input: LoversLabGoogleSearchInput) -> list[SearchResult]:
         """执行任务流程并返回结果。"""
+        self.last_status = "succeeded"
+        self.last_reason = None
         api_key = (self.settings.get("google_search_api_key") or "").strip()
         engine_id = (self.settings.get("google_search_engine_id") or "").strip()
         if not api_key or not engine_id:
+            self.last_status = "skipped"
+            self.last_reason = "missing_credentials"
             return []
 
         params = self._build_params(tool_input, api_key, engine_id)
         try:
             data = await self._fetch(params)
-        except (httpx.HTTPError, ValueError):
+        except httpx.HTTPError:
+            self.last_status = "degraded"
+            self.last_reason = "http_error"
+            return []
+        except ValueError:
+            self.last_status = "degraded"
+            self.last_reason = "invalid_response"
             return []
 
         mods = self._upsert(data.get("items") or [], tool_input)
@@ -78,8 +92,8 @@ class LoversLabGoogleSearchTool:
             "safe": "off",
             "filter": "1",
         }
-        if tool_input.updated_since_days:
-            days = max(1, min(365, int(tool_input.updated_since_days)))
+        days = optional_time_window(tool_input.updated_since_days)
+        if days is not None:
             params["dateRestrict"] = f"d{days}"
         return params
 
@@ -130,14 +144,16 @@ def loverslab_google_input_from_plan(query: str, plan: dict[str, Any]) -> Lovers
         return None
     games = [str(value).strip() for value in (plan.get("games") or []) if str(value).strip()]
     game_domains = [str(value).strip() for value in (plan.get("game_domains") or []) if str(value).strip()]
-    days = 30 if str(plan.get("sort_field") or "") in {"updated_at_remote", "first_seen_at"} else None
+    days = optional_time_window(plan.get("updated_since_days"))
+    if days is None and str(plan.get("sort_field") or "") in {"updated_at_remote", "first_seen_at"}:
+        days = 30
     return LoversLabGoogleSearchInput(
-        query=query.split("[scope]", 1)[0].strip(),
+        query=strip_scope(query),
         game=games[0] if games else game_domains[0] if game_domains else None,
         adult_content=plan.get("adult_content") if isinstance(plan.get("adult_content"), bool) else detect_adult_constraint(query),
         updated_since_days=days,
         sort_field=str(plan.get("sort_field") or "relevance"),
-        limit=int(plan.get("limit") or 8),
+        limit=normalize_limit(plan, default=8, maximum=20),
     )
 
 

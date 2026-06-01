@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 from abc import ABC, abstractmethod
 
 import httpx
@@ -16,6 +15,7 @@ from app.services.llm_provider_config import (
     resolve_provider_config,
 )
 from app.services.settings_service import SettingsService
+from app.utils.json import json_array_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,13 @@ class LLMClient(ABC):
     last_detail: str = ""
 
     @abstractmethod
-    async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:
+    async def chat(
+        self,
+        prompt: str,
+        model: str,
+        max_tokens: int = 1024,
+        request_timeout: float | None = None,
+    ) -> str:
         """处理当前模块的业务逻辑并返回结果。"""
         ...
 
@@ -37,7 +43,13 @@ class OpenAIClient(LLMClient):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
 
-    async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:
+    async def chat(
+        self,
+        prompt: str,
+        model: str,
+        max_tokens: int = 1024,
+        request_timeout: float | None = None,
+    ) -> str:
         """处理当前模块的业务逻辑并返回结果。"""
         self.last_error = ""
         self.last_detail = ""
@@ -56,13 +68,17 @@ class OpenAIClient(LLMClient):
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    endpoint, headers=headers, json=body, timeout=60.0
+                    endpoint,
+                    headers=headers,
+                    json=body,
+                    timeout=request_timeout or 60.0,
                 )
                 response.raise_for_status()
                 data = response.json()
 
-            choice = data["choices"][0]
-            message = choice.get("message") or {}
+            choice = _first_dict(data.get("choices"))
+            message = choice.get("message") if choice else {}
+            message = message if isinstance(message, dict) else {}
             content = str(message.get("content") or "").strip()
             if not content:
                 finish_reason = choice.get("finish_reason") or "unknown"
@@ -90,7 +106,13 @@ class AnthropicClient(LLMClient):
         """初始化实例并保存运行所需的依赖。"""
         self.api_key = api_key
 
-    async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:
+    async def chat(
+        self,
+        prompt: str,
+        model: str,
+        max_tokens: int = 1024,
+        request_timeout: float | None = None,
+    ) -> str:
         """处理当前模块的业务逻辑并返回结果。"""
         self.last_error = ""
         self.last_detail = ""
@@ -109,12 +131,18 @@ class AnthropicClient(LLMClient):
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    endpoint, headers=headers, json=body, timeout=60.0
+                    endpoint,
+                    headers=headers,
+                    json=body,
+                    timeout=request_timeout or 60.0,
                 )
                 response.raise_for_status()
                 data = response.json()
 
-            return data["content"][0]["text"].strip()
+            content = _anthropic_content_text(data).strip()
+            if not content:
+                self.last_detail = "HTTP OK but content was empty."
+            return content
         except Exception as exc:
             self.last_error = str(exc)
             logger.warning("Anthropic LLM request failed: %s", exc)
@@ -128,7 +156,13 @@ class GeminiClient(LLMClient):
         """初始化实例并保存运行所需的依赖。"""
         self.api_key = api_key
 
-    async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:
+    async def chat(
+        self,
+        prompt: str,
+        model: str,
+        max_tokens: int = 1024,
+        request_timeout: float | None = None,
+    ) -> str:
         """处理当前模块的业务逻辑并返回结果。"""
         self.last_error = ""
         self.last_detail = ""
@@ -144,12 +178,17 @@ class GeminiClient(LLMClient):
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    endpoint, json=body, timeout=60.0
+                    endpoint,
+                    json=body,
+                    timeout=request_timeout or 60.0,
                 )
                 response.raise_for_status()
                 data = response.json()
 
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            content = _gemini_content_text(data).strip()
+            if not content:
+                self.last_detail = "HTTP OK but content was empty."
+            return content
         except Exception as exc:
             self.last_error = str(exc)
             logger.warning("Gemini LLM request failed: %s", exc)
@@ -168,7 +207,13 @@ class OllamaClient(LLMClient):
         self.last_error = ""
         self.last_detail = ""
 
-    async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:
+    async def chat(
+        self,
+        prompt: str,
+        model: str,
+        max_tokens: int = 1024,
+        request_timeout: float | None = None,
+    ) -> str:
         """处理当前模块的业务逻辑并返回结果。"""
         self.last_error = ""
         self.last_detail = ""
@@ -182,7 +227,11 @@ class OllamaClient(LLMClient):
                 "options": {"num_predict": max_tokens},
             }
             async with httpx.AsyncClient() as client:
-                response = await client.post(endpoint, json=body, timeout=60.0)
+                response = await client.post(
+                    endpoint,
+                    json=body,
+                    timeout=request_timeout or 60.0,
+                )
                 response.raise_for_status()
                 data = response.json()
             message = data.get("message") or {}
@@ -196,6 +245,30 @@ class OllamaClient(LLMClient):
             self.last_error = str(exc)
             logger.warning("Ollama LLM request failed: %s", exc)
             return ""
+
+
+def _first_dict(value: object) -> dict:
+    if not isinstance(value, list) or not value:
+        return {}
+    first = value[0]
+    return first if isinstance(first, dict) else {}
+
+
+def _anthropic_content_text(data: object) -> str:
+    if not isinstance(data, dict):
+        return ""
+    block = _first_dict(data.get("content"))
+    return str(block.get("text") or "")
+
+
+def _gemini_content_text(data: object) -> str:
+    if not isinstance(data, dict):
+        return ""
+    candidate = _first_dict(data.get("candidates"))
+    content = candidate.get("content") if isinstance(candidate, dict) else {}
+    content = content if isinstance(content, dict) else {}
+    part = _first_dict(content.get("parts"))
+    return str(part.get("text") or "")
 
 
 def create_llm_client(
@@ -302,9 +375,11 @@ def create_llm_filter_client(session: _Session):
                 resp.raise_for_status()
                 data = resp.json()
 
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                json_match = re.search(r"\[[\d\s,]*\]", content)
-                if not json_match:
+                choice = _first_dict(data.get("choices")) if isinstance(data, dict) else {}
+                message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+                content = str(message.get("content") or "")
+                raw_indices = json_array_from_text(content)
+                if raw_indices is None:
                     logger.warning("LLM response had no index array: %s", content[:200])
                     if llm_config.mode == "assist_only":
                         kept.extend(batch)
@@ -325,11 +400,11 @@ def create_llm_filter_client(session: _Session):
                                     "decision": "reject",
                                     "feedback": "llm_no_index_array_rejected_in_must_pass",
                                 }
-                            )
+                    )
                     continue
 
-                indices: list[int] = json.loads(json_match.group(0))
-                kept_idx = {i for i in indices if 0 <= i < len(batch)}
+                indices = _valid_filter_indices(raw_indices, batch_size=len(batch))
+                kept_idx = set(indices)
                 if return_details:
                     for i, mod in enumerate(batch):
                         details.append(
@@ -339,7 +414,7 @@ def create_llm_filter_client(session: _Session):
                                 "feedback": content[:500],
                             }
                         )
-                kept.extend([batch[i] for i in indices if 0 <= i < len(batch)])
+                kept.extend([batch[i] for i in indices])
 
             except Exception:
                 logger.exception("LLM filter call failed for provider %s", primary.get("provider"))
@@ -369,3 +444,19 @@ def create_llm_filter_client(session: _Session):
         return kept
 
     return _llm_filter
+
+
+def _valid_filter_indices(raw: str | list, *, batch_size: int) -> list[int]:
+    parsed = raw if isinstance(raw, list) else json_array_from_text(raw)
+    if not isinstance(parsed, list):
+        return []
+    seen: set[int] = set()
+    indices: list[int] = []
+    for item in parsed:
+        if not isinstance(item, int) or isinstance(item, bool):
+            continue
+        if item < 0 or item >= batch_size or item in seen:
+            continue
+        indices.append(item)
+        seen.add(item)
+    return indices

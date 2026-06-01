@@ -1,106 +1,33 @@
 import re
 from dataclasses import dataclass, field
 
+from app.services.agent.list_utils import unique_text
+from app.services.agent.semantic_inference import (
+    canonical_semantic_token,
+    extract_semantic_signals,
+    semantic_domains_for_anchors,
+    semantic_signals_from_anchors,
+)
+from app.services.agent.semantic_taxonomy import CHINESE_QUERY_FILLERS, STOP_WORDS
+
 SCOPE_MARKER = "[scope]"
 
-STOP_WORDS = {
-    "mod",
-    "mods",
-    "模组",
-    "最近",
-    "最新",
-    "更新",
-    "热门",
-    "哪些",
-    "有哪些",
-    "有没有",
-    "只看",
-    "查看",
-    "看看",
-    "的",
-    "和",
-    "了",
-}
-
-CHINESE_QUERY_FILLERS = (
-    "有什么",
-    "有哪些",
-    "有没有",
-    "帮我找",
-    "帮我看看",
-    "我想找",
-    "想找",
-    "查找",
-    "搜索",
-    "和",
-    "相关的",
-    "相关",
-    "类似的",
-    "类似",
-    "mod",
-    "mods",
-    "模组",
-)
-
-SEMANTIC_RULES: tuple[dict, ...] = (
-    {
-        "name": "female",
-        "markers": ["女性", "女装", "女款", "女士", "女人", "妹子", "female", "woman", "women", "girl"],
-        "terms": ["female", "women", "girl", "cbbe", "unp", "bodyslide", "eve"],
-    },
-    {
-        "name": "male",
-        "markers": ["男性", "男装", "男款", "男士", "男人", "male", "man", "men", "boy"],
-        "terms": ["male", "men", "himbo", "sos", "male body"],
-    },
-    {
-        "name": "outfit",
-        "markers": ["服装", "衣服", "衣装", "套装", "外观", "裙", "内衣", "outfit", "clothing", "dress", "robe"],
-        "terms": ["outfit", "clothing", "dress", "robe", "bikini", "lingerie", "costume", "suit"],
-        "category_aliases": ["clothing", "accessories", "outfit", "outfits", "服装"],
-    },
-    {
-        "name": "armor",
-        "markers": ["护甲", "盔甲", "轻甲", "重甲", "甲", "armor", "armour", "light armor", "heavy armor"],
-        "terms": ["armor", "armour", "light armor", "heavy armor", "clothing"],
-        "category_aliases": ["armor", "armour", "轻甲", "护甲"],
-    },
-    {
-        "name": "gameplay",
-        "markers": ["玩法", "机制", "战斗", "生存", "任务", "平衡", "perk", "技能", "gameplay", "combat", "quest"],
-        "terms": ["gameplay", "combat", "quest", "perk", "survival", "balance", "mechanics"],
-        "category_aliases": ["gameplay", "combat", "quests", "skills", "perks", "游戏玩法"],
-    },
-    {
-        "name": "visual",
-        "markers": ["画质", "画面", "材质", "纹理", "光照", "美化", "视觉", "graphics", "texture", "visual", "lighting"],
-        "terms": ["graphics", "texture", "textures", "visual", "lighting", "environment", "reshade"],
-        "category_aliases": ["graphics", "textures", "visuals", "environment", "models", "美化"],
-    },
-    {
-        "name": "follower",
-        "markers": ["随从", "同伴", "伙伴", "follower", "companion"],
-        "terms": ["follower", "companion", "npc"],
-        "category_aliases": ["followers", "companions", "npcs", "随从"],
-    },
-    {
-        "name": "animation",
-        "markers": ["动画", "动作", "姿势", "animation", "pose", "moveset"],
-        "terms": ["animation", "animations", "pose", "moveset", "behavior"],
-        "category_aliases": ["animation", "animations", "poses"],
-    },
-    {
-        "name": "utility",
-        "markers": ["工具", "框架", "修复", "补丁", "性能", "utility", "framework", "fix", "patch", "performance"],
-        "terms": ["utility", "framework", "fix", "patch", "performance", "bugfix"],
-        "category_aliases": ["utilities", "bug fixes", "patches", "modders resources"],
-    },
-    {
-        "name": "cosmetic_face",
-        "markers": ["玻尿酸", "肉毒", "botox", "botoxed", "hyaluronic"],
-        "terms": ["玻尿酸", "botox", "botoxed", "hyaluronic"],
-    },
-)
+__all__ = [
+    "SemanticQuery",
+    "base_keywords",
+    "canonical_semantic_terms",
+    "canonical_semantic_token",
+    "category_key",
+    "category_match_score",
+    "distinctive_query_terms",
+    "infer_categories",
+    "semantic_domains_for_anchors",
+    "semantic_query",
+    "semantic_query_from_anchors",
+    "strip_scope",
+    "text_score",
+    "unique_terms",
+]
 
 
 @dataclass
@@ -110,6 +37,9 @@ class SemanticQuery:
     base_keywords: list[str] = field(default_factory=list)
     expanded_terms: list[str] = field(default_factory=list)
     category_aliases: list[str] = field(default_factory=list)
+    matched_concepts: list[str] = field(default_factory=list)
+    anchors: list[str] = field(default_factory=list)
+    domains: list[str] = field(default_factory=list)
 
     @property
     def all_terms(self) -> list[str]:
@@ -127,30 +57,49 @@ class SemanticQuery:
         return " ".join(part for part in unique_terms(parts) if part).strip()
 
 
-def strip_scope(query: str) -> str:
+def strip_scope(query: object) -> str:
     """处理当前模块的业务逻辑并返回结果。"""
-    return query.split(SCOPE_MARKER, 1)[0].strip()
+    return str(query or "").split(SCOPE_MARKER, 1)[0].strip()
 
 
 def semantic_query(query: str, categories: list[str] | None = None) -> SemanticQuery:
     """处理当前模块的业务逻辑并返回结果。"""
     clean_query = strip_scope(query)
-    lower_query = clean_query.lower()
     category_text = " ".join(categories or []).lower()
-    expanded: list[str] = []
-    aliases: list[str] = []
-    for rule in SEMANTIC_RULES:
-        markers = [str(marker).lower() for marker in rule.get("markers", [])]
-        if any(marker in lower_query or marker in category_text for marker in markers):
-            expanded.extend(rule.get("terms", []))
-            aliases.extend(rule.get("category_aliases", []))
+    signals = extract_semantic_signals(clean_query, category_text)
     return SemanticQuery(
         raw_query=query,
         clean_query=clean_query,
         base_keywords=base_keywords(clean_query),
-        expanded_terms=unique_terms(expanded),
-        category_aliases=unique_terms(aliases),
+        expanded_terms=signals.expanded_terms,
+        category_aliases=signals.category_aliases,
+        matched_concepts=signals.matched_concepts,
+        anchors=signals.anchors,
+        domains=signals.domains,
     )
+
+
+def semantic_query_from_anchors(query: str, anchors: list[str]) -> SemanticQuery:
+    """基于上游 LLM 语义锚点扩展查询，不重新匹配原始文本。"""
+    clean_query = strip_scope(query)
+    signals = semantic_signals_from_anchors(anchors)
+    return SemanticQuery(
+        raw_query=query,
+        clean_query=clean_query,
+        base_keywords=base_keywords(clean_query),
+        expanded_terms=signals.expanded_terms,
+        category_aliases=signals.category_aliases,
+        matched_concepts=signals.matched_concepts,
+        anchors=signals.anchors,
+        domains=signals.domains,
+    )
+
+
+
+def canonical_semantic_terms(values: list[str]) -> list[str]:
+    """规范化语义别名，同时保持稳定输入顺序。"""
+    return unique_terms([canonical_semantic_token(value) for value in values])
+
 
 
 def base_keywords(query: str) -> list[str]:
@@ -194,10 +143,15 @@ def distinctive_query_terms(query: str) -> list[str]:
     ]
 
 
-def infer_categories(query: str, available_categories: list[str], existing: list[str] | None = None) -> list[str]:
+def infer_categories(
+    query: str,
+    available_categories: list[str],
+    existing: list[str] | None = None,
+    semantic: SemanticQuery | None = None,
+) -> list[str]:
     """处理当前模块的业务逻辑并返回结果。"""
     selected = list(existing or [])
-    semantic = semantic_query(query, selected)
+    semantic = semantic or semantic_query(query, selected)
     if not semantic.category_aliases and not semantic.expanded_terms and not semantic.base_keywords:
         return selected
     selected_keys = {category_key(value) for value in selected}
@@ -261,11 +215,4 @@ def text_score(query: str, fields: list[str | None], categories: list[str] | Non
 
 def unique_terms(values: list[str]) -> list[str]:
     """处理当前模块的业务逻辑并返回结果。"""
-    merged: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        token = re.sub(r"\s+", " ", str(value or "").strip().lower())
-        if token and token not in seen:
-            merged.append(token)
-            seen.add(token)
-    return merged
+    return unique_text(re.sub(r"\s+", " ", str(value or "").strip().lower()) for value in values)

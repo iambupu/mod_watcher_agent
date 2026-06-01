@@ -1,6 +1,8 @@
-import json
 import os
 from typing import TYPE_CHECKING, Any
+
+from app.utils.boolean import parse_bool
+from app.utils.json import json_array
 
 if TYPE_CHECKING:
     from app.services.settings_service import SettingsService
@@ -129,9 +131,16 @@ def provider_config_has_credentials(provider_config: dict[str, Any]) -> bool:
 
 def default_provider_configs() -> list[dict[str, Any]]:
     """处理当前模块的业务逻辑并返回结果。"""
+    default_api_key = os.getenv("LLM_API_KEY", "")
+    openai_api_key = os.getenv("OPENAI_API_KEY", "")
     configs: list[dict[str, Any]] = []
     for index, item in enumerate(PROVIDER_DEFINITIONS, start=1):
         provider = item["provider"]
+        provider_default_api_key = (
+            openai_api_key
+            if provider == "openai" and not default_api_key
+            else default_api_key
+        )
         configs.append(
             {
                 "provider": provider,
@@ -140,7 +149,7 @@ def default_provider_configs() -> list[dict[str, Any]]:
                 "model": (
                     os.getenv("LLM_MODEL", "") if provider == "ollama" else ""
                 ) or item["model"],
-                "api_key": "",
+                "api_key": provider_default_api_key,
                 "base_url": (
                     os.getenv("LLM_BASE_URL", "") if provider == "ollama" else ""
                 ) or item["base_url"],
@@ -154,12 +163,13 @@ def get_provider_chain(settings: "SettingsService") -> list[dict[str, Any]]:
     raw = settings.get("llm_providers_json") or ""
     providers: list[dict[str, Any]] = []
     if raw:
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                providers = [item for item in parsed if isinstance(item, dict) and item.get("enabled")]
-        except json.JSONDecodeError:
-            providers = []
+        providers = [
+            item
+            for item in json_array(raw)
+            if isinstance(item, dict)
+            and parse_bool(item.get("enabled"))
+            and str(item.get("provider") or "").strip().lower() in SUPPORTED_PROVIDERS
+        ]
 
     if not providers:
         providers = [
@@ -172,4 +182,12 @@ def get_provider_chain(settings: "SettingsService") -> list[dict[str, Any]]:
             }
         ]
 
-    return sorted(providers, key=lambda item: int(item.get("priority") or 999))
+    return sorted(providers, key=provider_priority)
+
+
+def provider_priority(provider_config: dict[str, Any]) -> int:
+    """Return a stable fallback priority for legacy or malformed stored config."""
+    try:
+        return int(str(provider_config.get("priority") or "").strip())
+    except ValueError:
+        return 999

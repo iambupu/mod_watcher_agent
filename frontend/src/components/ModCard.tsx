@@ -1,17 +1,23 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ExternalLink, Heart, EyeOff, Languages, Sparkles, ChevronDown, ChevronUp, X } from "lucide-react";
+import { ExternalLink, Heart, EyeOff, Languages, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
 import { ModStatsLine } from "@/components/ModStatsLine";
 import { SourceBadge } from "@/components/SourceBadge";
 import { Button } from "@/components/ui/Button";
 import { useUIStore } from "@/stores/uiStore";
+import { ModalHeader, ModalShell } from "@/components/ui/Modal";
+import { Panel } from "@/components/ui/Panel";
+import { parseJsonStringArray } from "@/utils/json";
+import { isAdultContent } from "@/utils/modAdult";
 import { formatModSummary } from "@/utils/modSummary";
+import { formatModTitle } from "@/utils/modTitle";
 import type { ModItem } from "@/types";
 
 interface ModCardProps {
   mod: ModItem;
   isFavorited?: boolean;
   onToggleFavorite?: () => void;
+  showBottomFavoriteAction?: boolean;
   onIgnore?: () => void;
   onRegenerateSummary?: () => void;
   regeneratingSummary?: boolean;
@@ -20,15 +26,7 @@ interface ModCardProps {
   footerContent?: React.ReactNode;
 }
 
-function parseTags(tagsJson: string): string[] {
-  try {
-    return JSON.parse(tagsJson);
-  } catch {
-    return [];
-  }
-}
-
-export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onToggleFavorite, onIgnore, onRegenerateSummary, regeneratingSummary = false, onGenerateIntroduction, generatingIntroduction = false, footerContent }) => {
+export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onToggleFavorite, showBottomFavoriteAction = true, onIgnore, onRegenerateSummary, regeneratingSummary = false, onGenerateIntroduction, generatingIntroduction = false, footerContent }) => {
   const { t } = useTranslation();
   const summaryMode = useUIStore((s) => s.summaryMode);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
@@ -37,7 +35,8 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
   const [introduction, setIntroduction] = useState(mod.ai_introduction || "");
   const [introError, setIntroError] = useState("");
   const summaryRef = useRef<HTMLParagraphElement | null>(null);
-  const tags = parseTags(mod.tags_json || "[]");
+  const tags = parseJsonStringArray(mod.tags_json);
+  const displayTitle = formatModTitle(mod, summaryMode);
 
   const gameLabel = mod.game || mod.game_domain || "";
   const summary = formatModSummary({
@@ -83,7 +82,11 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
   };
 
   return (
-    <div className="flex overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md flex-col">
+    <Panel
+      as="div"
+      padding="none"
+      className="flex overflow-hidden flex-col transition hover:-translate-y-0.5 hover:shadow-md"
+    >
       <div
         className={`relative flex-shrink-0 bg-gradient-to-br from-slate-100 to-slate-200 ${
           mod.thumbnail_url ? "aspect-[300/169]" : "aspect-[300/85]"
@@ -92,7 +95,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
         {mod.thumbnail_url ? (
           <img
             src={mod.thumbnail_url}
-            alt={mod.title}
+            alt={displayTitle}
             className="w-full h-full object-cover"
             loading="lazy"
           />
@@ -106,7 +109,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
         <div className="absolute left-3 top-3">
           <div className="flex max-w-[calc(100%-3rem)] flex-wrap gap-2">
             <SourceBadge source={mod.source} className="bg-white/95 shadow-sm backdrop-blur-sm" />
-            {mod.adult_content === true && (
+            {isAdultContent(mod.adult_content) && (
               <span
                 className="inline-flex items-center rounded-md border border-red-200 bg-red-50/95 px-2 py-0.5 text-xs font-semibold text-red-700 shadow-sm backdrop-blur-sm"
                 title="Adult content"
@@ -143,10 +146,10 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
           href={mod.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="line-clamp-2 text-base font-bold leading-snug text-slate-950 transition-colors hover:text-blue-600"
-          title={mod.title}
+          className="line-clamp-2 whitespace-pre-line text-base font-bold leading-snug text-slate-950 transition-colors hover:text-blue-600"
+          title={displayTitle}
         >
-          {mod.title}
+          {displayTitle}
         </a>
 
         <ModStatsLine
@@ -218,7 +221,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
               <span className="ml-1.5">{t("common.viewMod")}</span>
             </Button>
           </a>
-          {onToggleFavorite && (
+          {onToggleFavorite && showBottomFavoriteAction && (
             <Button
               type="button"
               size="sm"
@@ -264,17 +267,19 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
         )}
       </div>
       {introductionOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
-          <div className="max-h-[80vh] w-full max-w-2xl overflow-hidden rounded-lg bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
-              <div>
-                <h3 className="text-base font-semibold text-gray-900">{t("mod.aiIntroduction")}</h3>
-                <p className="text-xs text-gray-500 line-clamp-1">{mod.title}</p>
-              </div>
-              <button type="button" className="rounded-md p-1 text-gray-500 hover:bg-gray-100" onClick={() => setIntroductionOpen(false)}>
-                <X size={18} />
-              </button>
-            </div>
+        <ModalShell
+          open={introductionOpen}
+          onClose={() => setIntroductionOpen(false)}
+          size="md"
+          panelClassName="max-h-[80vh] overflow-hidden"
+        >
+          <ModalHeader
+            title={t("mod.aiIntroduction")}
+            subtitle={<span className="line-clamp-1">{displayTitle}</span>}
+            onClose={() => setIntroductionOpen(false)}
+            closeAriaLabel={t("common.close")}
+            className="px-5 py-3 border-b border-gray-200 shrink-0 mb-0"
+          />
             <div className="max-h-[62vh] overflow-y-auto px-5 py-4">
               {generatingIntroduction && !introduction ? (
                 <p className="text-sm text-gray-500">{t("mod.aiIntroductionLoading")}</p>
@@ -284,9 +289,8 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
                 <p className="whitespace-pre-wrap text-sm leading-6 text-gray-700">{introduction || mod.ai_introduction || t("mod.noAiIntroduction")}</p>
               )}
             </div>
-          </div>
-        </div>
+        </ModalShell>
       )}
-    </div>
+    </Panel>
   );
 };

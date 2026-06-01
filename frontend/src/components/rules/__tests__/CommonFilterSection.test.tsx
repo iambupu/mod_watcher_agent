@@ -134,6 +134,16 @@ describe("MetricFilterFields", () => {
     fireEvent.change(inputs[0], { target: { value: "" } });
     expect(changed).toEqual({ minDownloads: undefined });
   });
+
+  it("does not allow updatedWithinDays below backend minimum", () => {
+    let changed: Partial<CommonRuleFilters> | null = null;
+    render(<MetricFilterFields onChange={(p) => (changed = p)} />);
+
+    const inputs = screen.getAllByRole("spinbutton");
+    fireEvent.change(inputs[3], { target: { value: "0" } });
+
+    expect(changed).toBeNull();
+  });
 });
 
 describe("AdultPolicyField", () => {
@@ -199,6 +209,20 @@ describe("LlmFilterSection", () => {
     const slider = screen.getByRole("slider");
     expect(slider).toHaveValue("0.7");
     expect(screen.getByText(/70%/)).toBeInTheDocument();
+  });
+
+  it("clamps invalid confidence values", () => {
+    let changed: Partial<CommonRuleFilters> | null = null;
+    render(
+      <LlmFilterSection
+        llmFilter={{ enabled: true, mode: "assist_only", minConfidence: Number.NaN }}
+        onChange={(p) => (changed = p)}
+      />,
+    );
+
+    expect(screen.getByText(/50%/)).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
+    expect(changed).toMatchObject({ llmFilter: { minConfidence: 1 } });
   });
 });
 

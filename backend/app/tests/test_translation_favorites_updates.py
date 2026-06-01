@@ -11,6 +11,8 @@ do not yet have a translated_summary field. They will fail with KeyError
 until Task 10 adds the field to the schemas and routes.
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -99,8 +101,8 @@ class TestFavoriteTranslatedSummary:
         assert len(items) == 1
         assert items[0]["translated_summary"] == "中文内容"
 
-    def test_favorite_fallback_to_en(self, client, session):
-        """Only en summary → translated_summary falls back to en content. (TDD: RED)"""
+    def test_favorite_does_not_masquerade_en_as_translated_summary(self, client, session):
+        """Only en summary → translated_summary remains None for a zh-CN preference."""
         mod = make_mod(external_id="fav-en-1")
         session.add(mod)
         session.commit()
@@ -125,7 +127,7 @@ class TestFavoriteTranslatedSummary:
         assert response.status_code == 200
         items = response.json()
         assert len(items) == 1
-        assert items[0]["translated_summary"] == "English fallback content"
+        assert items[0]["translated_summary"] is None
 
     def test_favorite_no_summary(self, client, session):
         """No summary at all → translated_summary is None. (TDD: RED)"""
@@ -158,6 +160,10 @@ class TestFavoriteTranslatedSummary:
                 }
 
         monkeypatch.setattr(FavoriteService, "_adapter_class", FakeAdapter)
+        monkeypatch.setattr(
+            "app.services.notification_service.NotificationService.notify_updates",
+            AsyncMock(return_value={"telegram_ok": True, "discord_ok": False, "notified_count": 1}),
+        )
         mod = make_mod(
             external_id="fav-check-update",
             version="1.0.0",
@@ -183,6 +189,69 @@ class TestFavoriteTranslatedSummary:
         assert data["favorite_id"] == fav.id
         assert data["update_detected"] is True
         assert data["update_event"]["new_version"] == "2.0.0"
+        assert data["last_checked_at"] is not None
+        assert data["notification_sent"] is True
+
+    def test_check_update_route_reports_notification_not_sent_when_delivery_skips(self, client, session, monkeypatch):
+        class FakeAdapter:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def fetch_mod_detail(self, external_id, game_domain):
+                return {
+                    "version": "2.0.0",
+                    "updated_at_remote": "2025-02-01T00:00:00Z",
+                }
+
+        monkeypatch.setattr(FavoriteService, "_adapter_class", FakeAdapter)
+        monkeypatch.setattr(
+            "app.services.notification_service.NotificationService.notify_updates",
+            AsyncMock(return_value={"telegram_ok": False, "discord_ok": False, "notified_count": 0}),
+        )
+        mod = make_mod(
+            external_id="fav-check-update-no-notify",
+            version="1.0.0",
+            updated_at_remote="2025-01-01T00:00:00Z",
+        )
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        fav = Favorite(
+            mod_id=mod.id,
+            last_known_version="1.0.0",
+            last_known_updated_at="2025-01-01T00:00:00Z",
+            created_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:00",
+        )
+        session.add(fav)
+        session.commit()
+        session.refresh(fav)
+
+        response = client.post(f"/api/favorites/{fav.id}/check-update")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["update_detected"] is True
+        assert data["notification_sent"] is False
+
+    def test_check_update_route_reports_unknown_source_as_bad_request(self, client, session):
+        mod = make_mod(source="unknown-source", external_id="bad-source")
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        fav = Favorite(
+            mod_id=mod.id,
+            created_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:00",
+        )
+        session.add(fav)
+        session.commit()
+        session.refresh(fav)
+
+        response = client.post(f"/api/favorites/{fav.id}/check-update")
+
+        assert response.status_code == 400
+        assert "Unknown source" in response.json()["detail"]
 
     def test_favorite_ja_jp_only_returns_none(self, client, session):
         """Only ja-JP summary → translated_summary is None (no zh-CN or en). (TDD: RED)"""
@@ -254,8 +323,8 @@ class TestUpdateTranslatedSummary:
         assert data["items"][0]["mod"]["id"] == mod.id
         assert data["items"][0]["mod"]["translated_summary"] == "中文更新摘要"
 
-    def test_update_fallback_to_en(self, client, session):
-        """Only en summary → translated_summary falls back to en content. (TDD: RED)"""
+    def test_update_does_not_masquerade_en_as_translated_summary(self, client, session):
+        """Only en summary → translated_summary remains None for a zh-CN preference."""
         mod = make_mod(external_id="upd-en-1")
         session.add(mod)
         session.commit()
@@ -288,8 +357,8 @@ class TestUpdateTranslatedSummary:
         assert response.status_code == 200
         data = response.json()
         assert data["total"] == 1
-        assert data["items"][0]["translated_summary"] == "English update summary"
-        assert data["items"][0]["mod"]["translated_summary"] == "English update summary"
+        assert data["items"][0]["translated_summary"] is None
+        assert data["items"][0]["mod"]["translated_summary"] is None
 
     def test_update_no_summary(self, client, session):
         """No summary at all → translated_summary is None. (TDD: RED)"""
@@ -378,3 +447,8 @@ class TestUpdateTranslatedSummary:
         assert response.json() == {"updated": 2}
         data = client.get("/api/updates").json()
         assert all(item["seen"] for item in data["items"])
+
+    def test_updates_rejects_non_positive_limit(self, client):
+        response = client.get("/api/updates", params={"limit": 0})
+
+        assert response.status_code == 422

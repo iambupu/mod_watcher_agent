@@ -1,6 +1,6 @@
 [project]
 name = "mod-watcher-agent"
-version = "0.2.0"
+version = "0.2.1"
 description = "Mod Watcher Agent Backend"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "pydantic-settings>=2.2.0",
     "alembic>=1.13.1",
+    "langgraph>=1.2,<2",
     "pystray>=0.19.5",
     "Pillow>=10.0.0",
 ]

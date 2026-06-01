@@ -1,29 +1,25 @@
-import { get, put, post, buildApiUrl, buildAuthHeaders, ApiError } from "./client";
+import { get, put, post, buildApiUrl, buildAuthHeaders, apiErrorFromResponse } from "./client";
+import {
+  ACCESS_PROFILES,
+  LOVERSLAB_SEARCH_SCRAPE_ENGINES,
+  PROXY_TYPES,
+  SETTINGS_NUMERIC_BOUNDS,
+  SUMMARY_MODES,
+  UI_LANGUAGES,
+} from "@/constants/settings";
+import { DEFAULT_PROVIDER_BASE_URLS, KNOWN_LLM_PROVIDERS } from "@/constants/llmProviders";
 import type { UserSettings, UILanguage, SummaryMode, LlmProvider, LlmProviderConfig, AccessProfile } from "@/types";
+import { parseBoolean } from "@/utils/boolean";
+import { parseJsonArray, parseJsonText } from "@/utils/json";
+import { clampIntegerInput } from "@/utils/numberInput";
 
-export const DEFAULT_LLM_PROVIDERS: {
-  provider: LlmProvider;
-  label: string;
-  defaultModel: string;
-  defaultBaseUrl: string;
-}[] = [
-  { provider: "ollama", label: "Ollama (Local)", defaultModel: "qwen3:8b", defaultBaseUrl: "http://localhost:11434/v1" },
-  { provider: "openai", label: "OpenAI", defaultModel: "gpt-4o-mini", defaultBaseUrl: "https://api.openai.com/v1" },
-  { provider: "anthropic", label: "Anthropic", defaultModel: "claude-3-5-haiku-latest", defaultBaseUrl: "https://api.anthropic.com/v1" },
-  { provider: "gemini", label: "Google Gemini", defaultModel: "gemini-2.0-flash", defaultBaseUrl: "https://generativelanguage.googleapis.com/v1" },
-  { provider: "groq", label: "Groq", defaultModel: "mixtral-8x7b-32768", defaultBaseUrl: "https://api.groq.com/openai/v1" },
-  { provider: "deepseek", label: "DeepSeek", defaultModel: "deepseek-v4-flash", defaultBaseUrl: "https://api.deepseek.com/v1" },
-  { provider: "openrouter", label: "OpenRouter", defaultModel: "gpt-4o-mini", defaultBaseUrl: "https://openrouter.ai/api/v1" },
-  { provider: "siliconflow", label: "硅基流动 (SiliconFlow)", defaultModel: "Qwen/Qwen3-8B", defaultBaseUrl: "https://api.siliconflow.cn/v1" },
-  { provider: "xai", label: "xAI", defaultModel: "grok-4.20-reasoning", defaultBaseUrl: "https://api.x.ai/v1" },
-  { provider: "kimi", label: "Kimi", defaultModel: "kimi-k2.6", defaultBaseUrl: "https://api.moonshot.cn/v1" },
-  { provider: "qwen", label: "通义千问 (Qwen)", defaultModel: "qwen-plus", defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
-  { provider: "minimax", label: "MiniMax", defaultModel: "MiniMax-M2.7", defaultBaseUrl: "https://api.minimax.io/v1" },
-];
-
-const DEFAULT_PROVIDER_BASE_URLS: Record<LlmProvider, string> = Object.fromEntries(
-  DEFAULT_LLM_PROVIDERS.map((provider) => [provider.provider, provider.defaultBaseUrl]),
-) as Record<LlmProvider, string>;
+const KNOWN_UI_LANGUAGES = new Set<UILanguage>(UI_LANGUAGES);
+const KNOWN_SUMMARY_MODES = new Set<SummaryMode>(SUMMARY_MODES);
+const KNOWN_LOVERSLAB_SEARCH_SCRAPE_ENGINES = new Set<UserSettings["loverslabSearchScrapeEngine"]>(
+  LOVERSLAB_SEARCH_SCRAPE_ENGINES,
+);
+const KNOWN_PROXY_TYPES = new Set<UserSettings["proxyType"]>(PROXY_TYPES);
+const KNOWN_ACCESS_PROFILES = new Set<AccessProfile>(ACCESS_PROFILES);
 
 interface BackendSettings {
   nexus_api_key: string;
@@ -80,67 +76,93 @@ interface SettingsResponse {
 function mapBackendToSettings(data: SettingsResponse): UserSettings {
   const s = data.settings;
   let llmProviders: LlmProviderConfig[] = [];
-  try {
-    const parsed = JSON.parse(s.llm_providers_json || "[]") as BackendLlmProviderConfig[];
-    llmProviders = parsed.map((p) => ({
-      provider: p.provider as LlmProvider,
-      enabled: Boolean(p.enabled),
-      priority: Number(p.priority) || 999,
+  llmProviders = parseJsonArray(s.llm_providers_json).flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const p = item as Partial<BackendLlmProviderConfig>;
+    const provider = p.provider || "";
+    if (!isKnownLlmProvider(provider)) return [];
+    return [{
+      provider,
+      enabled: parseBoolean(p.enabled),
+      priority: clampIntegerInput(String(p.priority ?? ""), { min: 1, max: 999, fallback: 999 }),
       model: p.model || "",
       apiKey: p.api_key || "",
-      baseUrl: p.base_url || DEFAULT_PROVIDER_BASE_URLS[p.provider as LlmProvider] || "",
-    }));
-  } catch {
-    llmProviders = [];
-  }
+      baseUrl: p.base_url || DEFAULT_PROVIDER_BASE_URLS[provider] || "",
+    }];
+  });
+  const primaryProvider = isKnownLlmProvider(s.llm_provider) ? s.llm_provider : "openai";
   if (llmProviders.length === 0) {
     llmProviders = [{
-      provider: (s.llm_provider as LlmProvider) || "openai",
+      provider: primaryProvider,
       enabled: true,
       priority: 1,
       model: s.llm_model || "",
       apiKey: s.llm_api_key || "",
-      baseUrl: s.llm_base_url || DEFAULT_PROVIDER_BASE_URLS[(s.llm_provider as LlmProvider) || "openai"],
+      baseUrl: s.llm_base_url || DEFAULT_PROVIDER_BASE_URLS[primaryProvider],
     }];
   }
   return {
-    uiLanguage: (s.ui_language as UILanguage) || "zh-CN",
-    summaryLanguage: (s.summary_language as UILanguage) || "zh-CN",
-    summaryMode: (s.summary_mode as SummaryMode) || "bilingual",
-    summaryReportIntervalMinutes: Number(s.summary_report_interval_minutes) || 0,
+    uiLanguage: knownValue(KNOWN_UI_LANGUAGES, s.ui_language, "zh-CN"),
+    summaryLanguage: knownValue(KNOWN_UI_LANGUAGES, s.summary_language, "zh-CN"),
+    summaryMode: knownValue(KNOWN_SUMMARY_MODES, s.summary_mode, "bilingual"),
+    summaryReportIntervalMinutes: clampIntegerInput(
+      s.summary_report_interval_minutes ?? "",
+      SETTINGS_NUMERIC_BOUNDS.summaryReportIntervalMinutes,
+    ),
     summaryReportPrompt: s.summary_report_prompt || "",
-    watchdogCheckIntervalMinutes: Number(s.watchdog_check_interval_minutes) || 10,
-    watchdogGraceMinutes: Number(s.watchdog_grace_minutes) || 60,
-    watchdogMaxCatchupPerRun: Number(s.watchdog_max_catchup_per_run) || 3,
+    watchdogCheckIntervalMinutes: clampIntegerInput(
+      s.watchdog_check_interval_minutes ?? "",
+      SETTINGS_NUMERIC_BOUNDS.watchdogCheckIntervalMinutes,
+    ),
+    watchdogGraceMinutes: clampIntegerInput(
+      s.watchdog_grace_minutes ?? "",
+      SETTINGS_NUMERIC_BOUNDS.watchdogGraceMinutes,
+    ),
+    watchdogMaxCatchupPerRun: clampIntegerInput(
+      s.watchdog_max_catchup_per_run ?? "",
+      SETTINGS_NUMERIC_BOUNDS.watchdogMaxCatchupPerRun,
+    ),
     nexusApiKey: s.nexus_api_key || "",
     googleSearchApiKey: s.google_search_api_key || "",
     googleSearchEngineId: s.google_search_engine_id || "",
-    loverslabSearchScrapeEnabled: s.loverslab_search_scrape_enabled !== "false",
-    loverslabSearchScrapeEngine: (s.loverslab_search_scrape_engine as "duckduckgo" | "google") || "duckduckgo",
-    llmProvider: (s.llm_provider as LlmProvider) || "openai",
+    loverslabSearchScrapeEnabled: parseBoolean(s.loverslab_search_scrape_enabled, true),
+    loverslabSearchScrapeEngine: knownValue(
+      KNOWN_LOVERSLAB_SEARCH_SCRAPE_ENGINES,
+      s.loverslab_search_scrape_engine,
+      "duckduckgo",
+    ),
+    llmProvider: primaryProvider,
     llmModel: s.llm_model || "",
     llmApiKey: s.llm_api_key || "",
     llmBaseUrl: s.llm_base_url || "",
     llmProviders,
-    telegramEnabled: s.telegram_enabled === "true",
+    telegramEnabled: parseBoolean(s.telegram_enabled),
     telegramBotToken: s.telegram_bot_token || "",
     telegramChatId: s.telegram_chat_id || "",
-    discordEnabled: s.discord_enabled === "true",
+    discordEnabled: parseBoolean(s.discord_enabled),
     discordWebhookUrl: s.discord_webhook_url || "",
-    systemNotificationsEnabled: s.system_notifications_enabled !== "false",
-    autoStart: s.auto_start === "true",
-    notificationsEnabled: s.notifications_enabled !== "false",
+    systemNotificationsEnabled: parseBoolean(s.system_notifications_enabled, true),
+    autoStart: parseBoolean(s.auto_start),
+    notificationsEnabled: parseBoolean(s.notifications_enabled, true),
     databasePath: s.database_path || "",
-    proxyEnabled: s.proxy_enabled === "true",
-    proxyType: (s.proxy_type as "http" | "socks5") || "http",
+    proxyEnabled: parseBoolean(s.proxy_enabled),
+    proxyType: knownValue(KNOWN_PROXY_TYPES, s.proxy_type, "http"),
     proxyHost: s.proxy_host || "",
     proxyPort: s.proxy_port || "",
     proxyUsername: s.proxy_username || "",
     proxyPassword: s.proxy_password || "",
-    accessProfile: (s.access_profile as AccessProfile) || "local_relaxed",
-    allowLan: s.allow_lan === "true",
+    accessProfile: knownValue(KNOWN_ACCESS_PROFILES, s.access_profile, "local_relaxed"),
+    allowLan: parseBoolean(s.allow_lan),
     bindHost: s.bind_host || "127.0.0.1",
   };
+}
+
+function isKnownLlmProvider(provider: string): provider is LlmProvider {
+  return KNOWN_LLM_PROVIDERS.has(provider as LlmProvider);
+}
+
+function knownValue<T extends string>(knownValues: Set<T>, raw: string | undefined, fallback: T): T {
+  return knownValues.has(raw as T) ? (raw as T) : fallback;
 }
 
 function mapSettingsToBackend(s: Partial<UserSettings>): { settings: Partial<BackendSettings> } {
@@ -239,8 +261,6 @@ export async function testLlmProviders(providers: LlmProviderConfig[]): Promise<
   });
 }
 
-export { DEFAULT_PROVIDER_BASE_URLS };
-
 export async function exportSettings(): Promise<void> {
   const res = await fetch(buildApiUrl("/settings/export"), {
     method: "POST",
@@ -248,7 +268,7 @@ export async function exportSettings(): Promise<void> {
     credentials: "include",
   });
   if (!res.ok) {
-    throw new ApiError(`API Error: ${res.status} ${res.statusText}`, res.status, "");
+    throw await apiErrorFromResponse(res);
   }
   const blob = await res.blob();
   const url = window.URL.createObjectURL(blob);
@@ -263,7 +283,10 @@ export async function exportSettings(): Promise<void> {
 
 export async function importSettings(file: File): Promise<{ imported: number }> {
   const text = await file.text();
-  const data = JSON.parse(text);
+  const data = parseJsonText(text);
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("Settings import file must be a JSON object");
+  }
   const res = await fetch(buildApiUrl("/settings/import"), {
     method: "POST",
     headers: buildAuthHeaders({ "Content-Type": "application/json" }),
@@ -271,7 +294,7 @@ export async function importSettings(file: File): Promise<{ imported: number }> 
     credentials: "include",
   });
   if (!res.ok) {
-    throw new ApiError(`API Error: ${res.status} ${res.statusText}`, res.status, "");
+    throw await apiErrorFromResponse(res);
   }
   return res.json();
 }

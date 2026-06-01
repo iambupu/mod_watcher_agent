@@ -10,7 +10,9 @@ from app.adapters.base import BaseAdapter
 from app.models.favorite import Favorite
 from app.models.mod import Mod
 from app.models.mod_item import ModItem
+from app.models.summary import ModSummary
 from app.models.update_event import ModUpdateEvent
+from app.schemas.favorite import FavoriteImportCreate
 from app.services.favorite_service import FavoriteService
 
 
@@ -111,10 +113,20 @@ class TestUpdateFavorite:
             await service.update_favorite(9999, tracking_enabled=False)
 
     @pytest.mark.asyncio
-    async def test_update_ignores_none_values(self, service, mod, session):
+    async def test_update_clears_nullable_values(self, service, mod, session):
         fav = await service.add_favorite(mod.id, user_note="original")
         updated = await service.update_favorite(fav.id, user_note=None)
-        assert updated.user_note == "original"
+        assert updated.user_note is None
+
+    @pytest.mark.asyncio
+    async def test_update_clears_user_tags(self, service, mod, session):
+        fav = await service.add_favorite(mod.id)
+        updated = await service.update_favorite(fav.id, user_tags_json='["tag"]')
+        assert updated.user_tags_json == '["tag"]'
+
+        updated = await service.update_favorite(fav.id, user_tags_json="[]")
+
+        assert updated.user_tags_json == "[]"
 
 
 class TestCheckUpdate:
@@ -158,6 +170,95 @@ class TestCheckUpdate:
         reloaded = session.get(Favorite, fav.id)
         assert reloaded.last_known_version == "2.0.0"
         assert reloaded.last_checked_at is not None
+
+    @pytest.mark.asyncio
+    async def test_update_changed_summary_invalidates_and_regenerates_translation(self, service, mod, session):
+        mod.original_summary = "Old remote summary"
+        session.add(mod)
+        session.add(
+            ModSummary(
+                mod_id=mod.id,
+                language="zh-CN",
+                summary_type="brief",
+                content="旧译文",
+                model="test",
+                generated_at="2025-01-01T00:00:00Z",
+            )
+        )
+        session.commit()
+        fav = await service.add_favorite(mod.id)
+        mock_detail = {
+            "version": "2.0.0",
+            "updated_at_remote": "2025-06-01T12:00:00Z",
+            "original_summary": "New remote summary",
+        }
+        adapter = service._adapter_class()
+        with patch.object(
+            adapter,
+            "fetch_mod_detail",
+            new_callable=AsyncMock,
+            return_value=mock_detail,
+        ), patch.object(service, "_adapter_class", return_value=adapter), patch(
+            "app.services.favorite_service.SummaryService.generate_summary",
+            new_callable=AsyncMock,
+            return_value={"content": "新译文", "model": "test"},
+        ) as mock_generate:
+            result = await service.check_update(fav.id)
+
+        assert result is not None
+        reloaded_mod = session.get(Mod, mod.id)
+        assert reloaded_mod.original_summary == "New remote summary"
+        assert reloaded_mod.version == "2.0.0"
+        assert reloaded_mod.updated_at_remote == "2025-06-01T12:00:00Z"
+        assert session.exec(select(ModSummary).where(ModSummary.mod_id == mod.id)).all() == []
+        mock_generate.assert_awaited_once_with(mod.id, language="zh-CN", summary_type="brief")
+
+    @pytest.mark.asyncio
+    async def test_update_notification_respects_favorite_toggle(self, service, mod, session):
+        fav = await service.add_favorite(mod.id)
+        await service.update_favorite(fav.id, notify_on_update=False)
+        mock_detail = {
+            "version": "2.0.0",
+            "updated_at_remote": "2025-06-01T12:00:00Z",
+        }
+        adapter = service._adapter_class()
+        with patch.object(
+            adapter,
+            "fetch_mod_detail",
+            new_callable=AsyncMock,
+            return_value=mock_detail,
+        ), patch.object(service, "_adapter_class", return_value=adapter), patch(
+            "app.services.notification_service.NotificationService.notify_updates",
+            new_callable=AsyncMock,
+        ) as mock_notify:
+            result = await service.check_update(fav.id)
+
+        assert result is not None
+        mock_notify.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_notification_tolerates_invalid_notified_count(self, service, mod, session):
+        fav = await service.add_favorite(mod.id)
+        await service.update_favorite(fav.id, notify_on_update=True)
+        mock_detail = {
+            "version": "2.0.0",
+            "updated_at_remote": "2025-06-01T12:00:00Z",
+        }
+        adapter = service._adapter_class()
+        with patch.object(
+            adapter,
+            "fetch_mod_detail",
+            new_callable=AsyncMock,
+            return_value=mock_detail,
+        ), patch.object(service, "_adapter_class", return_value=adapter), patch(
+            "app.services.notification_service.NotificationService.notify_updates",
+            new_callable=AsyncMock,
+            return_value={"notified_count": "unknown"},
+        ):
+            result = await service.check_update(fav.id)
+
+        assert result is not None
+        assert result.notification_sent is False
 
     @pytest.mark.asyncio
     async def test_detects_update_from_mod_item_detail(self, service, mod, session):
@@ -250,6 +351,80 @@ class TestCheckUpdate:
         assert result is None
 
 
+class TestImportFavorite:
+    @pytest.mark.asyncio
+    async def test_import_existing_favorite_records_local_metadata_update(self, service, mod, session):
+        fav = await service.add_favorite(mod.id)
+
+        result = await service.import_and_favorite(
+            FavoriteImportCreate(
+                source="nexusmods",
+                external_id="1001",
+                game="Skyrim Special Edition",
+                game_domain="skyrimspecialedition",
+                title="Test Mod",
+                url="https://www.nexusmods.com/skyrimspecialedition/mods/1001",
+                version="1.0.0",
+                updated_at_remote="2025-06-01T12:00:00Z",
+            )
+        )
+
+        event = session.exec(select(ModUpdateEvent).where(ModUpdateEvent.favorite_id == fav.id)).one()
+        assert result.id == fav.id
+        assert event.old_version == "1.0.0"
+        assert event.new_version == "1.0.0"
+        assert event.old_updated_at == "2025-01-01T00:00:00Z"
+        assert event.new_updated_at == "2025-06-01T12:00:00Z"
+        reloaded = session.get(Favorite, fav.id)
+        assert reloaded.last_known_updated_at == "2025-06-01T12:00:00Z"
+        assert reloaded.last_checked_at is not None
+
+
+class TestReconcileLocalMetadataUpdates:
+    def test_reconcile_creates_event_for_stale_favorite_baseline(self, service, mod, session):
+        favorite = Favorite(
+            mod_id=mod.id,
+            tracking_enabled=True,
+            notify_on_update=True,
+            last_known_version="1.0.0",
+            last_known_updated_at="2025-01-01T00:00:00Z",
+            created_at="2025-01-01T00:00:00Z",
+            updated_at="2025-01-01T00:00:00Z",
+        )
+        session.add(favorite)
+        session.commit()
+        session.refresh(favorite)
+        mod.version = "1.0.0"
+        mod.updated_at_remote = "2025-06-01T12:00:00Z"
+        session.add(mod)
+        session.commit()
+
+        created = service.reconcile_local_metadata_updates()
+
+        event = session.exec(select(ModUpdateEvent).where(ModUpdateEvent.favorite_id == favorite.id)).one()
+        reloaded = session.get(Favorite, favorite.id)
+        assert created == 1
+        assert event.old_updated_at == "2025-01-01T00:00:00Z"
+        assert event.new_updated_at == "2025-06-01T12:00:00Z"
+        assert reloaded.last_known_updated_at == "2025-06-01T12:00:00Z"
+
+    def test_reconcile_is_idempotent_after_baseline_updated(self, service, mod, session):
+        favorite = Favorite(
+            mod_id=mod.id,
+            tracking_enabled=True,
+            notify_on_update=True,
+            last_known_version=mod.version,
+            last_known_updated_at=mod.updated_at_remote,
+            created_at="2025-01-01T00:00:00Z",
+            updated_at="2025-01-01T00:00:00Z",
+        )
+        session.add(favorite)
+        session.commit()
+
+        assert service.reconcile_local_metadata_updates() == 0
+        assert session.exec(select(ModUpdateEvent)).all() == []
+
+
 class TestCheckAllFavorites:
     @pytest.mark.asyncio
     async def test_checks_all_enabled_favorites(self, service, mod, session):
@@ -284,3 +459,18 @@ class TestCheckAllFavorites:
         ), patch.object(service, "_adapter_class", return_value=adapter):
             events = await service.check_all_favorites()
         assert len(events) == 0
+
+    @pytest.mark.asyncio
+    async def test_check_all_favorites_rolls_back_and_logs_failed_favorite(self, service, mod, session, caplog):
+        fav = await service.add_favorite(mod.id)
+
+        async def failing_check_update(favorite_id):
+            assert favorite_id == fav.id
+            raise RuntimeError("adapter failed")
+
+        service.check_update = failing_check_update
+
+        events = await service.check_all_favorites()
+
+        assert events == []
+        assert "Failed to check favorite update" in caplog.text

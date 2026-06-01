@@ -49,6 +49,7 @@ FRONTEND_DIR = ROOT_DIR / "frontend"
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = int(os.getenv("MW_BACKEND_PORT", "17500"))
 FRONTEND_DEV_PORT = int(os.getenv("MW_FRONTEND_DEV_PORT", "17501"))
+SERVICE_START_TIMEOUT_SECONDS = float(os.getenv("MW_SERVICE_START_TIMEOUT_SECONDS", "120"))
 DEFAULT_FRONTEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 API_DOCS_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}/docs"
 _MUTEX_HANDLE = None
@@ -286,7 +287,7 @@ def _release_single_instance() -> None:
             _LOCK_FILE_PATH.unlink()
 
 
-def _wait_for_port(host: str, port: int, max_wait: float = 30.0) -> bool:
+def _wait_for_port(host: str, port: int, max_wait: float = SERVICE_START_TIMEOUT_SECONDS) -> bool:
     """等待端口就绪，每秒检查一次。"""
     elapsed = 0.0
     while elapsed < max_wait:
@@ -769,11 +770,11 @@ class TrayApp:
                     _tray_logger.info("前端就绪")
                     frontend_ready = True
                 else:
-                    _tray_logger.warning("⚠ 前端启动超时 (30s)")
+                    _tray_logger.warning("⚠ 前端启动超时 (%ss)", int(SERVICE_START_TIMEOUT_SECONDS))
             else:
                 frontend_ready = True
         else:
-            _tray_logger.warning("⚠ 后端启动超时 (30s)")
+            _tray_logger.warning("⚠ 后端启动超时 (%ss)", int(SERVICE_START_TIMEOUT_SECONDS))
 
         if not backend_ready or not frontend_ready:
             _tray_logger.error(
@@ -863,7 +864,7 @@ class TrayApp:
             _tray_logger.info("后端就绪")
             self.launch_frontend()
         else:
-            _tray_logger.warning("⚠ 后端启动超时 (30s)")
+            _tray_logger.warning("⚠ 后端启动超时 (%ss)", int(SERVICE_START_TIMEOUT_SECONDS))
             # 等待图标就绪后显示通知
             time.sleep(1.0)
             for _ in range(5):

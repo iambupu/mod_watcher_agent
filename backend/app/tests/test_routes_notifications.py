@@ -70,6 +70,18 @@ def test_notifications_list_and_read_state() -> None:
         assert mark_response.status_code == 200
         assert mark_response.json() == {"updated": 1}
 
+        bool_id_response = client.post(
+            "/api/notifications/mark-read",
+            json={"ids": [True]},
+        )
+        assert bool_id_response.status_code == 422
+
+        non_positive_id_response = client.post(
+            "/api/notifications/mark-read",
+            json={"ids": [0]},
+        )
+        assert non_positive_id_response.status_code == 422
+
         unread_after_one = client.get("/api/notifications/unread-count")
         assert unread_after_one.json() == {"count": 1}
 
@@ -79,6 +91,10 @@ def test_notifications_list_and_read_state() -> None:
 
         unread_after_all = client.get("/api/notifications/unread-count")
         assert unread_after_all.json() == {"count": 0}
+
+        assert client.get("/api/notifications?offset=-1").status_code == 422
+        assert client.get("/api/notifications?limit=0").status_code == 422
+        assert client.get("/api/notifications?limit=201").status_code == 422
     finally:
         fastapi_app.dependency_overrides.clear()
 

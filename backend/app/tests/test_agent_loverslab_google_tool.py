@@ -61,6 +61,7 @@ async def test_loverslab_google_tool_builds_site_restricted_query_and_persists_r
     assert results[0].tool_name == "loverslab_google_search"
     assert results[0].score >= 1
     assert len(persisted) == 1
+    assert persisted[0].external_id == "skyrim-special-edition:12345"
     assert persisted[0].title == "Follower Pack II by ZckeZckT SE"
     assert persisted[0].game == "Skyrim Special Edition"
     assert persisted[0].thumbnail_url == "https://example.com/thumb.jpg"
@@ -99,6 +100,26 @@ def test_loverslab_google_input_respects_source_filter():
     assert tool_input.limit == 6
 
 
+def test_loverslab_google_input_tolerates_invalid_limit():
+    tool_input = loverslab_google_input_from_plan(
+        "follower mod",
+        {"sources": ["loverslab"], "games": ["Skyrim Special Edition"], "limit": "many"},
+    )
+
+    assert tool_input is not None
+    assert tool_input.limit == 8
+
+
+def test_loverslab_google_input_carries_explicit_time_window():
+    tool_input = loverslab_google_input_from_plan(
+        "最近7天 follower mod",
+        {"sources": ["loverslab"], "updated_since_days": 7, "sort_field": "updated_at_remote"},
+    )
+
+    assert tool_input is not None
+    assert tool_input.updated_since_days == 7
+
+
 def test_loverslab_google_tool_expands_chinese_query_terms():
     engine = _make_engine()
     SQLModel.metadata.create_all(engine)
@@ -112,3 +133,17 @@ def test_loverslab_google_tool_expands_chinese_query_terms():
 
     assert "female" in str(params["q"])
     assert "outfit" in str(params["q"])
+
+
+def test_loverslab_google_tool_tolerates_invalid_direct_time_window():
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        tool = LoversLabGoogleSearchTool(session)
+        params = tool._build_params(
+            LoversLabGoogleSearchInput(query="follower", updated_since_days="many", limit=5),
+            "google-key",
+            "cx-id",
+        )
+
+    assert "dateRestrict" not in params
