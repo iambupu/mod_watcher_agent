@@ -100,7 +100,14 @@ class AgentRuntime:
         response = state.get("response")
         if response is None:
             raise RuntimeError("Agent graph completed without a detail response")
-        return response
+        # 详情问答补齐与普通 chat 一致的返回契约：evidence/memory/audit 等字段。
+        return finalize_chat_response(
+            self.session,
+            request=_to_chat_request(body),
+            response=response,
+            graph_state=state,
+            fallback_evidence_id=evidence_id,
+        )
 
     async def _run_graph(self, request_kind: str, state: dict) -> dict:
         started_at = start_trace()
@@ -125,6 +132,20 @@ class AgentRuntime:
             len(response.matches) if response is not None else 0,
         )
         return result
+
+
+def _to_chat_request(detail_request: AgentModDetailRequest) -> AgentChatRequest:
+    message = (detail_request.question or "").strip()
+    if not message:
+        message = "查看 MOD 详情"
+    return AgentChatRequest(
+        message=message,
+        history=list(detail_request.history),
+        provider_override=detail_request.provider_override,
+        model_override=detail_request.model_override,
+    )
+
+
 
 def _new_evidence_id() -> str:
     return f"ev_{uuid4().hex[:12]}"

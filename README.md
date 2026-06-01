@@ -148,7 +148,7 @@ Docker 默认：
 
 ## 配置说明（常用）
 
-- `DATABASE_URL`：默认 `sqlite:///./mod_watcher.db`（Docker 推荐 `sqlite:////app/data/mod_watcher.db`）。
+- `DATABASE_URL`：默认 `sqlite:///./backend/mod_watcher.db`（Docker 推荐 `sqlite:////app/data/mod_watcher.db`）。
 - `NEXUS_API_KEY`：建议配置以启用 NexusMods 源。
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `DISCORD_WEBHOOK_URL`：外部通知。
 - LLM 相关：`LLM_PROVIDER`、`LLM_API_KEY`、`LLM_MODEL`、`LLM_BASE_URL`。

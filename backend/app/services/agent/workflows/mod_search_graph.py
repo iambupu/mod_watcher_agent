@@ -1,4 +1,7 @@
 import logging
+from collections import deque
+from threading import Lock
+from typing import Any
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
@@ -27,6 +30,59 @@ from app.utils.numeric import safe_nonnegative_int
 
 logger = logging.getLogger(__name__)
 
+_compiled_agent_graph: Any | None = None
+_graph_compile_lock = Lock()
+_graph_compile_durations_ms: deque[int] = deque(maxlen=200)
+_graph_run_durations_ms: deque[int] = deque(maxlen=400)
+
+
+def _state_session(state: AgentGraphState, *, required: bool = True) -> Session | str | object | None:
+    session = state.get("db_session")
+    if session is None:
+        if required:
+            raise RuntimeError("session is required for graph session-dependent nodes")
+        return None
+    if required and not isinstance(session, Session):
+        raise RuntimeError("session is required for graph session-dependent nodes")
+    return session
+
+
+def _append_latency(samples: deque[int], value: int) -> None:
+    samples.append(int(value))
+
+
+def _percentile_ms(samples: deque[int], *, quantile: float) -> int:
+    if not samples:
+        return 0
+    ordered = sorted(samples)
+    return int(ordered[int((len(ordered) - 1) * quantile)])
+
+
+def _emit_run_latency_report() -> None:
+    if not _graph_run_durations_ms:
+        return
+    p50 = _percentile_ms(_graph_run_durations_ms, quantile=0.50)
+    p95 = _percentile_ms(_graph_run_durations_ms, quantile=0.95)
+    logger.info(
+        "agent.workflow graph=mod_search run_latency_ms_p50=%s run_latency_ms_p95=%s sample_count=%s",
+        p50,
+        p95,
+        len(_graph_run_durations_ms),
+    )
+
+
+def _emit_compile_latency_report() -> None:
+    if not _graph_compile_durations_ms:
+        return
+    p50 = _percentile_ms(_graph_compile_durations_ms, quantile=0.50)
+    p95 = _percentile_ms(_graph_compile_durations_ms, quantile=0.95)
+    logger.info(
+        "agent.workflow graph=mod_search compile_latency_ms_p50=%s compile_latency_ms_p95=%s sample_count=%s",
+        p50,
+        p95,
+        len(_graph_compile_durations_ms),
+    )
+
 
 def _event_duration_ms(event: dict) -> int:
     return safe_nonnegative_int(event.get("duration_ms") if isinstance(event, dict) else None)
@@ -35,10 +91,10 @@ def _event_duration_ms(event: dict) -> int:
 def _load_state(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = str(state.get("evidence_id") or "").strip() or f"ev_{uuid4().hex[:12]}"
-    logger.info("agent.stage stage=load_state status=started evidence_id=%s", evidence_id)
+    logger.info("agent.stage step=load_state status=started evidence_id=%s", evidence_id)
     event = finish_trace("load_state", started_at, "Agent graph state loaded.", evidence_id=evidence_id)
     logger.info(
-        "agent.stage stage=load_state status=succeeded duration_ms=%s evidence_id=%s",
+        "agent.stage step=load_state status=succeeded duration_ms=%s evidence_id=%s",
         _event_duration_ms(event),
         evidence_id,
     )
@@ -48,7 +104,7 @@ def _load_state(state: AgentGraphState) -> dict:
 def _summarize_context(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state)
-    logger.info("agent.stage stage=summarize_context status=started evidence_id=%s", evidence_id)
+    logger.info("agent.stage step=summarize_context status=started evidence_id=%s", evidence_id)
     body = state.get("chat_request") or state.get("detail_request")
     if body is None:
         return {
@@ -66,7 +122,7 @@ def _summarize_context(state: AgentGraphState) -> dict:
     context_update = build_context_state_update(body, evidence_id=evidence_id)
     event = finish_trace("summarize_context", started_at, "Agent context summarized.", evidence_id=evidence_id)
     logger.info(
-        "agent.stage stage=summarize_context status=succeeded duration_ms=%s evidence_id=%s",
+        "agent.stage step=summarize_context status=succeeded duration_ms=%s evidence_id=%s",
         _event_duration_ms(event),
         evidence_id,
     )
@@ -79,20 +135,20 @@ def _summarize_context(state: AgentGraphState) -> dict:
 def _persist_result(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state)
-    logger.info("agent.stage stage=persist_result status=started evidence_id=%s", evidence_id)
+    logger.info("agent.stage step=persist_result status=started evidence_id=%s", evidence_id)
     event = finish_trace("persist_result", started_at, "Agent graph result prepared.", evidence_id=evidence_id)
     logger.info(
-        "agent.stage stage=persist_result status=succeeded duration_ms=%s evidence_id=%s",
+        "agent.stage step=persist_result status=succeeded duration_ms=%s evidence_id=%s",
         _event_duration_ms(event),
         evidence_id,
     )
     return {"trace": append_trace(state.get("trace"), event)}
 
 
-async def _diagnose_query(state: AgentGraphState, session: Session | None = None) -> dict:
+async def _diagnose_query(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state) or f"ev_{uuid4().hex[:12]}"
-    logger.info("agent.stage stage=diagnose_query status=started evidence_id=%s", evidence_id)
+    logger.info("agent.stage step=diagnose_query status=started evidence_id=%s", evidence_id)
     body = state.get("chat_request")
     if body is None:
         # 详情路径不需要普通搜索诊断；保留占位诊断是为了让 graph state 结构稳定。
@@ -114,7 +170,7 @@ async def _diagnose_query(state: AgentGraphState, session: Session | None = None
             "trace": append_trace(state.get("trace"), event),
         }
     update = await diagnose_query_stage(
-        session,
+        _state_session(state),
         request=body,
         fastapi_request=state["fastapi_request"],
         active_constraints=state.get("active_constraints", {}),
@@ -125,7 +181,7 @@ async def _diagnose_query(state: AgentGraphState, session: Session | None = None
     evidence_id = str(update.get("evidence_id") or evidence_id)
     event = finish_trace("diagnose_query", started_at, "Agent query diagnosed.", evidence_id=evidence_id)
     logger.info(
-        "agent.stage stage=diagnose_query status=succeeded duration_ms=%s evidence_id=%s",
+        "agent.stage step=diagnose_query status=succeeded duration_ms=%s evidence_id=%s",
         _event_duration_ms(event),
         evidence_id,
     )
@@ -138,7 +194,7 @@ async def _diagnose_query(state: AgentGraphState, session: Session | None = None
 def _plan_tools(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state)
-    logger.info("agent.stage stage=plan_tools status=started evidence_id=%s", evidence_id)
+    logger.info("agent.stage step=plan_tools status=started evidence_id=%s", evidence_id)
     # 工具计划根据诊断结果和偏好选择允许的检索工具；硬约束仍由后续 tool 校验。
     tool_plan = ToolPlannerTool().run(
         ToolPlannerInput(
@@ -150,7 +206,7 @@ def _plan_tools(state: AgentGraphState) -> dict:
     )
     event = finish_trace("plan_tools", started_at, "Agent retrieval tools planned.", evidence_id=evidence_id)
     logger.info(
-        "agent.stage stage=plan_tools status=succeeded duration_ms=%s evidence_id=%s",
+        "agent.stage step=plan_tools status=succeeded duration_ms=%s evidence_id=%s",
         _event_duration_ms(event),
         evidence_id,
     )
@@ -161,15 +217,13 @@ def _plan_tools(state: AgentGraphState) -> dict:
     }
 
 
-async def _staged_retrieval(state: AgentGraphState, session: Session | None = None) -> dict:
+async def _staged_retrieval(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state)
-    logger.info("agent.stage stage=staged_retrieval status=started evidence_id=%s", evidence_id)
-    if session is None:
-        raise RuntimeError("session is required for staged retrieval")
+    logger.info("agent.stage step=staged_retrieval status=started evidence_id=%s", evidence_id)
     # 检索阶段只返回标准 SearchResult 和 evidence，不直接决定最终前端展示顺序。
     update = await execute_retrieval_stage(
-        session,
+        _state_session(state),
         query=_state_query(state),
         query_plan=state.get("query_plan") or {},
         tool_plan=state.get("tool_plan") or {},
@@ -177,7 +231,7 @@ async def _staged_retrieval(state: AgentGraphState, session: Session | None = No
     )
     event = finish_trace("staged_retrieval", started_at, "Agent retrieval tools executed.", evidence_id=evidence_id)
     logger.info(
-        "agent.stage stage=staged_retrieval status=succeeded duration_ms=%s staged=%s online=%s evidence_id=%s",
+        "agent.stage step=staged_retrieval status=succeeded duration_ms=%s staged=%s online=%s evidence_id=%s",
         _event_duration_ms(event),
         len(update.get("staged_results") or []),
         len(update.get("online_results") or []),
@@ -189,15 +243,13 @@ async def _staged_retrieval(state: AgentGraphState, session: Session | None = No
     }
 
 
-async def _rank_results(state: AgentGraphState, session: Session | None = None) -> dict:
+async def _rank_results(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state)
-    logger.info("agent.stage stage=rank_results status=started evidence_id=%s", evidence_id)
-    if session is None:
-        raise RuntimeError("session is required for ranking")
+    logger.info("agent.stage step=rank_results status=started evidence_id=%s", evidence_id)
     # 排序阶段负责融合、本地物化、LLM 候选校验和空结果恢复。
     update = await rank_candidates_stage(
-        session,
+        _state_session(state),
         query=_state_query(state),
         query_plan=state.get("query_plan") or {},
         staged_results=state.get("staged_results") or [],
@@ -208,7 +260,7 @@ async def _rank_results(state: AgentGraphState, session: Session | None = None) 
     )
     event = finish_trace("rank_results", started_at, "Agent candidates ranked and materialized.", evidence_id=evidence_id)
     logger.info(
-        "agent.stage stage=rank_results status=succeeded duration_ms=%s matches=%s evidence_id=%s",
+        "agent.stage step=rank_results status=succeeded duration_ms=%s matches=%s evidence_id=%s",
         _event_duration_ms(event),
         len(update.get("matches") or []),
         evidence_id,
@@ -222,7 +274,7 @@ async def _rank_results(state: AgentGraphState, session: Session | None = None) 
 async def _generate_answer(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state)
-    logger.info("agent.stage stage=generate_answer status=started evidence_id=%s", evidence_id)
+    logger.info("agent.stage step=generate_answer status=started evidence_id=%s", evidence_id)
     body = state.get("chat_request")
     if body is None:
         # 详情回答已经在 generate_detail_answer 节点生成，这里只补 trace。
@@ -239,7 +291,7 @@ async def _generate_answer(state: AgentGraphState) -> dict:
     event = finish_trace("generate_answer", started_at, "Agent answer generated.", evidence_id=evidence_id)
     answer_summary = update.get("answer_summary") if isinstance(update.get("answer_summary"), dict) else {}
     logger.info(
-        "agent.stage stage=generate_answer status=succeeded duration_ms=%s matches=%s used_llm=%s evidence_id=%s",
+        "agent.stage step=generate_answer status=succeeded duration_ms=%s matches=%s used_llm=%s evidence_id=%s",
         _event_duration_ms(event),
         answer_summary.get("match_count", 0),
         bool(answer_summary.get("used_llm")),
@@ -254,7 +306,7 @@ async def _generate_answer(state: AgentGraphState) -> dict:
 def _reflect(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state)
-    logger.info("agent.stage stage=reflect status=started evidence_id=%s", evidence_id)
+    logger.info("agent.stage step=reflect status=started evidence_id=%s", evidence_id)
     notes = [
         *state.get("reflection_notes", []),
         {
@@ -264,7 +316,7 @@ def _reflect(state: AgentGraphState) -> dict:
     ]
     event = finish_trace("reflect", started_at, "Graph compatibility reflection recorded.", evidence_id=evidence_id)
     logger.info(
-        "agent.stage stage=reflect status=succeeded duration_ms=%s evidence_id=%s",
+        "agent.stage step=reflect status=succeeded duration_ms=%s evidence_id=%s",
         _event_duration_ms(event),
         evidence_id,
     )
@@ -277,12 +329,12 @@ def _reflect(state: AgentGraphState) -> dict:
 async def generate_detail_answer_step(session: Session, state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state)
-    logger.info("agent.stage stage=generate_detail_answer status=started evidence_id=%s", evidence_id)
+    logger.info("agent.stage step=generate_detail_answer status=started evidence_id=%s", evidence_id)
     try:
         update = await _generate_detail_answer(session, state)
     except Exception as exc:
         logger.info(
-            "agent.stage stage=generate_detail_answer status=failed error_type=%s evidence_id=%s",
+            "agent.stage step=generate_detail_answer status=failed error_type=%s evidence_id=%s",
             type(exc).__name__,
             evidence_id,
         )
@@ -295,7 +347,7 @@ async def generate_detail_answer_step(session: Session, state: AgentGraphState) 
         }
     event = finish_trace("generate_detail_answer", started_at, "Mod detail answer generated.", evidence_id=evidence_id)
     logger.info(
-        "agent.stage stage=generate_detail_answer status=succeeded duration_ms=%s evidence_id=%s",
+        "agent.stage step=generate_detail_answer status=succeeded duration_ms=%s evidence_id=%s",
         _event_duration_ms(event),
         evidence_id,
     )
@@ -344,53 +396,46 @@ def _state_llm_config(state: AgentGraphState) -> dict[str, object]:
     }
 
 
-def build_agent_graph(session: Session):
+async def _generate_detail_answer_node(state: AgentGraphState) -> dict:
+    started_at = start_trace()
+    evidence_id = _state_evidence_id(state)
+    try:
+        # 详情节点保持对测试中非 SQL Session 的 session 兼容（如 mock 字符串）。
+        update = await _generate_detail_answer(_state_session(state, required=False), state)
+    except Exception:
+        # 这里故意保留异常向 API 调用方传播；兼容旧行为比记录失败 trace 更重要。
+        raise
+    return {
+        **update,
+        "trace": append_trace(
+            state.get("trace"),
+            finish_trace(
+                "generate_detail_answer",
+                started_at,
+                "Mod detail answer generated.",
+                evidence_id=evidence_id,
+            ),
+        ),
+    }
+
+
+def _build_agent_graph_def() -> StateGraph:
     def route_after_context(state: AgentGraphState) -> str:
         # 两条路径共享上下文摘要：普通 chat 继续诊断检索，详情请求直接生成详情回答。
         if state.get("request_kind") == "mod_detail":
             return "generate_detail_answer"
         return "diagnose_query"
 
-    async def diagnose_query(state: AgentGraphState) -> dict:
-        return await _diagnose_query(state, session)
-
-    async def staged_retrieval(state: AgentGraphState) -> dict:
-        return await _staged_retrieval(state, session)
-
-    async def rank_results(state: AgentGraphState) -> dict:
-        return await _rank_results(state, session)
-
-    async def generate_detail_answer(state: AgentGraphState) -> dict:
-        started_at = start_trace()
-        evidence_id = _state_evidence_id(state)
-        try:
-            update = await _generate_detail_answer(session, state)
-        except Exception:
-            # 这里故意保留异常向 API 调用方传播；兼容旧行为比记录失败 trace 更重要。
-            raise
-        return {
-            **update,
-            "trace": append_trace(
-                state.get("trace"),
-                finish_trace(
-                    "generate_detail_answer",
-                    started_at,
-                    "Mod detail answer generated.",
-                    evidence_id=evidence_id,
-                ),
-            ),
-        }
-
     graph = StateGraph(AgentGraphState)
     graph.add_node("load_state", _load_state)
     graph.add_node("summarize_context", _summarize_context)
-    graph.add_node("diagnose_query", diagnose_query)
+    graph.add_node("diagnose_query", _diagnose_query)
     graph.add_node("plan_tools", _plan_tools)
-    graph.add_node("staged_retrieval", staged_retrieval)
-    graph.add_node("rank_results", rank_results)
+    graph.add_node("staged_retrieval", _staged_retrieval)
+    graph.add_node("rank_results", _rank_results)
     graph.add_node("generate_answer", _generate_answer)
     graph.add_node("reflect", _reflect)
-    graph.add_node("generate_detail_answer", generate_detail_answer)
+    graph.add_node("generate_detail_answer", _generate_detail_answer_node)
     graph.add_node("persist_result", _persist_result)
     graph.add_edge(START, "load_state")
     graph.add_edge("load_state", "summarize_context")
@@ -410,16 +455,48 @@ def build_agent_graph(session: Session):
     graph.add_edge("reflect", "persist_result")
     graph.add_edge("generate_detail_answer", "persist_result")
     graph.add_edge("persist_result", END)
-    return graph.compile()
+    return graph
+
+
+def _get_compiled_agent_graph():
+    global _compiled_agent_graph
+    if _compiled_agent_graph is not None:
+        return _compiled_agent_graph
+    with _graph_compile_lock:
+        if _compiled_agent_graph is not None:
+            return _compiled_agent_graph
+        build_started_at = start_trace()
+        graph = _build_agent_graph_def()
+        compiled_graph = graph.compile()
+        build_duration_ms = elapsed_ms(build_started_at)
+        _append_latency(_graph_compile_durations_ms, build_duration_ms)
+        logger.info(
+            "agent.workflow graph=mod_search status=compiled duration_ms=%s",
+            build_duration_ms,
+        )
+        if len(_graph_compile_durations_ms) % 10 == 0:
+            _emit_compile_latency_report()
+        _compiled_agent_graph = compiled_graph
+        return _compiled_agent_graph
+
+
+def build_agent_graph(session: Session | None = None):
+    # 保留参数以兼容历史调用；已移除会话闭包，运行时会从 state 获取 session。
+    if session is not None:
+        logger.debug("agent.workflow graph=mod_search build_agent_graph called with session parameter (ignored)")
+    return _get_compiled_agent_graph()
 
 
 async def run_agent_graph(session: Session, state: AgentGraphState) -> AgentGraphState:
     started_at = start_trace()
     request_kind = state.get("request_kind", "unknown")
     logger.info("agent.workflow graph=mod_search request_kind=%s status=started", request_kind)
+    # 状态是图执行的上下文，按需注入 db session，避免每次重新 build/compile 图。
+    graph_state = dict(state)
+    graph_state["db_session"] = session
     graph = build_agent_graph(session)
     try:
-        result = await graph.ainvoke(state)
+        result = await graph.ainvoke(graph_state)
     except Exception as exc:
         logger.info(
             "agent.workflow graph=mod_search request_kind=%s status=failed duration_ms=%s error_type=%s",
@@ -428,11 +505,16 @@ async def run_agent_graph(session: Session, state: AgentGraphState) -> AgentGrap
             type(exc).__name__,
         )
         raise
+    run_duration_ms = elapsed_ms(started_at)
+    _append_latency(_graph_run_durations_ms, run_duration_ms)
+    if len(_graph_run_durations_ms) % 20 == 0:
+        _emit_run_latency_report()
     logger.info(
         "agent.workflow graph=mod_search request_kind=%s status=succeeded duration_ms=%s trace_steps=%s errors=%s",
         request_kind,
-        elapsed_ms(started_at),
+        run_duration_ms,
         len(result.get("trace") or []),
         len(result.get("errors") or []),
     )
     return result
+
