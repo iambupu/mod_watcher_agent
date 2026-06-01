@@ -39,21 +39,21 @@ function buildModsQuery(params: ModsQueryParams): Record<string, string> {
 
 export async function fetchMods(params: ModsQueryParams): Promise<ModList> {
   const query = buildModsQuery(params);
-  return get<ModList>("/mods", query).then(normalizeListResponse);
+  return get<ModList>("/mods", query).then((data) => normalizeListResponse<ModItem>(data));
 }
 
 export async function fetchIgnoredMods(params: ModsQueryParams = {}): Promise<ModList> {
   const query = buildModsQuery(params);
-  return get<ModList>("/mods/ignored", query).then(normalizeListResponse);
+  return get<ModList>("/mods/ignored", query).then((data) => normalizeListResponse<ModItem>(data));
 }
 
 export async function fetchRecommendedMods(limit = 5): Promise<ModList> {
   return get<ModList>("/mods/recommendations", { limit: boundedIntegerParam(limit, { min: 1, max: 20 }) })
-    .then(normalizeListResponse);
+    .then((data) => normalizeListResponse<ModItem>(data));
 }
 
 export async function fetchModGames(): Promise<ModGameOption[]> {
-  return get<ModGameOption[]>("/mods/games").then(arrayOrEmpty);
+  return get<unknown>("/mods/games").then((data) => arrayOrEmpty<ModGameOption>(data));
 }
 
 export async function fetchMod(id: number): Promise<ModItem> {
