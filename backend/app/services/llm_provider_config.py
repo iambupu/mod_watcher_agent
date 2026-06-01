@@ -131,9 +131,16 @@ def provider_config_has_credentials(provider_config: dict[str, Any]) -> bool:
 
 def default_provider_configs() -> list[dict[str, Any]]:
     """处理当前模块的业务逻辑并返回结果。"""
+    default_api_key = os.getenv("LLM_API_KEY", "")
+    openai_api_key = os.getenv("OPENAI_API_KEY", "")
     configs: list[dict[str, Any]] = []
     for index, item in enumerate(PROVIDER_DEFINITIONS, start=1):
         provider = item["provider"]
+        provider_default_api_key = (
+            openai_api_key
+            if provider == "openai" and not default_api_key
+            else default_api_key
+        )
         configs.append(
             {
                 "provider": provider,
@@ -142,7 +149,7 @@ def default_provider_configs() -> list[dict[str, Any]]:
                 "model": (
                     os.getenv("LLM_MODEL", "") if provider == "ollama" else ""
                 ) or item["model"],
-                "api_key": "",
+                "api_key": provider_default_api_key,
                 "base_url": (
                     os.getenv("LLM_BASE_URL", "") if provider == "ollama" else ""
                 ) or item["base_url"],

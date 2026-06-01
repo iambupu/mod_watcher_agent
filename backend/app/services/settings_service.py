@@ -41,7 +41,7 @@ class SettingsService:
             "discord_webhook_url": "",
             "llm_provider": os.getenv("LLM_PROVIDER", "openai"),
             "llm_model": os.getenv("LLM_MODEL", ""),
-            "llm_api_key": "",
+            "llm_api_key": os.getenv("LLM_API_KEY", ""),
             "llm_base_url": os.getenv("LLM_BASE_URL", ""),
             "llm_providers_json": json.dumps(cls._default_llm_providers(), ensure_ascii=False),
             "auto_start": "false",

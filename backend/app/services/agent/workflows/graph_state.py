@@ -1,6 +1,7 @@
 from typing import Literal, NotRequired, TypedDict
 
 from fastapi import Request
+from sqlmodel import Session
 
 from app.services.agent.context.context_store import AgentContextSnapshot
 from app.services.agent.planning.query_diagnosis import QueryDiagnosis
@@ -18,6 +19,7 @@ from app.services.agent.tracing.search_trace import TraceEvent
 class AgentGraphState(TypedDict):
     request_kind: Literal["chat", "mod_detail"]
     fastapi_request: Request
+    db_session: NotRequired[Session]
     chat_request: NotRequired[AgentChatRequest | None]
     detail_request: NotRequired[AgentModDetailRequest | None]
     active_session_id: NotRequired[str | None]

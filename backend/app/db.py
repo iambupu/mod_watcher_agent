@@ -75,7 +75,7 @@ def init_db() -> None:
             _normalize_mod_identity_data()
             _ensure_sqlite_fts()
         return
-    except BaseException:
+    except Exception:
         logger.exception("Alembic upgrade failed; falling back to manual migrations.")
 
     # ── Fallback: lightweight runtime migration for existing SQLite DBs ──
