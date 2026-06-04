@@ -62,6 +62,13 @@ class LoversLabPageAdapter(BaseAdapter):
             )
         return self._client
 
+    async def aclose(self) -> None:
+        """Close shared HTTP client to avoid connection/resource leaks."""
+        if self._client is None:
+            return
+        await self._client.aclose()
+        self._client = None
+
     async def _get_allowed_url(self, url: str) -> httpx.Response:
         """读取内部状态或派生结果。"""
         current_url = validate_loverslab_url(url, kind="page", allowed_hosts=ALLOWED_HOSTS)

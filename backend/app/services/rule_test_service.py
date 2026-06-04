@@ -7,6 +7,7 @@ from sqlmodel import Session
 from app.adapters.base import BaseAdapter
 from app.models.watch_rule import WatchRule
 from app.schemas.watch_rule import RuleTestRequest, RuleTestResponse
+from app.services.adapter_utils import call_with_adapter
 from app.services.discovery_service import _mod_item_to_dict
 from app.services.filter_service import FilterService
 from app.services.llm_client import create_llm_filter_client
@@ -59,7 +60,15 @@ class RuleTestService:
         )
 
         try:
-            raw_items = await adapter.fetch(source_config_json)
+            async def _run(a: BaseAdapter) -> list:
+                return await a.fetch(source_config_json)
+
+            raw_items = await call_with_adapter(
+                adapter=adapter,
+                callback=_run,
+                logger=logger,
+                context=f"rule_test source={rule_data.source}",
+            )
         except Exception as exc:
             logger.exception("Rule test failed for source %s", rule_data.source)
             raise RuleTestServiceError(502, str(exc)) from exc

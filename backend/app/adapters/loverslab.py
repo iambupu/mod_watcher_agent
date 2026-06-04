@@ -56,6 +56,11 @@ class LoversLabAdapter(BaseAdapter):
         """请求外部数据并返回标准化结果。"""
         return await self._page.fetch_mod_detail(external_id, game_domain)
 
+    async def aclose(self) -> None:
+        """Close pooled resources held by feed/page sub-adapters."""
+        await self._feed.aclose()
+        await self._page.aclose()
+
     def normalize(self, raw_item: dict) -> ModItem:
         """规范化输入数据，供后续流程使用。"""
         return self._page.normalize(raw_item)

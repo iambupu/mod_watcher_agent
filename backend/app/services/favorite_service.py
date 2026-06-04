@@ -13,6 +13,7 @@ from app.models.mod_item import ModItem
 from app.models.summary import ModSummary
 from app.models.update_event import ModUpdateEvent
 from app.schemas.favorite import FavoriteImportCreate
+from app.services.adapter_utils import call_with_adapter
 from app.services.agent.memory.preference_service import AgentPreferenceService
 from app.services.settings_service import SettingsService
 from app.services.source_identity import canonical_external_id, find_existing_mod_by_identity
@@ -235,8 +236,18 @@ class FavoriteService:
         adapter_class = self._adapter_class if mod.source == "nexusmods" else BaseAdapter.adapters.get(mod.source)
         if adapter_class is None:
             raise ValueError(f"Unknown source '{mod.source}' for favorite id={favorite_id}")
+        latest: ModItem | dict | None = None
         adapter = adapter_class(api_key=nexus_api_key)
-        latest = await adapter.fetch_mod_detail(str(mod.external_id), mod.game_domain)
+
+        async def _run(a: BaseAdapter) -> ModItem | dict | None:
+            return await a.fetch_mod_detail(str(mod.external_id), mod.game_domain)
+
+        latest = await call_with_adapter(
+            adapter=adapter,
+            callback=_run,
+            logger=logger,
+            context=f"favorite.update_check favorite_id={favorite_id} source={mod.source}",
+        )
         if latest is None:
             fav.last_checked_at = datetime.now(UTC).isoformat()
             self.session.add(fav)
