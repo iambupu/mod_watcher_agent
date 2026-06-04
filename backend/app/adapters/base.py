@@ -30,3 +30,7 @@ class BaseAdapter(ABC):
     def normalize(self, raw_item: dict) -> ModItem:
         """规范化输入数据，供后续流程使用。"""
         ...
+
+    async def aclose(self) -> None:
+        """Close HTTP clients or other resources held by this adapter."""
+        return None

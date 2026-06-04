@@ -49,6 +49,11 @@ def _resolve_log_dir() -> Path:
     return (backend_root / configured).resolve()
 
 
+def get_log_directory() -> Path:
+    """Return the resolved log directory used by logger setup and file readers."""
+    return _resolve_log_dir()
+
+
 def redact_sensitive_text(text: str) -> str:
     """处理当前模块的业务逻辑并返回结果。"""
     redacted = text

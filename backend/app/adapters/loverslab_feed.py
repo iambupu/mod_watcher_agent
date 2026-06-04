@@ -77,6 +77,13 @@ class LoversLabFeedAdapter(BaseAdapter):
             self._client = httpx.AsyncClient(**kwargs)
         return self._client
 
+    async def aclose(self) -> None:
+        """Close shared HTTP client to avoid connection/resource leaks."""
+        if self._client is None:
+            return
+        await self._client.aclose()
+        self._client = None
+
     @staticmethod
     def _detect_proxy() -> str | None:
         """Detect proxy: env var → Windows IE/Edge system proxy → None."""

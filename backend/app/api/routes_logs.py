@@ -1,12 +1,10 @@
 import os
 import platform
 import subprocess
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.config import settings
-from app.logger import get_log_entries
+from app.logger import get_log_directory, get_log_entries
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 
@@ -25,7 +23,7 @@ def list_logs(
 @router.post("/open-dir")
 def open_log_directory():
     """处理当前模块的业务逻辑并返回结果。"""
-    log_dir = Path(settings.LOG_DIR).resolve()
+    log_dir = get_log_directory()
     log_dir.mkdir(parents=True, exist_ok=True)
     system = platform.system().lower()
     try:
