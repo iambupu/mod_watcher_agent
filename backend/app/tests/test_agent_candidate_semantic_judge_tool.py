@@ -31,14 +31,20 @@ async def test_candidate_semantic_judge_accepts_llm_grouping():
                 {
                     "candidate_id": 1,
                     "relevance": "high",
+                    "fit_type": "direct_match",
                     "group": "core_gameplay",
                     "reason": "directly supports bimbo roleplay",
+                    "evidence": ["mechanics"],
+                    "violations": [],
                 },
                 {
                     "candidate_id": 2,
                     "relevance": "medium",
+                    "fit_type": "support_context",
                     "group": "visual_support",
                     "reason": "visual add-on",
+                    "evidence": ["outfit"],
+                    "violations": ["not_core_gameplay"],
                 },
             ],
             "groups": [
@@ -65,6 +71,8 @@ async def test_candidate_semantic_judge_accepts_llm_grouping():
     assert output.status == "succeeded"
     assert output.used_llm is True
     assert [item.relevance for item in output.judgements] == ["high", "medium"]
+    assert [item.fit_type for item in output.judgements] == ["direct_match", "support_context"]
+    assert output.judgements[1].violations == ["not_core_gameplay"]
     assert output.groups[0].label == "核心玩法"
     assert output.gaps == ["缺少安装风险证据"]
 
@@ -77,6 +85,7 @@ async def test_candidate_semantic_judge_filters_dirty_group_ids_and_rejects_bool
                 {
                     "candidate_id": "2",
                     "relevance": "medium",
+                    "fit_type": "support_context",
                     "group": "visual_support",
                     "reason": "numeric string is normalized",
                 },
@@ -113,6 +122,7 @@ async def test_candidate_semantic_judge_filters_dirty_group_ids():
                 {
                     "candidate_id": "2",
                     "relevance": "medium",
+                    "fit_type": "support_context",
                     "group": "visual_support",
                     "reason": "numeric string is normalized",
                 },
@@ -160,6 +170,33 @@ async def test_candidate_semantic_judge_invalid_json_degrades_to_fallback():
     assert output.used_llm is False
     assert output.fallback_reason == "ValidationError"
     assert output.judgements[0].relevance == "medium"
+    assert output.judgements[0].fit_type == "direct_match"
+
+
+@pytest.mark.asyncio
+async def test_candidate_semantic_judge_invalid_fit_type_degrades_to_fallback():
+    async def broken_judge(tool_input):
+        return {
+            "judgements": [
+                {
+                    "candidate_id": 1,
+                    "relevance": "high",
+                    "fit_type": "primary",
+                    "group": "core_gameplay",
+                }
+            ]
+        }
+
+    output = await CandidateSemanticJudgeTool(judge=broken_judge).run(
+        CandidateSemanticJudgeInput(
+            query="只看某类主结果",
+            candidates=[_match(1, "Direct Item")],
+            llm_available=True,
+        )
+    )
+
+    assert output.status == "degraded"
+    assert output.judgements[0].fit_type == "direct_match"
 
 
 @pytest.mark.asyncio

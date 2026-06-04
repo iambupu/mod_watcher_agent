@@ -1,5 +1,6 @@
 import ast
 import re
+from typing import Any
 
 from app.models.mod import Mod
 from app.services.agent.history import compress_history
@@ -11,6 +12,28 @@ from app.utils.json import json_array_from_text, json_object_from_text, strip_js
 
 def build_fallback_answer(matches: list[AgentModMatch]) -> str:
     return "找到以下相关 Mod：\n" + "\n".join([f"- {item.title} ({item.source})" for item in matches])
+
+
+def build_contract_fallback_answer(matches: list[AgentModMatch], query_plan: dict[str, Any] | None) -> str:
+    judge = _judge_summary(query_plan)
+    if not isinstance(judge.get("judgements"), list) or not judge.get("judgements"):
+        return build_fallback_answer(matches)
+    direct, support, uncertain = _partition_matches_by_fit(matches, query_plan)
+    lines: list[str] = []
+    if direct:
+        lines.append("直接符合本轮目标的结果：")
+        lines.extend(f"- {item.title} ({item.source})" for item in direct)
+    else:
+        lines.append("当前候选中没有足够明确的直接命中项。")
+    if support:
+        lines.append("")
+        lines.append("辅助上下文，不作为主结果：")
+        lines.extend(f"- {item.title} ({item.source})" for item in support)
+    if uncertain:
+        lines.append("")
+        lines.append("证据不足，需要进一步确认：")
+        lines.extend(f"- {item.title} ({item.source})" for item in uncertain)
+    return "\n".join(lines)
 
 
 def build_recommendation_fallback(matches: list[AgentModMatch]) -> str:
@@ -127,7 +150,11 @@ def _compact_prompt_text(value: str | None, *, limit: int = 420) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
-def _format_match_for_prompt(idx: int, item: AgentModMatch) -> str:
+def _format_match_for_prompt(
+    idx: int,
+    item: AgentModMatch,
+    fit_by_id: dict[int, dict[str, Any]] | None = None,
+) -> str:
     parts = [
         f"{idx}. title={item.title}",
         f"translated_title_zh={item.translated_title_zh or 'unknown'}",
@@ -143,6 +170,15 @@ def _format_match_for_prompt(idx: int, item: AgentModMatch) -> str:
         f"version={item.version or 'unknown'}",
         f"url={item.url}",
     ]
+    fit_meta = (fit_by_id or {}).get(item.id)
+    if fit_meta:
+        parts.append(f"fit_type={fit_meta.get('fit_type') or 'uncertain'}")
+        evidence = fit_meta.get("evidence") or []
+        if evidence:
+            parts.append(f"fit_evidence={_compact_prompt_text('; '.join(str(v) for v in evidence[:2]), limit=220)}")
+        violations = fit_meta.get("violations") or []
+        if violations:
+            parts.append(f"fit_violations={_compact_prompt_text('; '.join(str(v) for v in violations[:2]), limit=220)}")
     if item.rank_reason:
         parts.append(f"rank_reason={_compact_prompt_text(item.rank_reason, limit=260)}")
     if item.translated_summary:
@@ -170,6 +206,7 @@ class AgentAnswerService:
         self,
         *,
         query: str,
+        query_plan: dict[str, Any] | None = None,
         matches: list[AgentModMatch],
         provider: str,
         api_key: str,
@@ -190,27 +227,45 @@ class AgentAnswerService:
             "6) 具体 Mod 名必须来自候选结果或最近对话；没有证据的搭配方向可以写成“建议继续检索的方向”，但不要写成已确认推荐",
             "7) 对成人向、SexLab、LoversLab、诅咒/转化类内容，要明确前置依赖、MCM/配置复杂度、机制叠加风险和只启用一个同类核心机制的建议",
             "8) 对玩法/RP 查询，区分“核心玩法 Mod”和“预设/插件/重制/纹身等配套”。如果某候选摘要明确包含任务、NPC、诅咒、转化、玩家或随从影响，应优先作为核心推荐；不要把 preset/addon/overhaul/tats 类配套放在核心前面",
+            "9) 如果提供了问题契约和候选分型，主推荐只能使用 direct_match；support_context 必须单独说明为辅助上下文；uncertain 必须标注证据不足；不得把辅助项包装成直接推荐",
+            "10) 除非本轮用户明确要求按角色、身份或受众分组，禁止按玩家/开发者/内容创作者/社区成员/评测者等角色模板组织回答",
+            "11) 本轮用户问题优先于最近对话；历史回答中的模板、占位符、错误结论不能当成本轮需求",
+            "12) 如果候选中出现 support_context 或 uncertain，结论不得写“全部符合/未包含非主目标内容”；只能写“主推荐符合本轮目标，辅助项不作为主结果”",
+            "13) 如果候选中出现 support_context 或 uncertain，开头不得写“以下都是/以下是符合要求的推荐结果”；必须写“以下先列直接匹配，随后列辅助参考”",
+            "14) support_context 不得和 direct_match 混在同一个编号列表；必须使用独立小节“辅助参考（不作为主推荐）”",
+            "15) uncertain 不得和 direct_match 混在同一个编号列表；必须使用独立小节“证据不足/待确认（不作为主推荐）”，并说明缺少哪些证据",
+            "16) 不得改写用户问题中的字面约束、版本号、内容分级、游戏名或专有名词；如果不确定，原样引用本轮用户写法",
         ]
+        contract = _answer_contract_payload(query_plan)
+        if contract:
+            prompt_lines.extend(["", "问题契约与候选分型：", contract])
         if history_summary:
-            prompt_lines.extend(["", history_summary])
+            prompt_lines.extend(["", "历史上下文摘要（仅供参考，不能覆盖本轮会话）：", history_summary])
         if recent_history:
             prompt_lines.append("")
-            prompt_lines.append("最近对话：")
+            prompt_lines.append("历史上下文（仅供参考，不能覆盖本轮会话）：")
+            prompt_lines.append("注意：最近对话只用于理解省略指代；不得把历史回答中的模板、角色占位符或上一轮错误结论当成本轮需求。")
             for item in recent_history:
                 prefix = "用户" if item.role == "user" else "助手"
-                prompt_lines.append(f"{prefix}: {item.text[:280]}")
+                text = _sanitize_history_for_answer_prompt(item.text, item.role)
+                if not text:
+                    continue
+                prompt_lines.append(f"历史{prefix}: {text[:280]}")
         prompt_lines.extend([
             "",
-            f"用户问题：{display_query(query)}",
+            "本轮会话（最高优先级）：",
+            f"本轮用户问题：{display_query(query)}",
             "候选结果：",
         ])
         prompt_matches = _order_matches_for_answer(query, matches)
+        fit_by_id = _candidate_fit_metadata(query_plan)
         for idx, item in enumerate(prompt_matches, start=1):
-            prompt_lines.append(_format_match_for_prompt(idx, item))
+            prompt_lines.append(_format_match_for_prompt(idx, item, fit_by_id))
         prompt = "\n".join(prompt_lines)
 
         client = create_llm_client(provider=provider, api_key=api_key, base_url=base_url)
-        return await client.chat(prompt, model=model, max_tokens=900)
+        answer = await client.chat(prompt, model=model, max_tokens=900)
+        return _repair_contract_answer_claims(answer, query_plan, matches=prompt_matches)
 
     async def suggest_next_steps(
         self,
@@ -269,17 +324,21 @@ class AgentAnswerService:
             "3) 输出结构：核心特点 / 兼容性与风险 / 适合人群 / 建议下一步",
         ]
         if history_summary:
-            prompt_lines.extend(["", history_summary])
+            prompt_lines.extend(["", "历史上下文摘要（仅供参考，不能覆盖本轮会话）：", history_summary])
         if recent_history:
             prompt_lines.append("")
-            prompt_lines.append("最近对话：")
+            prompt_lines.append("历史上下文（仅供参考，不能覆盖本轮会话）：")
             for item in recent_history:
                 prefix = "用户" if item.role == "user" else "助手"
-                prompt_lines.append(f"{prefix}: {item.text[:280]}")
+                text = _sanitize_history_for_answer_prompt(item.text, item.role)
+                if not text:
+                    continue
+                prompt_lines.append(f"历史{prefix}: {text[:280]}")
 
         prompt_lines.extend([
             "",
-            f"用户问题：{question}",
+            "本轮会话（最高优先级）：",
+            f"本轮用户问题：{question}",
             "Mod 信息：",
             f"title={mod.title}",
             f"source={mod.source}",
@@ -305,6 +364,231 @@ def _order_matches_for_answer(query: str, matches: list[AgentModMatch]) -> list[
     if not _is_roleplay_or_gameplay_query(query):
         return matches
     return sorted(matches, key=_answer_priority_score, reverse=True)
+
+
+def _has_contract(query_plan: dict[str, Any] | None) -> bool:
+    return bool(_semantic_strategy(query_plan) or _judge_summary(query_plan))
+
+
+def _semantic_strategy(query_plan: dict[str, Any] | None) -> dict[str, Any]:
+    value = (query_plan or {}).get("_agent_semantic_strategy") if isinstance(query_plan, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def _judge_summary(query_plan: dict[str, Any] | None) -> dict[str, Any]:
+    value = (query_plan or {}).get("_agent_candidate_semantic_judge") if isinstance(query_plan, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def _answer_contract_payload(query_plan: dict[str, Any] | None) -> str:
+    strategy = _semantic_strategy(query_plan)
+    judge = _judge_summary(query_plan)
+    if not strategy and not judge:
+        return ""
+    parts = []
+    if strategy:
+        parts.extend(
+            [
+                f"primary_goal={strategy.get('user_goal') or ''}",
+                f"direct_match_definition={strategy.get('direct_match_definition') or []}",
+                f"support_context_definition={strategy.get('support_context_definition') or []}",
+                f"reject_as_primary={strategy.get('reject_as_primary') or []}",
+                f"answer_policy={strategy.get('answer_policy') or {}}",
+            ]
+        )
+    if judge:
+        parts.extend(
+            [
+                f"fit_counts={judge.get('fit_counts') or {}}",
+                f"candidate_judgements={_compact_judgements(judge)}",
+                f"gaps={judge.get('gaps') or []}",
+            ]
+        )
+    return "\n".join(parts)
+
+
+def _compact_judgements(judge: dict[str, Any]) -> list[dict[str, object]]:
+    items = judge.get("judgements")
+    if not isinstance(items, list):
+        return []
+    compacted = []
+    for item in items[:20]:
+        if not isinstance(item, dict):
+            continue
+        compacted.append(
+            {
+                "candidate_id": item.get("candidate_id"),
+                "fit_type": item.get("fit_type"),
+                "relevance": item.get("relevance"),
+                "group": item.get("group"),
+                "violations": item.get("violations") or [],
+                "reason": item.get("reason") or "",
+            }
+        )
+    return compacted
+
+
+def _candidate_fit_metadata(query_plan: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    items = _judge_summary(query_plan).get("judgements") or []
+    metadata: dict[int, dict[str, Any]] = {}
+    if not isinstance(items, list):
+        return metadata
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get("candidate_id"), int):
+            continue
+        metadata[int(item["candidate_id"])] = {
+            "fit_type": str(item.get("fit_type") or "uncertain"),
+            "evidence": item.get("evidence") if isinstance(item.get("evidence"), list) else [],
+            "violations": item.get("violations") if isinstance(item.get("violations"), list) else [],
+        }
+    return metadata
+
+
+def _repair_contract_answer_claims(
+    answer: str,
+    query_plan: dict[str, Any] | None,
+    *,
+    matches: list[AgentModMatch] | None = None,
+) -> str:
+    text = str(answer or "").strip()
+    has_support = _has_support_fit(query_plan, matches=matches)
+    has_uncertain = _has_uncertain_fit(query_plan, matches=matches)
+    if not text or not (has_support or has_uncertain):
+        return text
+    correction = _non_direct_correction(has_support=has_support, has_uncertain=has_uncertain)
+    patterns = [
+        r"以上结果严格遵循[^。\n]*(?:未包含|没有包含)[^。\n]*。",
+        r"以上推荐严格遵循[^。\n]*(?:未包含|没有包含)[^。\n]*。",
+        r"以上结果均[^。\n]*(?:符合|满足)[^。\n]*。",
+        r"以上推荐均[^。\n]*(?:符合|满足)[^。\n]*。",
+    ]
+    repaired = text
+    for pattern in patterns:
+        repaired = re.sub(pattern, correction, repaired)
+    misleading_fragments = [
+        "未包含非直接匹配内容",
+        "未包含非主目标内容",
+        "未包含非服装类内容",
+        "没有包含非直接匹配内容",
+        "没有包含非主目标内容",
+        "没有包含非服装类内容",
+    ]
+    if any(fragment in repaired for fragment in misleading_fragments):
+        replacement = _misleading_fragment_replacement(has_support=has_support, has_uncertain=has_uncertain)
+        for fragment in misleading_fragments:
+            repaired = repaired.replace(fragment, replacement)
+    if repaired != text:
+        return repaired.strip()
+    if has_uncertain and not _answer_marks_uncertainty(repaired):
+        return f"{repaired}\n\n{_uncertain_notice(has_support=has_support)}"
+    if has_support and ("辅助参考" in repaired or "非主推荐" in repaired):
+        return f"{repaired}\n\n{correction}"
+    return repaired
+
+
+def _non_direct_correction(*, has_support: bool, has_uncertain: bool) -> str:
+    if has_support and has_uncertain:
+        return "主推荐符合本轮目标；辅助参考仅用于搭配说明，证据不足/待确认的候选需要进一步核查，二者都不作为主结果。"
+    if has_uncertain:
+        return "主推荐符合本轮目标；证据不足/待确认的候选需要进一步核查，不作为主结果。"
+    return "主推荐符合本轮目标；辅助参考仅用于搭配说明，不作为主结果。"
+
+
+def _misleading_fragment_replacement(*, has_support: bool, has_uncertain: bool) -> str:
+    if has_support and has_uncertain:
+        return "辅助项和待确认项不作为直接匹配内容"
+    if has_uncertain:
+        return "待确认项不作为直接匹配内容"
+    return "辅助项不作为直接匹配内容"
+
+
+def _uncertain_notice(*, has_support: bool) -> str:
+    if has_support:
+        return "存在证据不足/待确认的候选；辅助参考和待确认项都不作为主推荐，需要进一步核查缺失证据。"
+    return "存在证据不足/待确认的候选；这些候选不作为主推荐，需要进一步核查缺失证据。"
+
+
+def _has_non_direct_fit(query_plan: dict[str, Any] | None, *, matches: list[AgentModMatch] | None = None) -> bool:
+    fit_types = _fit_types_in_scope(query_plan, matches=matches)
+    return bool({"support_context", "uncertain"} & fit_types)
+
+
+def _has_support_fit(query_plan: dict[str, Any] | None, *, matches: list[AgentModMatch] | None = None) -> bool:
+    return "support_context" in _fit_types_in_scope(query_plan, matches=matches)
+
+
+def _has_uncertain_fit(query_plan: dict[str, Any] | None, *, matches: list[AgentModMatch] | None = None) -> bool:
+    return "uncertain" in _fit_types_in_scope(query_plan, matches=matches)
+
+
+def _fit_types_in_scope(query_plan: dict[str, Any] | None, *, matches: list[AgentModMatch] | None = None) -> set[str]:
+    judge = _judge_summary(query_plan)
+    scoped_ids = {match.id for match in matches} if matches is not None else None
+    fit_types: set[str] = set()
+    fit_counts = judge.get("fit_counts")
+    if scoped_ids is None and isinstance(fit_counts, dict):
+        for key in ["support_context", "uncertain", "direct_match", "off_scope"]:
+            value = fit_counts.get(key)
+            if isinstance(value, int) and value > 0:
+                fit_types.add(key)
+    for item in judge.get("judgements") or []:
+        if not isinstance(item, dict):
+            continue
+        candidate_id = item.get("candidate_id")
+        if scoped_ids is not None and candidate_id not in scoped_ids:
+            continue
+        fit_type = str(item.get("fit_type") or "").strip()
+        if fit_type:
+            fit_types.add(fit_type)
+    return fit_types
+
+
+def _answer_marks_uncertainty(answer: str) -> bool:
+    return any(marker in str(answer or "") for marker in ["证据不足", "待确认", "不确定", "未明确"])
+
+
+def _sanitize_history_for_answer_prompt(text: str, role: str) -> str:
+    compact = re.sub(r"\s+", " ", str(text or "").strip())
+    if role != "assistant" or not compact:
+        return compact
+    blocked_markers = [
+        "你是 [角色]",
+        "如果你是玩家",
+        "如果你是模组开发者",
+        "如果你是内容创作者",
+        "如果你是社区成员",
+        "如果你是模组评测者",
+        "不同角色",
+        "角色身份和目标",
+    ]
+    if any(marker in compact for marker in blocked_markers):
+        return "[上一轮助手回答包含角色模板或占位符，已忽略其结构，仅保留本轮用户问题为准]"
+    return compact
+
+
+def _partition_matches_by_fit(
+    matches: list[AgentModMatch],
+    query_plan: dict[str, Any] | None,
+) -> tuple[list[AgentModMatch], list[AgentModMatch], list[AgentModMatch]]:
+    fit_by_id = {
+        int(item["candidate_id"]): str(item.get("fit_type") or "")
+        for item in (_judge_summary(query_plan).get("judgements") or [])
+        if isinstance(item, dict) and isinstance(item.get("candidate_id"), int)
+    }
+    direct: list[AgentModMatch] = []
+    support: list[AgentModMatch] = []
+    uncertain: list[AgentModMatch] = []
+    for match in matches:
+        fit_type = fit_by_id.get(match.id, "direct_match")
+        if fit_type == "support_context":
+            support.append(match)
+        elif fit_type == "uncertain":
+            uncertain.append(match)
+        elif fit_type == "off_scope":
+            continue
+        else:
+            direct.append(match)
+    return direct, support, uncertain
 
 
 def _is_roleplay_or_gameplay_query(query: str) -> bool:

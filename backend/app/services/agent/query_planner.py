@@ -64,6 +64,10 @@ from app.services.agent.planning.query_intent import (
     is_open_discovery_query,
     is_recent_query,
 )
+from app.services.agent.planning.query_plan_hygiene import (
+    sanitize_category_slot_options,
+    sanitize_query_plan_fields,
+)
 from app.services.agent.planning.slot_normalization import (
     normalize_absolute_date as _normalize_absolute_date,
 )
@@ -404,9 +408,10 @@ def _normalize_categories(
 ) -> tuple[list[str], list[str], str, list[str]]:
     """合并上游分类和语义分类；未明确要求分类时只产生软提示。"""
 
+    available_categories = sanitize_category_slot_options(slot_options["categories"])
     explicit_categories = _normalize_allowed_list(
         raw.get("categories") or raw.get("category"),
-        slot_options["categories"],
+        available_categories,
     )
     if explicit_categories and is_open_discovery_query(query) and not _query_mentions_category_scope(query):
         explicit_categories = []
@@ -421,7 +426,7 @@ def _normalize_categories(
         ]
         if semantic_matched_categories:
             explicit_categories = semantic_matched_categories
-    inferred_categories = infer_categories(query, slot_options["categories"], [], semantic=explicit_semantic)
+    inferred_categories = infer_categories(query, available_categories, [], semantic=explicit_semantic)
     hard_category_query = _query_mentions_category_scope(query)
     if explicit_categories or hard_category_query:
         categories = _merge_unique(explicit_categories, inferred_categories)
@@ -638,7 +643,7 @@ def normalize_query_plan(
         normalized["keyword_match_mode"] = "all"
     if excluded_keywords:
         normalized["excluded_keywords"] = excluded_keywords
-    return normalized
+    return sanitize_query_plan_fields(normalized, query=query)
 
 
 def _query_mentions_category_scope(query: str) -> bool:

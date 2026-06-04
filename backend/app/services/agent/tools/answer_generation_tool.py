@@ -6,6 +6,7 @@ from app.services.agent.answer_service import (
     AgentAnswerService,
     build_alternative_fallback,
     build_comparison_fallback,
+    build_contract_fallback_answer,
     build_fallback_answer,
     build_install_risk_fallback,
     build_recommendation_fallback,
@@ -45,15 +46,20 @@ class AnswerGenerationTool:
 
     async def run(self, tool_input: AnswerGenerationInput) -> AnswerGenerationOutput:
         if not tool_input.matches:
-            return self._fallback(tool_input, reason="no_matches", answer=_no_match_answer())
+            return self._fallback(
+                tool_input,
+                reason="no_matches",
+                answer=_no_match_answer(tool_input.query, tool_input.query_plan),
+            )
 
-        fallback_answer = _fallback_answer_for_intent(tool_input.query_plan.get("intent"), tool_input.matches)
+        fallback_answer = _fallback_answer_for_intent(tool_input.query_plan.get("intent"), tool_input.matches, tool_input.query_plan)
         if not tool_input.llm_available:
             return self._fallback(tool_input, reason="llm_unavailable", answer=fallback_answer)
 
         answer_service = AgentAnswerService()
         content = await answer_service.answer_matches(
             query=tool_input.query,
+            query_plan=tool_input.query_plan,
             matches=tool_input.matches,
             provider=tool_input.provider,
             api_key=tool_input.api_key,
@@ -103,11 +109,64 @@ class AnswerGenerationTool:
         return AnswerGenerationOutput(answer=answer, used_llm=False, reason=reason)
 
 
-def _no_match_answer() -> str:
-    return "没有找到明确匹配。我可以先给你“最近更新”列表，或按游戏名/作者名筛选。比如：最近更新的 Skyrim Mod。"
+def _no_match_answer(query: str = "", query_plan: dict[str, Any] | None = None) -> str:
+    filters = _no_match_filter_summary(query_plan)
+    if filters:
+        return (
+            "没有找到明确匹配。\n"
+            "当前筛选条件下没有足够明确的结果。\n"
+            f"已应用约束：{filters}。\n"
+            "可以尝试放宽其中一个条件，例如取消来源限制、放宽分类，或先查看同游戏的相关配套候选。"
+        )
+    current_query = str(query or "").strip()
+    if current_query:
+        return (
+            "没有找到明确匹配。\n"
+            f"本轮问题：{current_query}\n"
+            "当前候选中没有足够明确的直接命中项。\n"
+            "可以补充游戏名、来源、分类，或放宽本轮目标词后再查。"
+        )
+    return (
+        "没有找到明确匹配。\n"
+        "当前候选中没有足够明确的直接命中项。\n"
+        "可以补充游戏名、来源、分类，或放宽本轮目标词后再查。"
+    )
 
 
-def _fallback_answer_for_intent(intent: object, matches: list[AgentModMatch]) -> str:
+def _no_match_filter_summary(query_plan: dict[str, Any] | None) -> str:
+    if not isinstance(query_plan, dict):
+        return ""
+    parts: list[str] = []
+    games = _string_values(query_plan.get("games")) or _string_values(query_plan.get("game_domains"))
+    sources = _string_values(query_plan.get("sources"))
+    categories = _string_values(query_plan.get("categories"))
+    if games:
+        parts.append(f"游戏：{', '.join(games)}")
+    if categories:
+        parts.append(f"类型：{', '.join(categories)}")
+    if sources:
+        parts.append(f"来源：{', '.join(sources)}")
+    adult_content = query_plan.get("adult_content")
+    if isinstance(adult_content, bool):
+        parts.append(f"内容分级：{'NSFW' if adult_content else 'SFW'}")
+    return "；".join(parts)
+
+
+def _string_values(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    values: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text and text not in values:
+            values.append(text)
+    return values[:8]
+
+
+def _fallback_answer_for_intent(intent: object, matches: list[AgentModMatch], query_plan: dict[str, Any] | None = None) -> str:
+    contract_answer = build_contract_fallback_answer(matches, query_plan)
+    if contract_answer != build_fallback_answer(matches):
+        return contract_answer
     if intent == "install_risk":
         return build_install_risk_fallback(matches)
     if intent == "comparison":

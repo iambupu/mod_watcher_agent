@@ -18,6 +18,7 @@ from app.utils.json import json_object_from_text
 logger = logging.getLogger(__name__)
 
 JudgeRelevance = Literal["high", "medium", "low", "reject"]
+JudgeFitType = Literal["direct_match", "support_context", "off_scope", "uncertain"]
 JudgeGroup = Literal[
     "core_gameplay",
     "visual_support",
@@ -33,8 +34,11 @@ class CandidateSemanticJudgement(BaseModel):
     # relevance 决定排序和是否进入回答：high/medium 优先，low 只做补充，reject 直接剔除。
     candidate_id: int
     relevance: JudgeRelevance = "low"
+    fit_type: JudgeFitType = "uncertain"
     group: JudgeGroup = "other_related"
     reason: str = ""
+    evidence: list[str] = Field(default_factory=list)
+    violations: list[str] = Field(default_factory=list)
 
     @field_validator("candidate_id", mode="before")
     @classmethod
@@ -45,6 +49,18 @@ class CandidateSemanticJudgement(BaseModel):
     @classmethod
     def _strip_reason(cls, value: object) -> str:
         return str(value or "").strip()[:240]
+
+    @field_validator("evidence", "violations", mode="before")
+    @classmethod
+    def _normalize_string_list(cls, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        values: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text and text not in values:
+                values.append(text[:160])
+        return values[:8]
 
 
 class CandidateSemanticGroup(BaseModel):
@@ -239,8 +255,10 @@ def _fallback_result(tool_input: CandidateSemanticJudgeInput, *, status: str, re
             CandidateSemanticJudgement(
                 candidate_id=item.id,
                 relevance="medium",
+                fit_type="direct_match",
                 group="other_related",
                 reason="fallback_keep_original_candidate",
+                evidence=["fallback_original_order"],
             )
             for item in tool_input.candidates
         ],
@@ -267,6 +285,9 @@ def build_candidate_semantic_judge_evidence(
 ) -> dict[str, object]:
     rejected_ids = {item.candidate_id for item in result.rejected}
     rejected_ids.update(item.candidate_id for item in result.judgements if item.relevance == "reject")
+    fit_counts = {"direct_match": 0, "support_context": 0, "off_scope": 0, "uncertain": 0}
+    for item in result.judgements:
+        fit_counts[item.fit_type] = fit_counts.get(item.fit_type, 0) + 1
     return {
         "fragment_id": "r_candidate_semantic_judge_1",
         "stage": "final_ranking",
@@ -276,6 +297,7 @@ def build_candidate_semantic_judge_evidence(
         "input_count": input_count,
         "output_count": output_count,
         "rejected_count": len(rejected_ids),
+        "fit_counts": fit_counts,
         "groups": [
             {
                 "name": group.name,

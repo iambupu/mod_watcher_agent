@@ -233,7 +233,34 @@ def _copy_context_value(
 def _is_weak_keyword(token: str) -> bool:
     if len(token) <= 1:
         return True
-    return token in {"mod", "mods", "style", "related", "similar", "continue", "继续", "相关", "类似", "风格", "相关风格"}
+    return token in {
+        "mod",
+        "mods",
+        "style",
+        "related",
+        "similar",
+        "same",
+        "continue",
+        "more",
+        "another",
+        "result",
+        "results",
+        "ll",
+        "loverslab",
+        "nexus",
+        "nexusmods",
+        "继续",
+        "相关",
+        "类似",
+        "同类",
+        "结果",
+        "的结果",
+        "风格",
+        "相关风格",
+        "相关结果",
+        "类似结果",
+        "同类结果",
+    }
 
 
 def _only_weak_current_keywords(values: list[str]) -> bool:

@@ -16,6 +16,15 @@ def test_semantic_query_expands_chinese_female_outfit_terms():
     assert "clothing" in semantic.category_aliases
 
 
+def test_semantic_query_expands_chinese_vehicle_handling_terms():
+    semantic = semantic_query("只看 Cyberpunk 2077 载具操控 Mod")
+
+    assert "vehicle" in semantic.anchors
+    assert "mechanics" in semantic.domains
+    assert "handling" in semantic.expanded_terms
+    assert "Vehicles".lower() in [value.lower() for value in semantic.category_aliases]
+
+
 def test_strip_scope_tolerates_empty_values():
     assert strip_scope(None) == ""
     assert strip_scope("目标 [scope] {\"source\":\"current\"}") == "目标"

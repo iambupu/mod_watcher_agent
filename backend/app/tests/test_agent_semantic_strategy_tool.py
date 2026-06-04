@@ -18,6 +18,8 @@ from app.services.agent.semantic_brain.semantic_strategy_tool import (
 from app.services.agent.tools.task_understanding_tool import (
     TaskUnderstandingInput,
     TaskUnderstandingTool,
+    _finalize_query_plan_for_diagnosis,
+    _merge_normalized_query_plan,
 )
 
 
@@ -49,6 +51,45 @@ def _mod(**kwargs) -> Mod:
     return Mod(**defaults)
 
 
+def test_task_understanding_merge_uses_normalized_plan_as_authoritative():
+    merged = _merge_normalized_query_plan(
+        {
+            "exact_title": "女性服装",
+            "categories": ["Wear Armor over Devious Suits"],
+            "_agent_semantic_strategy": {"user_goal": "只看女性服装"},
+            "evidence_id": "ev-1",
+        },
+        {"categories": ["Clothing"], "keywords": ["female", "clothing"]},
+    )
+
+    assert "exact_title" not in merged
+    assert merged["categories"] == ["Clothing"]
+    assert merged["_agent_semantic_strategy"] == {"user_goal": "只看女性服装"}
+    assert merged["evidence_id"] == "ev-1"
+
+
+def test_task_understanding_finalized_plan_is_sanitized_before_diagnosis():
+    finalized = _finalize_query_plan_for_diagnosis(
+        {
+            "exact_title": "女性服装",
+            "categories": ["Wear Armor over Devious Suits"],
+            "_agent_semantic_strategy": {"user_goal": "只看女性服装"},
+            "evidence_id": "ev-1",
+        },
+        {
+            "exact_title": "女性服装",
+            "categories": ["Clothing", "Bimbos of Skyrim - BimboLips"],
+            "keywords": ["female", "clothing"],
+        },
+        query="只看天际的女性服装",
+    )
+
+    assert "exact_title" not in finalized
+    assert finalized["categories"] == ["Clothing"]
+    assert finalized["_agent_semantic_strategy"] == {"user_goal": "只看女性服装"}
+    assert finalized["evidence_id"] == "ev-1"
+
+
 def test_semantic_strategy_schema_normalizes_terms_and_filters():
     strategy = SemanticStrategy.model_validate(
         {
@@ -62,6 +103,10 @@ def test_semantic_strategy_schema_normalizes_terms_and_filters():
             },
             "core_terms": ["bimbo", "bimbo", "roleplay"],
             "soft_signals": ["Bimbos of Skyrim", "", "Bimbos of Skyrim"],
+            "direct_match_definition": ["候选必须直接支持 bimbo 玩法", ""],
+            "support_context_definition": ["服装和预设只能作为配套"],
+            "reject_as_primary": ["visual_only"],
+            "answer_policy": {"main_results": "only_direct_match", "bad": "ignored"},
             "ranking_goal": "按玩法相关性排序",
             "answer_shape": "grouped_recommendation",
             "confidence": 2,
@@ -74,6 +119,10 @@ def test_semantic_strategy_schema_normalizes_terms_and_filters():
     assert strategy.hard_filters.excluded_keywords == ["SKSE"]
     assert strategy.core_terms == ["bimbo", "roleplay"]
     assert strategy.soft_signals == ["Bimbos of Skyrim"]
+    assert strategy.direct_match_definition == ["候选必须直接支持 bimbo 玩法"]
+    assert strategy.support_context_definition == ["服装和预设只能作为配套"]
+    assert strategy.reject_as_primary == ["visual_only"]
+    assert strategy.answer_policy == {"main_results": "only_direct_match"}
     assert strategy.confidence == 1.0
 
 
@@ -109,6 +158,10 @@ async def test_semantic_strategy_tool_uses_llm_and_repairs_invalid_json(monkeypa
               "hard_filters": {"game": "skyrimspecialedition"},
               "core_terms": ["bimbo", "roleplay"],
               "soft_signals": ["Bimbos of Skyrim", "bimbofication"],
+              "direct_match_definition": ["必须是玩法或角色扮演本体"],
+              "support_context_definition": ["外观和预设只能作为配套"],
+              "reject_as_primary": ["visual_only"],
+              "answer_policy": {"main_results": "only_direct_match", "support_context": "separate_section"},
               "ranking_goal": "优先玩法与角色扮演相关候选",
               "answer_shape": "grouped_recommendation",
               "confidence": 0.91,
@@ -135,6 +188,8 @@ async def test_semantic_strategy_tool_uses_llm_and_repairs_invalid_json(monkeypa
     assert result.strategy.task_type == "open_discovery"
     assert result.strategy.strategy == "broad_then_judge"
     assert result.strategy.hard_filters.game == "skyrimspecialedition"
+    assert result.strategy.direct_match_definition == ["必须是玩法或角色扮演本体"]
+    assert result.strategy.answer_policy["main_results"] == "only_direct_match"
     assert result.evidence[0]["field"] == "semantic_strategy"
     assert result.evidence[0]["evidence_id"] == "ev_semantic"
 
@@ -166,6 +221,8 @@ async def test_semantic_strategy_fallback_keeps_memory_as_soft_hint():
     assert result.source == "fallback"
     assert result.strategy.task_type == "open_discovery"
     assert result.strategy.hard_filters.game == "skyrimspecialedition"
+    assert result.strategy.direct_match_definition
+    assert result.strategy.answer_policy["support_context"] == "separate_section"
     assert "roleplay" in result.strategy.soft_signals
     assert result.strategy.hard_filters.game != "Stellar Blade"
 
@@ -221,6 +278,53 @@ def test_semantic_strategy_adapter_softens_open_discovery_slots():
     assert plan["requirement_terms"] == []
     assert plan["compatibility_terms"] == []
     assert plan["category_hints"] == ["Gameplay", "3BA", "SKSE", "AE"]
+
+
+def test_semantic_strategy_adapter_drops_llm_exact_title_without_deterministic_title_signal():
+    strategy = SemanticStrategy(
+        task_type="exact_lookup",
+        user_goal="只看天际的R18女性服装",
+        strategy="exact_then_explain",
+        hard_filters={"exact_title": "只看天际的R18女性服装"},
+        core_terms=["女性服装"],
+        answer_shape="direct_lookup",
+    )
+    result = strategy_tool_module.SemanticStrategyResult(
+        strategy=strategy,
+        source="llm",
+        status="succeeded",
+        used_llm=True,
+    )
+
+    plan = attach_semantic_strategy_to_query_plan({"keywords": ["女性服装"], "limit": 8}, result)
+
+    assert "exact_title" not in plan
+    assert plan["_agent_semantic_strategy"]["hard_filters"]["exact_title"] is None
+
+
+def test_semantic_strategy_adapter_preserves_existing_exact_title_from_executor_plan():
+    strategy = SemanticStrategy(
+        task_type="exact_lookup",
+        user_goal='Skyrim mod named "Bimbo Body Morph"',
+        strategy="exact_then_explain",
+        hard_filters={"exact_title": "Bimbo Body Morph"},
+        core_terms=["Bimbo Body Morph"],
+        answer_shape="direct_lookup",
+    )
+    result = strategy_tool_module.SemanticStrategyResult(
+        strategy=strategy,
+        source="llm",
+        status="succeeded",
+        used_llm=True,
+    )
+
+    plan = attach_semantic_strategy_to_query_plan(
+        {"keywords": ["body"], "exact_title": "Bimbo Body Morph", "limit": 8},
+        result,
+    )
+
+    assert plan["exact_title"] == "Bimbo Body Morph"
+    assert plan["_agent_semantic_strategy"]["hard_filters"]["exact_title"] == "Bimbo Body Morph"
 
 
 def test_semantic_strategy_adapter_filters_out_ungrounded_llm_core_terms():
