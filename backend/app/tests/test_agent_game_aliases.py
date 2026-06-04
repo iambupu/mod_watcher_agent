@@ -325,6 +325,36 @@ def test_agent_normalizer_does_not_trust_implicit_tags_as_hard_filters():
     assert "bimbo" in plan["keywords"]
 
 
+def test_agent_normalizer_ignores_title_like_dirty_category_options():
+    slot_options = {
+        "games": ["Skyrim Special Edition"],
+        "game_domains": ["skyrimspecialedition"],
+        "categories": [
+            "Clothing and Accessories",
+            "Outfits",
+            "Clothing",
+            "LamaKreis's Maidens of Skyrim - Serana Replacer and Lysanne Follower (High Poly) CBBE - CBBE 3BBB (3BA) - UBE and BHUNP compatible (Part 8)",
+            "Wear Armor over Devious Suits",
+        ],
+        "sources": ["nexusmods", "loverslab"],
+    }
+    query = "只看天际的R18女性服装"
+    raw_plan = {
+        "intent": "search",
+        "keywords": ["female", "clothing"],
+        "games": ["Skyrim Special Edition"],
+        "game_domains": ["skyrimspecialedition"],
+        "sources": ["nexusmods"],
+        "categories": slot_options["categories"],
+    }
+
+    plan = _normalize_query_plan(raw_plan, query, slot_options)
+
+    assert plan["categories"] == ["Clothing and Accessories", "Outfits", "Clothing"]
+    assert not any("LamaKreis" in category for category in plan["categories"])
+    assert "Wear Armor over Devious Suits" not in plan["categories"]
+
+
 def test_agent_fallback_plan_infers_exact_title_from_named_query():
     slot_options = {
         "games": ["Skyrim Special Edition"],

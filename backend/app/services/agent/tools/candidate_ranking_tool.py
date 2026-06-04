@@ -98,6 +98,7 @@ class CandidateRankingTool:
         matches = validator_output.matches
         semantic_judge_evidence: list[dict[str, object]] = []
         semantic_judge_status = "skipped"
+        semantic_judge_no_direct_match = False
         if use_semantic_judge:
             # 开放发现的智能点放在候选裁判：检索阶段尽量别误杀，排序阶段再让 LLM 判断相关性。
             judge_output, matches = await self._judge_open_discovery(
@@ -108,6 +109,9 @@ class CandidateRankingTool:
                 evidence_id=evidence_id,
             )
             matches = matches[: plan.limit]
+            semantic_judge_no_direct_match = _requires_direct_match_only(query_plan) and not any(
+                item.fit_type == "direct_match" for item in judge_output.judgements
+            )
             semantic_judge_status = judge_output.status
             semantic_judge_evidence = [
                 build_candidate_semantic_judge_evidence(
@@ -119,7 +123,11 @@ class CandidateRankingTool:
             ]
             query_plan["_agent_candidate_semantic_judge"] = _judge_summary(judge_output)
         recovery_evidence: list[dict[str, object]] = []
-        if not matches:
+        if (
+            not matches
+            and not semantic_judge_no_direct_match
+            and not _requires_direct_match_only(query_plan)
+        ):
             # 校验后为空时才触发恢复检索，避免正常结果被额外搜索扰动排序。
             recovery_output = await CandidateRecoveryTool(self.session).run(
                 CandidateRecoveryInput(
@@ -197,7 +205,7 @@ class CandidateRankingTool:
                 evidence_id=evidence_id,
             )
         )
-        return judge_output, _apply_semantic_judgements(matches, judge_output)
+        return judge_output, _apply_semantic_judgements(matches, judge_output, query_plan=query_plan)
 
 
 def _semantic_strategy(query_plan: dict[str, Any]) -> dict[str, Any]:
@@ -205,10 +213,17 @@ def _semantic_strategy(query_plan: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _apply_semantic_judgements(matches: list, judge_output) -> list:
+def _apply_semantic_judgements(matches: list, judge_output, *, query_plan: dict[str, Any] | None = None) -> list:
     judgement_by_id = {item.candidate_id: item for item in judge_output.judgements}
     rejected_ids = {item.candidate_id for item in judge_output.rejected}
     rejected_ids.update(item.candidate_id for item in judge_output.judgements if item.relevance == "reject")
+    rejected_ids.update(item.candidate_id for item in judge_output.judgements if item.fit_type == "off_scope")
+    direct_match_only = _requires_direct_match_only(query_plan)
+    direct_ids = {item.candidate_id for item in judge_output.judgements if item.fit_type == "direct_match"}
+    if direct_match_only and direct_ids:
+        rejected_ids.update(item.candidate_id for item in judge_output.judgements if item.fit_type != "direct_match")
+    if direct_match_only and not direct_ids:
+        return []
     ranked = []
     for index, match in enumerate(matches):
         match_id = getattr(match, "id", None)
@@ -220,20 +235,36 @@ def _apply_semantic_judgements(matches: list, judge_output) -> list:
     return [item[1] for item in ranked]
 
 
-def _judgement_sort_key(judgement, index: int) -> tuple[int, int]:
+def _requires_direct_match_only(query_plan: dict[str, Any] | None) -> bool:
+    if not isinstance(query_plan, dict):
+        return False
+    strategy = query_plan.get("_agent_semantic_strategy")
+    if not isinstance(strategy, dict):
+        return False
+    policy = strategy.get("answer_policy")
+    if not isinstance(policy, dict):
+        return False
+    return str(policy.get("main_results") or "").strip().lower() in {"only_direct_match", "direct_match_only"}
+
+
+def _judgement_sort_key(judgement, index: int) -> tuple[int, int, int]:
     order = {"high": 0, "medium": 1, "low": 2, "reject": 3}
     if judgement is None:
-        return (2, index)
-    return (order.get(judgement.relevance, 2), index)
+        return (2, 2, index)
+    fit_order = {"direct_match": 0, "support_context": 1, "uncertain": 2, "off_scope": 3}
+    return (fit_order.get(judgement.fit_type, 2), order.get(judgement.relevance, 2), index)
 
 
 def _with_judge_reason(match, judgement):
     if judgement is None:
         return match
     group_label = _group_label(judgement.group)
-    reason = f"语义裁判：{judgement.relevance} / {group_label}"
+    fit_label = _fit_type_label(judgement.fit_type)
+    reason = f"语义裁判：{judgement.relevance} / {fit_label} / {group_label}"
     if judgement.reason:
         reason = f"{reason}；{judgement.reason}"
+    if judgement.violations:
+        reason = f"{reason}；违例：{', '.join(judgement.violations[:3])}"
     previous = str(getattr(match, "rank_reason", "") or "").strip()
     rank_reason = f"{reason}；{previous}" if previous else reason
     return match.model_copy(update={"rank_reason": rank_reason[:500]})
@@ -252,10 +283,37 @@ def _group_label(group: str) -> str:
     return labels.get(str(group), str(group))
 
 
+def _fit_type_label(fit_type: str) -> str:
+    labels = {
+        "direct_match": "直接命中",
+        "support_context": "辅助上下文",
+        "off_scope": "偏离主目标",
+        "uncertain": "证据不足",
+    }
+    return labels.get(str(fit_type), str(fit_type))
+
+
 def _judge_summary(judge_output) -> dict[str, object]:
+    fit_counts = {"direct_match": 0, "support_context": 0, "off_scope": 0, "uncertain": 0}
+    judgements = []
+    for item in judge_output.judgements:
+        fit_counts[item.fit_type] = fit_counts.get(item.fit_type, 0) + 1
+        judgements.append(
+            {
+                "candidate_id": item.candidate_id,
+                "relevance": item.relevance,
+                "fit_type": item.fit_type,
+                "group": item.group,
+                "reason": item.reason,
+                "evidence": item.evidence,
+                "violations": item.violations,
+            }
+        )
     return {
         "status": judge_output.status,
         "used_llm": judge_output.used_llm,
+        "fit_counts": fit_counts,
+        "judgements": judgements,
         "groups": [
             {
                 "name": group.name,

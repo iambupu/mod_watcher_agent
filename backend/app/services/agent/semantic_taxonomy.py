@@ -464,6 +464,14 @@ SEMANTIC_RULES: tuple[dict, ...] = (
         "category_aliases": ["weapon", "weapons", "武器"],
     },
     {
+        "name": "vehicle",
+        "markers": ["载具", "车辆", "驾驶", "操控", "vehicle", "vehicles", "driving", "handling"],
+        "terms": ["vehicle", "vehicles", "car", "cars", "driving", "handling", "steering", "drift", "brake"],
+        "category_aliases": ["vehicles", "vehicle", "载具"],
+        "anchor": "vehicle",
+        "domains": ["mechanics", "content_type"],
+    },
+    {
         "name": "gameplay",
         "markers": ["玩法", "机制", "战斗", "生存", "任务", "平衡", "perk", "技能", "gameplay", "combat", "quest"],
         "terms": ["gameplay", "combat", "quest", "perk", "survival", "balance", "mechanics"],

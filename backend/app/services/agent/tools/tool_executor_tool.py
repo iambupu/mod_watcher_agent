@@ -5,6 +5,7 @@ from typing import Any
 from sqlmodel import Session
 
 from app.services.agent.planning.open_discovery_policy import is_open_discovery_plan
+from app.services.agent.planning.query_plan_hygiene import sanitize_query_plan_fields
 from app.services.agent.retrieval_evidence import (
     active_query_plan_fields,
     append_retrieval_evidence,
@@ -45,7 +46,7 @@ class ToolExecutorTool:
         self.session = session
 
     async def run(self, tool_input: ToolExecutorInput) -> ToolExecutorOutput:
-        query_plan = dict(tool_input.query_plan or {})
+        query_plan = sanitize_query_plan_fields(dict(tool_input.query_plan or {}), query=tool_input.query)
         evidence_id = tool_input.evidence_id or str(query_plan.get("evidence_id") or "").strip()
         plan = SearchPlan.from_query_plan(query_plan)
         plan_query = {**plan.to_query_plan(), "evidence_id": evidence_id}
@@ -106,6 +107,7 @@ class ToolExecutorTool:
                 status="succeeded",
                 count=len(local_results),
                 fields=active_query_plan_fields(query_plan),
+                query_plan=query_plan,
                 evidence_id=evidence_id,
             )
         else:
@@ -155,6 +157,7 @@ class ToolExecutorTool:
                 count=0,
                 reason=reason,
                 fields=["keywords", "sources", "games", "categories", "category_hints"],
+                query_plan=query_plan,
                 evidence_id=evidence_id,
             )
 

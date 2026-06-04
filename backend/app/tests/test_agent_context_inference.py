@@ -1,4 +1,5 @@
 from app.services.agent.context.context_inference import (
+    decide_context_inheritance,
     followup_decision,
     semantic_continuity_score,
     should_inherit_context_keywords,
@@ -24,6 +25,29 @@ def test_followup_decision_tracks_common_followup_phrases():
         decision = followup_decision(query)
         assert decision.is_followup is True
         assert decision.low_signal is True
+
+
+def test_followup_decision_treats_source_refine_similar_results_as_low_signal():
+    decision = followup_decision("只看 LL 的类似结果")
+
+    assert decision.is_followup is True
+    assert decision.low_signal is True
+    assert "has_relational_intent" in decision.reasons
+
+
+def test_context_inheritance_allows_source_refine_with_weak_current_terms():
+    decision = decide_context_inheritance(
+        query="只看 LL 的类似结果",
+        current_keywords=["ll", "的结果"],
+        context_keywords=["bimbo"],
+        context_quality=0.55,
+        has_refinement_constraints=True,
+        context_has_semantic_anchors=True,
+    )
+
+    assert decision.inherit_keywords is True
+    assert decision.topic_shift is False
+    assert "refinement_bias" in decision.policy_reasons
 
 
 def test_followup_decision_suppresses_new_strong_topic_even_with_switch_word():

@@ -129,6 +129,61 @@ def test_filter_by_distinctive_terms_with_anchor_groups_falls_back_when_no_group
     assert [item.mod.title for item in filtered] == ["Bimbo Morph Pack", "Lore Expansion", "Whistling in Skyrim CHS"]
 
 
+def test_filter_by_distinctive_terms_drops_zero_semantic_hits_for_direct_match_contract():
+    vehicle = _result("Cyber Vehicle Handling Overhaul", "vehicle", 10)
+    vehicle.mod.category = "Vehicles"
+    vehicle.mod.original_summary = "Improves vehicle steering, drift, and brake control."
+    outfit = _result("Cyber Latex Outfit", "outfit", 9)
+    outfit.mod.category = "Clothing"
+    outfit.mod.original_summary = "Adds latex outfit for V."
+    query_plan = {
+        "_agent_ranking_semantic_anchors": ["vehicle"],
+        "_agent_semantic_strategy": {
+            "answer_policy": {
+                "main_results": "only_direct_match",
+            }
+        },
+    }
+
+    filtered = filter_by_distinctive_terms(
+        [outfit, vehicle],
+        "只看 Cyberpunk 2077 载具操控 Mod",
+        query_plan=query_plan,
+    )
+
+    assert [item.mod.title for item in filtered] == ["Cyber Vehicle Handling Overhaul"]
+
+
+def test_filter_by_distinctive_terms_requires_semantic_fallback_hit_for_direct_match_contract():
+    tracksuit = _result("Samurai Tracksuit - Cyberpunk 2077", "tracksuit", 10)
+    tracksuit.mod.game = "Stellar Blade"
+    tracksuit.mod.category = "Outfits"
+    tracksuit.mod.original_summary = "A tracksuit retexture with Johnny Silverhand's band logo from Cyberpunk 2077."
+    armor = _result("Cyberpunk 2077 X Skyrim Samurai Armor", "armor", 9)
+    armor.mod.category = "Armor"
+    armor.mod.original_summary = "Armor inspired by CD Projekt Red and Mike Pondsmith's Cyberpunk."
+    vehicle = _result("Cyber Vehicle Handling Overhaul", "vehicle", 8)
+    vehicle.mod.game = "Cyberpunk 2077"
+    vehicle.mod.category = "Vehicles"
+    vehicle.mod.original_summary = "Improves vehicle steering and handling."
+    query_plan = {
+        "_agent_semantic_strategy": {
+            "answer_policy": {
+                "main_results": "only_direct_match",
+            }
+        },
+    }
+
+    filtered = filter_by_distinctive_terms(
+        [tracksuit, armor, vehicle],
+        "只看 Cyberpunk 2077 载具操控 Mod",
+        query_plan=query_plan,
+        fallback_terms=["cyberpunk", "2077", "vehicle", "handling", "steering"],
+    )
+
+    assert [item.mod.title for item in filtered] == ["Cyber Vehicle Handling Overhaul"]
+
+
 def test_filter_by_distinctive_terms_ignores_author_name_match_without_author_constraint():
     bimbo_roleplay = _result("Bimbo Roleplay Expansion", "1", 12)
     bimbo_roleplay.mod.original_summary = "Roleplay companion and quest updates."

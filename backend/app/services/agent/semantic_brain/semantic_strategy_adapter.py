@@ -21,7 +21,7 @@ def attach_semantic_strategy_to_query_plan(
     merged["_agent_query_plan_role"] = "executor_query"
     merged["_agent_semantic_strategy_primary"] = True
     _apply_strategy_core(merged, strategy, used_llm=result.used_llm)
-    merged["_agent_semantic_strategy"] = result.strategy.model_dump(mode="python")
+    merged["_agent_semantic_strategy"] = strategy
     merged["_agent_semantic_strategy_source"] = result.source
     merged["_agent_semantic_strategy_status"] = result.status
     merged["_agent_semantic_strategy_used_llm"] = result.used_llm
@@ -51,9 +51,15 @@ def _apply_strategy_core(plan: dict[str, Any], strategy: dict[str, Any], *, used
     if used_llm:
         _apply_hard_filter(plan, "game", "games", hard_filters)
         _apply_hard_filter(plan, "source", "sources", hard_filters)
-    for field in ("adult_content", "exact_title", "external_id", "source_url"):
-        if hard_filters.get(field) is not None and (used_llm or field in {"exact_title", "external_id", "source_url"}):
+    for field in ("adult_content", "external_id", "source_url"):
+        if hard_filters.get(field) is not None and (used_llm or field in {"external_id", "source_url"}):
             plan[field] = hard_filters[field]
+    exact_title = _safe_strategy_exact_title(plan, hard_filters, used_llm=used_llm)
+    if exact_title:
+        plan["exact_title"] = exact_title
+        hard_filters["exact_title"] = exact_title
+    elif hard_filters.get("exact_title") is not None:
+        hard_filters["exact_title"] = None
     for field in ("excluded_keywords", "excluded_sources"):
         values = string_list(hard_filters.get(field), limit=20)
         if field == "excluded_keywords":
@@ -92,6 +98,23 @@ def _apply_hard_filter(
     value = str(hard_filters.get(strategy_field) or "").strip()
     if value:
         plan[plan_field] = [value]
+
+
+def _safe_strategy_exact_title(
+    plan: dict[str, Any],
+    hard_filters: dict[str, Any],
+    *,
+    used_llm: bool,
+) -> str | None:
+    value = str(hard_filters.get("exact_title") or "").strip()
+    if not value:
+        return None
+    existing = str(plan.get("exact_title") or "").strip()
+    if existing:
+        return existing
+    if used_llm:
+        return None
+    return value
 
 
 def _attach_semantic_anchors(plan: dict[str, Any], strategy: dict[str, Any], core_terms: list[str]) -> None:
