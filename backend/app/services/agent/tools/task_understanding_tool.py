@@ -15,6 +15,9 @@ from app.services.agent.planning.query_diagnosis import QueryDiagnosis, diagnosi
 from app.services.agent.planning.query_plan_hygiene import sanitize_query_plan_fields
 from app.services.agent.query_planner import load_slot_options, normalize_query_plan
 from app.services.agent.schemas import AgentHistoryItem
+from app.services.agent.self_correction.self_correction_schema import (
+    with_default_self_correction_config,
+)
 from app.services.agent.semantic_brain.semantic_strategy_adapter import (
     attach_semantic_strategy_to_query_plan,
 )
@@ -153,6 +156,7 @@ class TaskUnderstandingTool:
             query_plan = _finalize_query_plan_for_diagnosis(query_plan, normalized_plan, query=tool_input.query)
         else:
             query_plan = sanitize_query_plan_fields(query_plan, query=tool_input.query)
+        query_plan = with_default_self_correction_config(query_plan)
         _log_memory_context(memory_context, preferences)
         # 诊断层把 query_plan 转成可审计的 intent、slots 和语义信号，供工具规划使用。
         diagnosis = QueryDiagnosisTool().run(

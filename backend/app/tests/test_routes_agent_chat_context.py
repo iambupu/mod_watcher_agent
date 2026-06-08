@@ -159,6 +159,7 @@ def _assert_graph_stage_logs(messages: list[str]) -> None:
         "plan_tools",
         "staged_retrieval",
         "rank_results",
+        "self_correction_review",
         "generate_answer",
         "reflect",
         "persist_result",
