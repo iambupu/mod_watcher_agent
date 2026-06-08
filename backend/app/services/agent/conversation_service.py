@@ -188,21 +188,25 @@ def save_conversation_state(
                 sort_index=idx,
             ),
         )
-    if rows_to_add:
-        session.add_all(rows_to_add)
-    if seen_message_ids:
-        session.exec(
-            delete(AgentMessage).where(
-                AgentMessage.session_id == active_session,
-                AgentMessage.message_id.notin_(seen_message_ids),
+    try:
+        if rows_to_add:
+            session.add_all(rows_to_add)
+        if seen_message_ids:
+            session.exec(
+                delete(AgentMessage).where(
+                    AgentMessage.session_id == active_session,
+                    AgentMessage.message_id.notin_(seen_message_ids),
+                )
             )
-        )
-    else:
-        session.exec(delete(AgentMessage).where(AgentMessage.session_id == active_session))
-    session.commit()
-    AgentPreferenceService(session).mark_dirty()
-    settings.set(AGENT_CHAT_ACTIVE_SESSION_KEY, active_session)
-    settings.set(last_update_key, now)
+        else:
+            session.exec(delete(AgentMessage).where(AgentMessage.session_id == active_session))
+        AgentPreferenceService(session).mark_dirty(commit=False)
+        settings.set(AGENT_CHAT_ACTIVE_SESSION_KEY, active_session, commit=False)
+        settings.set(last_update_key, now, commit=False)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     return load_conversation_state(session, settings)
 
 

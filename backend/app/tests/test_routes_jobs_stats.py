@@ -13,6 +13,7 @@ from app.models.job_run import JobRun
 from app.models.mod import Mod
 from app.models.update_event import ModUpdateEvent
 from app.models.watch_rule import WatchRule
+from app.services import job_queue_service
 
 
 def _make_engine():
@@ -197,7 +198,7 @@ def test_scheduler_pause_and_resume_return_actual_state(monkeypatch):
 
 
 def test_discovery_result_counter_ignores_bool_and_normalizes_dirty_counts():
-    scanned, matched = routes_jobs._count_numeric_values({
+    scanned, matched = job_queue_service._count_numeric_values({
         "rule-a": "3",
         "rule-b": True,
         "rule-c": -1,
@@ -209,7 +210,7 @@ def test_discovery_result_counter_ignores_bool_and_normalizes_dirty_counts():
 
 
 def test_favorite_check_result_counter_parses_dirty_boolean_flags():
-    scanned, matched = routes_jobs._count_favorite_check_result({
+    scanned, matched = job_queue_service._count_favorite_check_result({
         "fav-a": {"update_detected": "true"},
         "fav-b": {"update_detected": "false"},
         "fav-c": {"update_detected": 1},

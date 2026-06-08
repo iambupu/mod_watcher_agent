@@ -6,21 +6,21 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session, func, select
 
 from app.db import get_session
-from app.jobs.check_favorite_updates import check_favorite_updates
-from app.jobs.discover_new_mods import discover_new_mods
 from app.jobs.generate_summaries import generate_summaries
 from app.jobs.generate_summary_report import generate_summary_report
-from app.jobs.import_nexusmods_game import import_nexusmods_game
-from app.jobs.manual_jobs import create_job_run, enqueue_job_run
 from app.jobs.scheduler import scheduler
-from app.jobs.tracked_jobs import safe_job_count
 from app.models.favorite import Favorite
 from app.models.job_run import JobRun
 from app.models.mod import Mod
 from app.models.notification import Notification
 from app.models.update_event import ModUpdateEvent
 from app.models.watch_rule import WatchRule
-from app.utils.boolean import parse_bool
+from app.services.job_queue_service import (
+    queue_check_favorites,
+    queue_discover_all,
+    queue_generate_summaries,
+    queue_nexusmods_game_import,
+)
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -49,21 +49,6 @@ def _job_to_dict(job: JobRun) -> dict:
 def _queued_response(job: JobRun) -> dict:
     """内部辅助函数，用于拆分上层流程中的局部规则。"""
     return {"status": "queued", "job_id": job.id}
-
-
-def _count_numeric_values(result: dict) -> tuple[int, int]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
-    scanned = len(result)
-    matched = sum(safe_job_count(value) for value in result.values())
-    return scanned, matched
-
-
-def _count_favorite_check_result(result: dict) -> tuple[int, int]:
-    summary = result.get("summary") if isinstance(result, dict) else None
-    if isinstance(summary, dict):
-        return safe_job_count(summary.get("scanned", 0)), safe_job_count(summary.get("updated", 0))
-    entries = [value for value in result.values() if isinstance(value, dict)]
-    return len(entries), sum(1 for value in entries if parse_bool(value.get("update_detected")))
 
 
 def _current_week_start_utc_iso() -> str:
@@ -162,21 +147,7 @@ def get_job_run(job_id: int, session: Session = Depends(get_session)):
 @router.post("/discover-all", status_code=status.HTTP_202_ACCEPTED)
 def discover_all(session: Session = Depends(get_session)):
     """Trigger discovery for all enabled watch rules."""
-    job = create_job_run(session, "discover_all")
-    from app.services.system_notification_service import SystemNotificationService
-    SystemNotificationService(session).create_event(
-        "job_queued",
-        "发现任务已加入队列",
-        "正在准备抓取新的 Mod",
-    )
-
-    async def handler():
-        """处理当前模块的业务逻辑并返回结果。"""
-        results = await discover_new_mods()
-        scanned, matched = _count_numeric_values(results)
-        return {"results": results, "items_scanned": scanned, "items_matched": matched}
-
-    enqueue_job_run(job.id, handler)
+    job = queue_discover_all(session)
     return _queued_response(job)
 
 
@@ -187,50 +158,19 @@ def import_nexusmods_game_route(
 ):
     """Queue a batched import of NexusMods metadata for one game domain."""
     game_domain_name = payload.game_domain_name.strip().lower()
-    job = create_job_run(
+    job = queue_nexusmods_game_import(
         session,
-        "nexusmods_import_game",
-        metadata={
-            "game_domain_name": game_domain_name,
-            "batch_size": payload.batch_size,
-            "max_batches": payload.max_batches,
-        },
+        game_domain_name=game_domain_name,
+        batch_size=payload.batch_size,
+        max_batches=payload.max_batches,
     )
-    from app.services.system_notification_service import SystemNotificationService
-    SystemNotificationService(session).create_event(
-        "job_queued",
-        "NexusMods 导入任务已加入队列",
-        f"正在分批导入 {game_domain_name} 的 Mod 信息",
-    )
-
-    async def handler():
-        """Run the NexusMods game import job."""
-        return await import_nexusmods_game(
-            game_domain_name,
-            batch_size=payload.batch_size,
-            max_batches=payload.max_batches,
-        )
-
-    enqueue_job_run(job.id, handler)
     return _queued_response(job)
 
 
 @router.post("/check-favorites", status_code=status.HTTP_202_ACCEPTED)
 def check_favorites(session: Session = Depends(get_session)):
     """Check all favorited mods for updates."""
-    job = create_job_run(session, "check_favorites")
-
-    async def handler():
-        """处理当前模块的业务逻辑并返回结果。"""
-        results = await check_favorite_updates()
-        scanned, matched = _count_favorite_check_result(results)
-        return {
-            "results": results,
-            "items_scanned": scanned,
-            "items_matched": matched,
-        }
-
-    enqueue_job_run(job.id, handler)
+    job = queue_check_favorites(session)
     return _queued_response(job)
 
 
@@ -244,20 +184,7 @@ def generate_missing_summaries(background_tasks: BackgroundTasks):
 @router.post("/generate-summaries/run", status_code=status.HTTP_202_ACCEPTED)
 def run_generate_missing_summaries(session: Session = Depends(get_session)):
     """Run summary translation immediately and return the result."""
-    job = create_job_run(session, "generate_summaries")
-
-    async def handler():
-        """处理当前模块的业务逻辑并返回结果。"""
-        results = await generate_summaries(record_job=False)
-        generated = safe_job_count(results.get("generated", 0))
-        scanned = safe_job_count(results.get("items_scanned", generated))
-        return {
-            "results": results,
-            "items_scanned": scanned,
-            "items_matched": generated,
-        }
-
-    enqueue_job_run(job.id, handler)
+    job = queue_generate_summaries(session)
     return _queued_response(job)
 
 

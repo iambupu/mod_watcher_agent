@@ -33,7 +33,7 @@ class FavoriteService:
         """初始化实例并保存运行所需的依赖。"""
         self.session = session
 
-    async def add_favorite(self, mod_id: int, user_note: str | None = None) -> Favorite:
+    async def add_favorite(self, mod_id: int, user_note: str | None = None, *, commit: bool = True) -> Favorite:
         """处理当前模块的业务逻辑并返回结果。"""
         mod = self.session.get(Mod, mod_id)
         if mod is None:
@@ -53,9 +53,13 @@ class FavoriteService:
             updated_at=now,
         )
         self.session.add(fav)
-        self.session.commit()
-        self.session.refresh(fav)
-        AgentPreferenceService(self.session).mark_dirty()
+        if commit:
+            self.session.commit()
+            self.session.refresh(fav)
+            AgentPreferenceService(self.session).mark_dirty()
+        else:
+            self.session.flush()
+            AgentPreferenceService(self.session).mark_dirty(commit=False)
         return fav
 
     async def import_and_favorite(self, data: FavoriteImportCreate) -> Favorite:
@@ -140,23 +144,28 @@ class FavoriteService:
             for key, value in mod_fields.items():
                 if value is not None:
                     setattr(mod, key, value)
-        self.session.add(mod)
-        self.session.commit()
-        self.session.refresh(mod)
+        try:
+            self.session.add(mod)
+            self.session.flush()
 
-        fav = await self.add_favorite(mod.id, data.user_note)
-        update_fields = {}
-        if data.tracking_enabled is not None:
-            update_fields["tracking_enabled"] = data.tracking_enabled
-        if data.notify_on_update is not None:
-            update_fields["notify_on_update"] = data.notify_on_update
-        if data.user_tags_json is not None:
-            update_fields["user_tags_json"] = data.user_tags_json
-        if data.user_note is not None:
-            update_fields["user_note"] = data.user_note
-        if update_fields:
-            fav = await self.update_favorite(fav.id, **update_fields)
-        return fav
+            fav = await self.add_favorite(mod.id, data.user_note, commit=False)
+            update_fields = {}
+            if data.tracking_enabled is not None:
+                update_fields["tracking_enabled"] = data.tracking_enabled
+            if data.notify_on_update is not None:
+                update_fields["notify_on_update"] = data.notify_on_update
+            if data.user_tags_json is not None:
+                update_fields["user_tags_json"] = data.user_tags_json
+            if data.user_note is not None:
+                update_fields["user_note"] = data.user_note
+            if update_fields:
+                fav = await self.update_favorite(fav.id, commit=False, **update_fields)
+            self.session.commit()
+            self.session.refresh(fav)
+            return fav
+        except Exception:
+            self.session.rollback()
+            raise
 
     def _find_imported_mod(
         self,
@@ -186,7 +195,7 @@ class FavoriteService:
         self.session.commit()
         AgentPreferenceService(self.session).mark_dirty()
 
-    async def update_favorite(self, favorite_id: int, **fields) -> Favorite:
+    async def update_favorite(self, favorite_id: int, *, commit: bool = True, **fields) -> Favorite:
         """更新已有数据并返回结果。"""
         fav = self.session.get(Favorite, favorite_id)
         if fav is None:
@@ -196,8 +205,11 @@ class FavoriteService:
                 setattr(fav, key, value)
         fav.updated_at = datetime.now(UTC).isoformat()
         self.session.add(fav)
-        self.session.commit()
-        self.session.refresh(fav)
+        if commit:
+            self.session.commit()
+            self.session.refresh(fav)
+        else:
+            self.session.flush()
         return fav
 
     def reconcile_local_metadata_updates(self) -> int:

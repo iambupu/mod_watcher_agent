@@ -1,10 +1,7 @@
-import os
-import platform
-import subprocess
-
 from fastapi import APIRouter, HTTPException, Query
 
-from app.logger import get_log_directory, get_log_entries
+from app.logger import get_log_entries
+from app.services.log_directory_service import LogDirectoryOpenError, open_log_directory_in_system
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 
@@ -23,18 +20,9 @@ def list_logs(
 @router.post("/open-dir")
 def open_log_directory():
     """处理当前模块的业务逻辑并返回结果。"""
-    log_dir = get_log_directory()
-    log_dir.mkdir(parents=True, exist_ok=True)
-    system = platform.system().lower()
     try:
-        if system == "windows":
-            os.startfile(str(log_dir))  # type: ignore[attr-defined]
-        elif system == "darwin":
-            subprocess.Popen(["open", str(log_dir)])
-        elif system == "linux":
-            subprocess.Popen(["xdg-open", str(log_dir)])
-        else:
-            raise HTTPException(status_code=501, detail=f"Unsupported platform: {system}")
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=501, detail=f"Open directory command unavailable: {exc}") from exc
+        log_dir = open_log_directory_in_system()
+    except LogDirectoryOpenError as exc:
+        status_code = 501 if exc.unsupported else 500
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     return {"opened": True, "path": str(log_dir)}
