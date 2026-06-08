@@ -57,30 +57,32 @@ def init_db() -> None:
             with engine.connect() as conn:
                 version_rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
             if not version_rows:
+                _apply_lightweight_migrations()
                 command.stamp(cfg, "head")
-                _ensure_performance_indexes()
-                _normalize_mod_identity_data()
-                _ensure_sqlite_fts()
+                _finalize_runtime_schema()
                 return
             command.upgrade(cfg, "head")
-            _ensure_performance_indexes()
-            _normalize_mod_identity_data()
-            _ensure_sqlite_fts()
+            _apply_lightweight_migrations()
+            _finalize_runtime_schema()
         else:
             # Existing databases created by SQLModel metadata may not have
             # alembic_version yet. Schema is already present after create_all(),
             # so stamp current head to avoid replaying initial CREATE TABLE ops.
+            _apply_lightweight_migrations()
             command.stamp(cfg, "head")
-            _ensure_performance_indexes()
-            _normalize_mod_identity_data()
-            _ensure_sqlite_fts()
+            _finalize_runtime_schema()
         return
     except Exception:
         logger.exception("Alembic upgrade failed; falling back to manual migrations.")
 
     # ── Fallback: lightweight runtime migration for existing SQLite DBs ──
     _apply_lightweight_migrations()
+    _finalize_runtime_schema()
+
+
+def _finalize_runtime_schema() -> None:
     _ensure_performance_indexes()
+    _normalize_mod_identity_data()
     _ensure_sqlite_fts()
 
 
