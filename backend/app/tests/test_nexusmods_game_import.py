@@ -236,7 +236,7 @@ def test_import_nexusmods_game_route_queues_job(monkeypatch):
     def fake_enqueue(job_run_id, handler):
         queued_job_ids.append(job_run_id)
 
-    monkeypatch.setattr("app.api.routes_jobs.enqueue_job_run", fake_enqueue)
+    monkeypatch.setattr("app.services.job_queue_service.enqueue_job_run", fake_enqueue)
     fastapi_app.dependency_overrides[get_session] = override_get_session
     client = TestClient(fastapi_app)
 

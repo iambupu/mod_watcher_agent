@@ -12,12 +12,11 @@ from app.utils.boolean import parse_bool
 class SettingsService:
     @staticmethod
     def _default_llm_providers() -> list[dict]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         return default_provider_configs()
 
     @classmethod
     def build_defaults(cls) -> dict[str, str]:
-        """构建后续流程需要的数据结构。"""
+        """Build default persisted settings, including environment-backed LLM values."""
         return {
             "game_domain": "skyrimspecialedition",
             "nexus_api_key_configured": "false",
@@ -60,18 +59,20 @@ class SettingsService:
         }
 
     def __init__(self, session: Session) -> None:
-        """初始化实例并保存运行所需的依赖。"""
         self.session = session
         self.DEFAULTS: dict[str, str] = self.build_defaults()
 
     def init_defaults(self) -> None:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """Insert missing default settings without overwriting existing values."""
+        changed = False
         for key, value in self.DEFAULTS.items():
             if self.get(key) is None:
-                self.set(key, value)
+                self.set(key, value, commit=False)
+                changed = True
+        if changed:
+            self.session.commit()
 
     def get_all(self, exclude_prefixes: tuple[str, ...] = ()) -> dict[str, str]:
-        """读取并返回对应的数据。"""
         stmt = select(Setting)
         for prefix in exclude_prefixes:
             stmt = stmt.where(Setting.key.notlike(f"{prefix}%"))
@@ -79,12 +80,10 @@ class SettingsService:
         return {row.key: row.value for row in rows}
 
     def get(self, key: str) -> str | None:
-        """读取并返回对应的数据。"""
         row = self.session.exec(select(Setting).where(Setting.key == key)).first()
         return row.value if row else None
 
-    def set(self, key: str, value: str) -> None:
-        """处理当前模块的业务逻辑并返回结果。"""
+    def set(self, key: str, value: str, *, commit: bool = True) -> None:
         now = datetime.now(UTC).isoformat()
         existing = self.session.exec(
             select(Setting).where(Setting.key == key)
@@ -95,10 +94,12 @@ class SettingsService:
         else:
             setting = Setting(key=key, value=value, updated_at=now)
             self.session.add(setting)
-        self.session.commit()
+        if commit:
+            self.session.commit()
 
-    def set_batch(self, items: dict[str, str]) -> None:
-        """处理当前模块的业务逻辑并返回结果。"""
+    def set_batch(self, items: dict[str, str], *, commit: bool = True) -> None:
+        if not items:
+            return
         now = datetime.now(UTC).isoformat()
         existing_rows = self.session.exec(
             select(Setting).where(Setting.key.in_(list(items.keys())))
@@ -111,4 +112,5 @@ class SettingsService:
                 existing.updated_at = now
             else:
                 self.session.add(Setting(key=key, value=value, updated_at=now))
-        self.session.commit()
+        if commit:
+            self.session.commit()

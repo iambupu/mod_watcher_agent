@@ -353,6 +353,29 @@ class TestCheckUpdate:
 
 class TestImportFavorite:
     @pytest.mark.asyncio
+    async def test_import_rolls_back_mod_and_favorite_when_final_update_fails(self, service, session, monkeypatch):
+        async def failing_update(*args, **kwargs):
+            raise RuntimeError("favorite update failed")
+
+        monkeypatch.setattr(service, "update_favorite", failing_update)
+
+        with pytest.raises(RuntimeError, match="favorite update failed"):
+            await service.import_and_favorite(
+                FavoriteImportCreate(
+                    source="nexusmods",
+                    external_id="4242",
+                    game="Skyrim Special Edition",
+                    game_domain="skyrimspecialedition",
+                    title="Rollback Test Mod",
+                    url="https://www.nexusmods.com/skyrimspecialedition/mods/4242",
+                    user_note="force update path",
+                )
+            )
+
+        assert session.exec(select(Mod).where(Mod.external_id == "skyrimspecialedition:4242")).first() is None
+        assert session.exec(select(Favorite)).all() == []
+
+    @pytest.mark.asyncio
     async def test_import_existing_favorite_records_local_metadata_update(self, service, mod, session):
         fav = await service.add_favorite(mod.id)
 

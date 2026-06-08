@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.db import get_session
-from app.jobs.scheduler import register_jobs
 from app.schemas.settings import SettingsRead, SettingsUpdate
 from app.services.llm_client import create_llm_client
 from app.services.llm_provider_test_service import test_llm_providers as run_llm_provider_tests
@@ -17,12 +16,11 @@ from app.services.notification_service import NotificationService
 from app.services.settings_payload_service import (
     EXPORT_EXCLUDED_PREFIXES,
     SettingsPayloadError,
-    prepare_settings_update,
     redact_settings_for_response,
     sanitize_export_settings,
-    settings_import_items,
 )
 from app.services.settings_service import SettingsService
+from app.services.settings_update_service import apply_settings_update, import_settings_payload
 from app.services.windows_autostart_service import AutoStartUnsupportedError, set_windows_auto_start
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -62,10 +60,9 @@ def update_settings(
     items = {key: value for key, value in data.settings.items() if value is not None}
     if items:
         try:
-            service.set_batch(prepare_settings_update(service, items))
+            service = apply_settings_update(session, items)
         except SettingsPayloadError as exc:
             _raise_settings_error(exc)
-        register_jobs(session)
 
     db_settings = service.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
     merged = dict(service.DEFAULTS)
@@ -124,15 +121,11 @@ def import_settings(
     session: SessionDep,
 ):
     """处理当前模块的业务逻辑并返回结果。"""
-    svc = SettingsService(session)
-    items = settings_import_items(data)
-    if items:
-        try:
-            svc.set_batch(prepare_settings_update(svc, items))
-        except SettingsPayloadError as exc:
-            _raise_settings_error(exc)
-        register_jobs(session)
-    return {"imported": len(items)}
+    try:
+        imported = import_settings_payload(session, data)
+    except SettingsPayloadError as exc:
+        _raise_settings_error(exc)
+    return {"imported": imported}
 
 
 @router.post("/auto-start")

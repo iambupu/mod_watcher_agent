@@ -3,7 +3,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.models  # noqa: F401
 from app.models.agent_message import AgentMessage
@@ -401,3 +401,37 @@ def test_conversation_state_round_trips_audit_evidence():
     assert reloaded.messages[0].audit.evidence.web_search is not None
     assert reloaded.messages[0].audit.evidence.web_search.tool_statuses == {"nexusmods_search": "succeeded"}
     assert reloaded.messages[0].audit.conclusion.recommended_action == "expand_online_sources_and_narrow_scope"
+
+
+def test_conversation_state_save_rolls_back_when_settings_update_fails():
+    class FailingSettings(SettingsService):
+        def set(self, key: str, value: str, *, commit: bool = True) -> None:
+            if key.startswith(conversation_service.AGENT_CHAT_LAST_UPDATE_PREFIX):
+                raise RuntimeError("settings write failed")
+            super().set(key, value, commit=commit)
+
+    with _session() as session:
+        settings = FailingSettings(session)
+        try:
+            conversation_service.save_conversation_state(
+                body=conversation_service.AgentConversationStateSaveRequest(
+                    active_session_id="s1",
+                    messages=[
+                        AgentConversationMessage(
+                            id="m1",
+                            role="assistant",
+                            text="ok",
+                            session_id="s1",
+                        )
+                    ],
+                ),
+                session=session,
+                settings=settings,
+            )
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("expected settings failure")
+
+        assert session.exec(select(AgentMessage)).all() == []
+        assert SettingsService(session).get(conversation_service.AGENT_CHAT_ACTIVE_SESSION_KEY) is None
