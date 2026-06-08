@@ -3,10 +3,14 @@ import re
 from uuid import uuid4
 
 from fastapi import Request
-from sqlalchemy import func
+from sqlalchemy import func, literal
 from sqlmodel import Session, select
 
 from app.models.mod import Mod
+from app.services.agent.routing.specific_mod_question_router import (
+    SpecificModQuestionRouter,
+    SpecificModRouteInput,
+)
 from app.services.agent.schemas import (
     AgentChatRequest,
     AgentChatResponse,
@@ -33,6 +37,17 @@ class AgentRuntime:
         # 用户用普通 chat 问“详细解析某个 MOD”时，优先复用详情问答链路，
         # 避免先做泛搜索再从结果里猜目标。
         detail_mod_id = _resolve_detail_mod_id_from_chat(self.session, body.message)
+        if detail_mod_id is None:
+            route = await SpecificModQuestionRouter(self.session).route(
+                SpecificModRouteInput(
+                    message=body.message,
+                    history=list(body.history),
+                    provider_override=body.provider_override,
+                    model_override=body.model_override,
+                )
+            )
+            if route.route == "mod_detail" and route.mod_id is not None:
+                detail_mod_id = route.mod_id
         if detail_mod_id is not None:
             return await self.ask_mod_detail(
                 AgentModDetailRequest(
@@ -153,8 +168,14 @@ def _new_evidence_id() -> str:
 
 def _resolve_detail_mod_id_from_chat(session: Session, message: str) -> int | None:
     title = _extract_detail_title(message)
-    if not title:
-        return None
+    if title:
+        direct_id = _resolve_mod_id_by_exact_title(session, title)
+        if direct_id is not None:
+            return direct_id
+    return _resolve_mod_id_by_mentioned_title(session, message)
+
+
+def _resolve_mod_id_by_exact_title(session: Session, title: str) -> int | None:
     normalized_title = _normalize_title(title)
     if not normalized_title:
         return None
@@ -172,6 +193,32 @@ def _resolve_detail_mod_id_from_chat(session: Session, message: str) -> int | No
     return mod.id if mod and mod.id is not None else None
 
 
+def _resolve_mod_id_by_mentioned_title(session: Session, message: str) -> int | None:
+    text = _normalize_title(message)
+    if not text or not _looks_like_specific_mod_question(text):
+        return None
+    message_text = literal(text)
+    title_expr = func.lower(func.trim(Mod.title))
+    translated_title_expr = func.lower(func.trim(func.coalesce(Mod.translated_title_zh, "")))
+    statement = (
+        select(Mod)
+        .where(
+            (
+                (func.length(title_expr) >= 4)
+                & (func.instr(message_text, title_expr) > 0)
+            )
+            | (
+                (func.length(translated_title_expr) >= 4)
+                & (func.instr(message_text, translated_title_expr) > 0)
+            )
+        )
+        .order_by(Mod.ignored.asc(), func.length(Mod.title).desc(), Mod.id.desc())
+        .limit(1)
+    )
+    mod = session.exec(statement).first()
+    return mod.id if mod and mod.id is not None else None
+
+
 def _extract_detail_title(message: str) -> str:
     text = re.sub(r"\s+", " ", str(message or "")).strip()
     if not re.search(r"(详细解析|详细介绍|详情|分析)", text, flags=re.IGNORECASE):
@@ -183,6 +230,16 @@ def _extract_detail_title(message: str) -> str:
     if match:
         return _strip_wrapping_punctuation(match.group(1))
     return ""
+
+
+def _looks_like_specific_mod_question(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(如何|怎么样|怎么|支持|兼容|安装|风险|情况|是否|吗|\?|？|详情|介绍|解析|物理|前置|依赖|冲突|版本|作者|更新)",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _strip_wrapping_punctuation(value: str) -> str:

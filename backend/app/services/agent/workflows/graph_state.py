@@ -36,6 +36,8 @@ class AgentGraphState(TypedDict):
     active_constraints: NotRequired[dict[str, object]]
     retrieval_summary: NotRequired[dict[str, object]]
     ranking_summary: NotRequired[dict[str, object]]
+    self_correction_summary: NotRequired[dict[str, object]]
+    self_correction_trace: NotRequired[dict[str, object]]
     retrieval_evidence: NotRequired[list[dict[str, object]]]
     staged_results: NotRequired[list[SearchResult]]
     online_results: NotRequired[list[SearchResult]]

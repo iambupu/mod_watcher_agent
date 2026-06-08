@@ -22,6 +22,7 @@ from app.services.agent.workflows.search_stages import (
     generate_chat_answer_stage,
     rank_candidates_stage,
 )
+from app.services.agent.workflows.self_correction_stages import self_correction_review_stage
 from app.services.agent.workflows.understanding_stages import (
     diagnose_query_stage,
     generate_detail_answer_stage,
@@ -271,6 +272,38 @@ async def _rank_results(state: AgentGraphState) -> dict:
     }
 
 
+async def _self_correction_review(state: AgentGraphState) -> dict:
+    started_at = start_trace()
+    evidence_id = _state_evidence_id(state)
+    logger.info("agent.stage step=self_correction_review status=started evidence_id=%s", evidence_id)
+    update = await self_correction_review_stage(
+        _state_session(state),
+        query=_state_query(state),
+        query_plan=state.get("query_plan") or {},
+        matches=state.get("matches") or [],
+        staged_results=state.get("staged_results") or [],
+        online_results=state.get("online_results") or [],
+        retrieval_summary=state.get("retrieval_summary") or {},
+        retrieval_evidence=state.get("retrieval_evidence") or [],
+        tool_plan=state.get("tool_plan") or {},
+        llm=_state_llm_config(state),
+        evidence_id=evidence_id,
+    )
+    event = finish_trace("self_correction_review", started_at, "Agent self-correction review completed.", evidence_id=evidence_id)
+    summary = update.get("self_correction_summary") if isinstance(update.get("self_correction_summary"), dict) else {}
+    logger.info(
+        "agent.stage step=self_correction_review status=succeeded duration_ms=%s rounds=%s review_status=%s evidence_id=%s",
+        _event_duration_ms(event),
+        summary.get("round_count", 0),
+        summary.get("status", ""),
+        evidence_id,
+    )
+    return {
+        **update,
+        "trace": append_trace(state.get("trace"), event),
+    }
+
+
 async def _generate_answer(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state)
@@ -433,6 +466,7 @@ def _build_agent_graph_def() -> StateGraph:
     graph.add_node("plan_tools", _plan_tools)
     graph.add_node("staged_retrieval", _staged_retrieval)
     graph.add_node("rank_results", _rank_results)
+    graph.add_node("self_correction_review", _self_correction_review)
     graph.add_node("generate_answer", _generate_answer)
     graph.add_node("reflect", _reflect)
     graph.add_node("generate_detail_answer", _generate_detail_answer_node)
@@ -450,7 +484,8 @@ def _build_agent_graph_def() -> StateGraph:
     graph.add_edge("diagnose_query", "plan_tools")
     graph.add_edge("plan_tools", "staged_retrieval")
     graph.add_edge("staged_retrieval", "rank_results")
-    graph.add_edge("rank_results", "generate_answer")
+    graph.add_edge("rank_results", "self_correction_review")
+    graph.add_edge("self_correction_review", "generate_answer")
     graph.add_edge("generate_answer", "reflect")
     graph.add_edge("reflect", "persist_result")
     graph.add_edge("generate_detail_answer", "persist_result")

@@ -1,8 +1,13 @@
 import pytest
 
+from app.services.agent.judging import candidate_semantic_judge as judge_module
 from app.services.agent.judging.candidate_semantic_judge import (
+    CANDIDATE_SEMANTIC_JUDGE_TIMEOUT_SECONDS,
     CandidateSemanticJudgeInput,
     CandidateSemanticJudgeTool,
+)
+from app.services.agent.judging.candidate_semantic_judge_prompt import (
+    build_candidate_semantic_judge_prompt,
 )
 from app.services.agent.schemas import AgentModMatch
 
@@ -20,6 +25,42 @@ def _match(mod_id: int, title: str) -> AgentModMatch:
         score=10,
         original_summary="Bimbo roleplay mechanics and related content.",
     )
+
+
+def test_candidate_semantic_judge_prompt_requires_category_semantic_compatibility():
+    prompt = build_candidate_semantic_judge_prompt(
+        query="只看天际的R18女性服装",
+        semantic_strategy={
+            "user_goal": "只看天际的R18女性服装",
+            "direct_match_definition": ["Skyrim adult female clothing or outfit style wearable items"],
+        },
+        candidates=[
+            AgentModMatch(
+                id=10,
+                title="Obi's Battle Bikini 4K 3BA BHUNP UBE",
+                source="nexusmods",
+                game="Skyrim Special Edition",
+                category="Armour",
+                author=None,
+                version=None,
+                url="https://example.com/10",
+                updated_at_remote=None,
+                adult_content=True,
+                score=10,
+                original_summary="Requested skimpy piece. Made from scratch.",
+            )
+        ],
+        retrieval_evidence=[],
+    )
+
+    assert "category_semantic_compatibility" in prompt
+    assert "category 是来源站点的粗标签，不等于用户语义目标" in prompt
+    assert "category=Armour/Armor" in prompt
+    assert "bikini、lingerie、dress、outfit、robe、clothing" in prompt
+    assert "仍需检查游戏、内容分级、性别/身体体系、用户排除条件等硬约束" in prompt
+    assert "不要要求候选标题或摘要逐字包含用户问题原句" in prompt
+    assert "adult_content=true 判断，不要求 title/summary 写“R18”" in prompt
+    assert "不要只因为没有“女性服装”四个字就降为 support_context" in prompt
 
 
 @pytest.mark.asyncio
@@ -74,6 +115,135 @@ async def test_candidate_semantic_judge_accepts_llm_grouping():
     assert [item.fit_type for item in output.judgements] == ["direct_match", "support_context"]
     assert output.judgements[1].violations == ["not_core_gameplay"]
     assert output.groups[0].label == "核心玩法"
+    assert output.gaps == ["缺少安装风险证据"]
+
+
+@pytest.mark.asyncio
+async def test_candidate_semantic_judge_accepts_category_semantic_compatibility():
+    async def fake_judge(tool_input):
+        return {
+            "judgements": [
+                {
+                    "candidate_id": 1,
+                    "relevance": "high",
+                    "fit_type": "direct_match",
+                    "group": "visual_support",
+                    "category_semantic_compatibility": "compatible",
+                    "category_compatibility_reason": "Armour is a source label; bikini title and adult flag match clothing intent.",
+                    "reason": "adult bikini wearable for Skyrim",
+                    "evidence": ["title contains bikini", "category=Armour", "adult_content=true"],
+                    "violations": [],
+                }
+            ],
+            "groups": [],
+            "gaps": [],
+            "rejected": [],
+        }
+
+    candidate = _match(1, "A sexy straps bikini for UNP")
+    candidate = candidate.model_copy(
+        update={
+            "source": "nexusmods",
+            "category": "Armour",
+            "adult_content": True,
+            "original_summary": "Skimpy bikini wearable for UNP.",
+        }
+    )
+
+    output = await CandidateSemanticJudgeTool(judge=fake_judge).run(
+        CandidateSemanticJudgeInput(
+            query="只看天际的R18女性服装",
+            semantic_strategy={"task_type": "open_discovery"},
+            candidates=[candidate],
+            llm_available=True,
+        )
+    )
+
+    assert output.status == "succeeded"
+    assert output.judgements[0].fit_type == "direct_match"
+    assert output.judgements[0].category_semantic_compatibility == "compatible"
+    assert "bikini title" in output.judgements[0].category_compatibility_reason
+
+
+@pytest.mark.asyncio
+async def test_candidate_semantic_judge_uses_extended_llm_timeout(monkeypatch):
+    seen = {}
+
+    class FakeClient:
+        async def chat(self, prompt, *, model, max_tokens, request_timeout):
+            seen["request_timeout"] = request_timeout
+            return """
+            {
+              "judgements": [
+                {
+                  "candidate_id": 1,
+                  "relevance": "high",
+                  "fit_type": "direct_match",
+                  "group": "visual_support",
+                  "category_semantic_compatibility": "compatible",
+                  "category_compatibility_reason": "category matches clothing intent",
+                  "reason": "direct clothing match"
+                }
+              ],
+              "groups": [],
+              "gaps": [],
+              "rejected": []
+            }
+            """
+
+    def fake_create_llm_client(provider, api_key, base_url):
+        return FakeClient()
+
+    monkeypatch.setattr(judge_module, "create_llm_client", fake_create_llm_client)
+
+    output = await CandidateSemanticJudgeTool().run(
+        CandidateSemanticJudgeInput(
+            query="只看天际的R18女性服装",
+            semantic_strategy={"direct_match_definition": ["female clothing"]},
+            candidates=[_match(1, "A sexy straps bikini for UNP")],
+            llm_available=True,
+            provider="ollama",
+            model="qwen3:8b",
+        )
+    )
+
+    assert output.status == "succeeded"
+    assert seen["request_timeout"] == CANDIDATE_SEMANTIC_JUDGE_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_candidate_semantic_judge_drops_stale_no_direct_gaps_when_direct_matches_exist():
+    async def fake_judge(tool_input):
+        return {
+            "judgements": [
+                {
+                    "candidate_id": 1,
+                    "relevance": "high",
+                    "fit_type": "direct_match",
+                    "group": "visual_support",
+                    "reason": "direct match exists",
+                }
+            ],
+            "groups": [],
+            "gaps": [
+                "未找到明确的直接匹配项",
+                "缺少标题或描述中明确包含用户原句",
+                "缺少明确标注 R18 的直接匹配项",
+                "缺少明确提及'天际'的标题或描述",
+                "缺少安装风险证据",
+            ],
+            "rejected": [],
+        }
+
+    output = await CandidateSemanticJudgeTool(judge=fake_judge).run(
+        CandidateSemanticJudgeInput(
+            query="只看天际的R18女性服装",
+            candidates=[_match(1, "A sexy straps bikini for UNP")],
+            llm_available=True,
+        )
+    )
+
+    assert output.status == "succeeded"
     assert output.gaps == ["缺少安装风险证据"]
 
 
@@ -169,8 +339,8 @@ async def test_candidate_semantic_judge_invalid_json_degrades_to_fallback():
     assert output.status == "degraded"
     assert output.used_llm is False
     assert output.fallback_reason == "ValidationError"
-    assert output.judgements[0].relevance == "medium"
-    assert output.judgements[0].fit_type == "direct_match"
+    assert output.judgements[0].relevance == "low"
+    assert output.judgements[0].fit_type == "uncertain"
 
 
 @pytest.mark.asyncio
@@ -196,7 +366,7 @@ async def test_candidate_semantic_judge_invalid_fit_type_degrades_to_fallback():
     )
 
     assert output.status == "degraded"
-    assert output.judgements[0].fit_type == "direct_match"
+    assert output.judgements[0].fit_type == "uncertain"
 
 
 @pytest.mark.asyncio

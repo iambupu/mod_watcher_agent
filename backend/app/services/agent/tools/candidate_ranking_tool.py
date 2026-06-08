@@ -72,6 +72,7 @@ class CandidateRankingTool:
         evidence_id = tool_input.evidence_id or str(query_plan.get("evidence_id") or "").strip()
         plan = SearchPlan.from_query_plan(query_plan)
         open_discovery_with_llm = bool(tool_input.llm_available and is_open_discovery_plan(query_plan))
+        semantic_judge_with_llm = bool(tool_input.llm_available and _should_use_semantic_judge(query_plan))
         materialize_limit = (
             judge_candidate_pool_limit(query_plan, display_limit=plan.limit)
             if open_discovery_with_llm
@@ -92,10 +93,10 @@ class CandidateRankingTool:
         matches = MatchMaterializerTool(self.session).run(
             MatchMaterializerInput(results=fusion_output.results, limit=materialize_limit, evidence_id=evidence_id)
         ).matches
-        use_semantic_judge = bool(open_discovery_with_llm and matches)
         # 旧 validator 自己会跳过开放发现，避免在 Candidate Semantic Judge 前误删候选。
         validator_output = await self._validate(tool_input, query_plan, matches, evidence_id)
         matches = validator_output.matches
+        use_semantic_judge = bool(semantic_judge_with_llm and matches)
         semantic_judge_evidence: list[dict[str, object]] = []
         semantic_judge_status = "skipped"
         semantic_judge_no_direct_match = False
@@ -213,6 +214,21 @@ def _semantic_strategy(query_plan: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _should_use_semantic_judge(query_plan: dict[str, Any]) -> bool:
+    if is_open_discovery_plan(query_plan):
+        return True
+    strategy = _semantic_strategy(query_plan)
+    if not strategy:
+        return False
+    contract_fields = (
+        "direct_match_definition",
+        "support_context_definition",
+        "reject_as_primary",
+        "answer_policy",
+    )
+    return any(bool(strategy.get(field)) for field in contract_fields)
+
+
 def _apply_semantic_judgements(matches: list, judge_output, *, query_plan: dict[str, Any] | None = None) -> list:
     judgement_by_id = {item.candidate_id: item for item in judge_output.judgements}
     rejected_ids = {item.candidate_id for item in judge_output.rejected}
@@ -261,8 +277,14 @@ def _with_judge_reason(match, judgement):
     group_label = _group_label(judgement.group)
     fit_label = _fit_type_label(judgement.fit_type)
     reason = f"语义裁判：{judgement.relevance} / {fit_label} / {group_label}"
+    category_label = _category_compatibility_label(getattr(judgement, "category_semantic_compatibility", ""))
+    if category_label:
+        reason = f"{reason} / 分类语义：{category_label}"
     if judgement.reason:
         reason = f"{reason}；{judgement.reason}"
+    category_reason = str(getattr(judgement, "category_compatibility_reason", "") or "").strip()
+    if category_reason:
+        reason = f"{reason}；分类依据：{category_reason}"
     if judgement.violations:
         reason = f"{reason}；违例：{', '.join(judgement.violations[:3])}"
     previous = str(getattr(match, "rank_reason", "") or "").strip()
@@ -293,17 +315,38 @@ def _fit_type_label(fit_type: str) -> str:
     return labels.get(str(fit_type), str(fit_type))
 
 
+def _category_compatibility_label(value: str) -> str:
+    labels = {
+        "compatible": "兼容",
+        "ambiguous": "不确定",
+        "incompatible": "不兼容",
+        "not_applicable": "",
+    }
+    return labels.get(str(value), "")
+
+
 def _judge_summary(judge_output) -> dict[str, object]:
     fit_counts = {"direct_match": 0, "support_context": 0, "off_scope": 0, "uncertain": 0}
+    category_compatibility_counts = {
+        "compatible": 0,
+        "ambiguous": 0,
+        "incompatible": 0,
+        "not_applicable": 0,
+    }
     judgements = []
     for item in judge_output.judgements:
         fit_counts[item.fit_type] = fit_counts.get(item.fit_type, 0) + 1
+        category_compatibility_counts[item.category_semantic_compatibility] = (
+            category_compatibility_counts.get(item.category_semantic_compatibility, 0) + 1
+        )
         judgements.append(
             {
                 "candidate_id": item.candidate_id,
                 "relevance": item.relevance,
                 "fit_type": item.fit_type,
                 "group": item.group,
+                "category_semantic_compatibility": item.category_semantic_compatibility,
+                "category_compatibility_reason": item.category_compatibility_reason,
                 "reason": item.reason,
                 "evidence": item.evidence,
                 "violations": item.violations,
@@ -313,6 +356,7 @@ def _judge_summary(judge_output) -> dict[str, object]:
         "status": judge_output.status,
         "used_llm": judge_output.used_llm,
         "fit_counts": fit_counts,
+        "category_compatibility_counts": category_compatibility_counts,
         "judgements": judgements,
         "groups": [
             {

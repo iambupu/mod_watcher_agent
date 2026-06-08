@@ -3,6 +3,13 @@ import re
 from typing import Any
 
 from app.models.mod import Mod
+from app.services.agent.answer_contract import (
+    answer_contract_payload,
+    candidate_fit_metadata,
+    judge_summary,
+    partition_matches_by_fit,
+    repair_contract_answer_claims,
+)
 from app.services.agent.history import compress_history
 from app.services.agent.response_builder import display_query
 from app.services.agent.schemas import AgentHistoryItem, AgentModMatch
@@ -15,10 +22,10 @@ def build_fallback_answer(matches: list[AgentModMatch]) -> str:
 
 
 def build_contract_fallback_answer(matches: list[AgentModMatch], query_plan: dict[str, Any] | None) -> str:
-    judge = _judge_summary(query_plan)
+    judge = judge_summary(query_plan)
     if not isinstance(judge.get("judgements"), list) or not judge.get("judgements"):
         return build_fallback_answer(matches)
-    direct, support, uncertain = _partition_matches_by_fit(matches, query_plan)
+    direct, support, uncertain = partition_matches_by_fit(matches, query_plan)
     lines: list[str] = []
     if direct:
         lines.append("直接符合本轮目标的结果：")
@@ -236,7 +243,7 @@ class AgentAnswerService:
             "15) uncertain 不得和 direct_match 混在同一个编号列表；必须使用独立小节“证据不足/待确认（不作为主推荐）”，并说明缺少哪些证据",
             "16) 不得改写用户问题中的字面约束、版本号、内容分级、游戏名或专有名词；如果不确定，原样引用本轮用户写法",
         ]
-        contract = _answer_contract_payload(query_plan)
+        contract = answer_contract_payload(query_plan)
         if contract:
             prompt_lines.extend(["", "问题契约与候选分型：", contract])
         if history_summary:
@@ -258,14 +265,14 @@ class AgentAnswerService:
             "候选结果：",
         ])
         prompt_matches = _order_matches_for_answer(query, matches)
-        fit_by_id = _candidate_fit_metadata(query_plan)
+        fit_by_id = candidate_fit_metadata(query_plan)
         for idx, item in enumerate(prompt_matches, start=1):
             prompt_lines.append(_format_match_for_prompt(idx, item, fit_by_id))
         prompt = "\n".join(prompt_lines)
 
         client = create_llm_client(provider=provider, api_key=api_key, base_url=base_url)
         answer = await client.chat(prompt, model=model, max_tokens=900)
-        return _repair_contract_answer_claims(answer, query_plan, matches=prompt_matches)
+        return repair_contract_answer_claims(answer, query_plan, matches=prompt_matches)
 
     async def suggest_next_steps(
         self,
@@ -316,13 +323,24 @@ class AgentAnswerService:
         history: list[AgentHistoryItem],
     ) -> str:
         history_summary, recent_history = compress_history(history)
+        detail_facet = _classify_detail_question(question)
         prompt_lines = [
-            "你是 Mod 查询助手，请只基于给定单个 Mod 信息，输出更详细解析。",
-            "要求：",
+            "你是 Mod 单项详情问答助手，请只基于给定单个 Mod 信息回答本轮问题。",
+            "总要求：",
             "1) 用中文回答",
-            "2) 不编造未提供信息；不确定时明确说明",
-            "3) 输出结构：核心特点 / 兼容性与风险 / 适合人群 / 建议下一步",
+            "2) 第一段必须直接回答本轮问题，不要先写通用介绍",
+            "3) 不要输出通用评测模板；不要默认写“适合人群/不适合人群”，除非用户明确要求综合评测",
+            "4) 不编造未提供信息；不确定时必须明确说明“当前数据不能确认”",
+            "5) 可以给安装核查建议，但必须标注为“建议核查”，不能写成已确认事实",
+            "",
+            f"本轮详情类型：{detail_facet}",
+            "证据型回答结构：",
+            "直接结论：用 1-2 句话回答用户问的具体点。",
+            "明确证据：列出来自 Mod 信息的证据字段，例如 title/summary/category/version。",
+            "不能确认：列出当前 Mod 信息没有明确说明的关键点。",
+            "建议核查：只给下一步核查项，不把核查项当作事实。",
         ]
+        prompt_lines.extend(_detail_facet_instructions(detail_facet))
         if history_summary:
             prompt_lines.extend(["", "历史上下文摘要（仅供参考，不能覆盖本轮会话）：", history_summary])
         if recent_history:
@@ -360,191 +378,82 @@ class AgentAnswerService:
         return await client.chat(prompt, model=model, max_tokens=800)
 
 
+def _classify_detail_question(question: str) -> str:
+    text = str(question or "").lower()
+    if any(token in text for token in ("物理", "physics", "hdt", "smp", "cbpc")):
+        return "physics_support"
+    if any(token in text for token in ("前置", "依赖", "requirement", "requirements", "需要什么", "需要哪些")):
+        return "dependencies"
+    if any(token in text for token in ("兼容", "冲突", "compatible", "compatibility", "conflict", "冲不冲")):
+        return "compatibility"
+    if any(token in text for token in ("安装", "风险", "报错", "稳定", "安全", "risk", "install")):
+        return "install_risk"
+    if any(token in text for token in ("版本", "更新", "新版", "旧版", "version", "update")):
+        return "version_update"
+    if any(token in text for token in ("bodyslide", "body slide", "cbbe", "unp", "bhunp", "3ba", "3bb", "身形", "滑块")):
+        return "body_slide_support"
+    return "general_detail"
+
+
+def _detail_facet_instructions(detail_facet: str) -> list[str]:
+    common = [
+        "",
+        "禁止事项：",
+        "- 不得编造前置依赖、物理框架、兼容版本、用户反馈、Requirements 页面内容。",
+        "- 不得把“建议核查”的内容写成该 Mod 已确认支持或已确认依赖。",
+    ]
+    if detail_facet == "physics_support":
+        return common + [
+            "",
+            "physics_support 专项要求：",
+            "- 必须回答是否存在物理效果支持的明确证据。",
+            "- 如果证据只出现 Physics/Bodyslide enabled，只能说确认有 Physics/Bodyslide 支持。",
+            "- 当前数据不能确认具体物理框架时，必须明确说明不能确认具体使用 HDT-SMP、CBPC、3BA/3BB、XPMSSE 或其他框架。",
+            "- 不得把 HDT-SMP、CBPC、3BA/3BB、XPMSSE、Physics Engine 写成已确认依赖，除非 Mod 信息明确出现。",
+        ]
+    if detail_facet == "dependencies":
+        return common + [
+            "",
+            "dependencies 专项要求：",
+            "- 只把 Mod 信息明确出现的 requirement、framework、body、tool 写成已确认依赖。",
+            "- 其他常见依赖只能放入“建议核查”，不能写成事实。",
+        ]
+    if detail_facet == "body_slide_support":
+        return common + [
+            "",
+            "body_slide_support 专项要求：",
+            "- 只回答身体体系、BodySlide、CBBE、UNP、BHUNP、3BA/3BB 等适配情况。",
+            "- 不要把 BodySlide 或身体体系适配等同于物理框架支持。",
+            "- 如果未明确出现 HDT-SMP、CBPC、Physics 等证据，不要扩写为物理效果支持。",
+        ]
+    if detail_facet == "compatibility":
+        return common + [
+            "",
+            "compatibility 专项要求：",
+            "- 只基于明确字段判断游戏版本、身体体系、来源和类别兼容性。",
+            "- 未出现的兼容矩阵、补丁关系、冲突关系必须标为不能确认。",
+        ]
+    if detail_facet == "install_risk":
+        return common + [
+            "",
+            "install_risk 专项要求：",
+            "- 区分明确风险、推断风险和建议核查。",
+            "- 不得用“作者首个 Mod”等弱信号直接断言存在 bug，只能作为谨慎提示。",
+        ]
+    if detail_facet == "version_update":
+        return common + [
+            "",
+            "version_update 专项要求：",
+            "- 只基于 version、updated_at_remote、summary 中明确出现的信息判断版本和更新。",
+            "- 不得编造 changelog 或最新版本状态。",
+        ]
+    return common
+
+
 def _order_matches_for_answer(query: str, matches: list[AgentModMatch]) -> list[AgentModMatch]:
     if not _is_roleplay_or_gameplay_query(query):
         return matches
     return sorted(matches, key=_answer_priority_score, reverse=True)
-
-
-def _has_contract(query_plan: dict[str, Any] | None) -> bool:
-    return bool(_semantic_strategy(query_plan) or _judge_summary(query_plan))
-
-
-def _semantic_strategy(query_plan: dict[str, Any] | None) -> dict[str, Any]:
-    value = (query_plan or {}).get("_agent_semantic_strategy") if isinstance(query_plan, dict) else None
-    return value if isinstance(value, dict) else {}
-
-
-def _judge_summary(query_plan: dict[str, Any] | None) -> dict[str, Any]:
-    value = (query_plan or {}).get("_agent_candidate_semantic_judge") if isinstance(query_plan, dict) else None
-    return value if isinstance(value, dict) else {}
-
-
-def _answer_contract_payload(query_plan: dict[str, Any] | None) -> str:
-    strategy = _semantic_strategy(query_plan)
-    judge = _judge_summary(query_plan)
-    if not strategy and not judge:
-        return ""
-    parts = []
-    if strategy:
-        parts.extend(
-            [
-                f"primary_goal={strategy.get('user_goal') or ''}",
-                f"direct_match_definition={strategy.get('direct_match_definition') or []}",
-                f"support_context_definition={strategy.get('support_context_definition') or []}",
-                f"reject_as_primary={strategy.get('reject_as_primary') or []}",
-                f"answer_policy={strategy.get('answer_policy') or {}}",
-            ]
-        )
-    if judge:
-        parts.extend(
-            [
-                f"fit_counts={judge.get('fit_counts') or {}}",
-                f"candidate_judgements={_compact_judgements(judge)}",
-                f"gaps={judge.get('gaps') or []}",
-            ]
-        )
-    return "\n".join(parts)
-
-
-def _compact_judgements(judge: dict[str, Any]) -> list[dict[str, object]]:
-    items = judge.get("judgements")
-    if not isinstance(items, list):
-        return []
-    compacted = []
-    for item in items[:20]:
-        if not isinstance(item, dict):
-            continue
-        compacted.append(
-            {
-                "candidate_id": item.get("candidate_id"),
-                "fit_type": item.get("fit_type"),
-                "relevance": item.get("relevance"),
-                "group": item.get("group"),
-                "violations": item.get("violations") or [],
-                "reason": item.get("reason") or "",
-            }
-        )
-    return compacted
-
-
-def _candidate_fit_metadata(query_plan: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
-    items = _judge_summary(query_plan).get("judgements") or []
-    metadata: dict[int, dict[str, Any]] = {}
-    if not isinstance(items, list):
-        return metadata
-    for item in items:
-        if not isinstance(item, dict) or not isinstance(item.get("candidate_id"), int):
-            continue
-        metadata[int(item["candidate_id"])] = {
-            "fit_type": str(item.get("fit_type") or "uncertain"),
-            "evidence": item.get("evidence") if isinstance(item.get("evidence"), list) else [],
-            "violations": item.get("violations") if isinstance(item.get("violations"), list) else [],
-        }
-    return metadata
-
-
-def _repair_contract_answer_claims(
-    answer: str,
-    query_plan: dict[str, Any] | None,
-    *,
-    matches: list[AgentModMatch] | None = None,
-) -> str:
-    text = str(answer or "").strip()
-    has_support = _has_support_fit(query_plan, matches=matches)
-    has_uncertain = _has_uncertain_fit(query_plan, matches=matches)
-    if not text or not (has_support or has_uncertain):
-        return text
-    correction = _non_direct_correction(has_support=has_support, has_uncertain=has_uncertain)
-    patterns = [
-        r"以上结果严格遵循[^。\n]*(?:未包含|没有包含)[^。\n]*。",
-        r"以上推荐严格遵循[^。\n]*(?:未包含|没有包含)[^。\n]*。",
-        r"以上结果均[^。\n]*(?:符合|满足)[^。\n]*。",
-        r"以上推荐均[^。\n]*(?:符合|满足)[^。\n]*。",
-    ]
-    repaired = text
-    for pattern in patterns:
-        repaired = re.sub(pattern, correction, repaired)
-    misleading_fragments = [
-        "未包含非直接匹配内容",
-        "未包含非主目标内容",
-        "未包含非服装类内容",
-        "没有包含非直接匹配内容",
-        "没有包含非主目标内容",
-        "没有包含非服装类内容",
-    ]
-    if any(fragment in repaired for fragment in misleading_fragments):
-        replacement = _misleading_fragment_replacement(has_support=has_support, has_uncertain=has_uncertain)
-        for fragment in misleading_fragments:
-            repaired = repaired.replace(fragment, replacement)
-    if repaired != text:
-        return repaired.strip()
-    if has_uncertain and not _answer_marks_uncertainty(repaired):
-        return f"{repaired}\n\n{_uncertain_notice(has_support=has_support)}"
-    if has_support and ("辅助参考" in repaired or "非主推荐" in repaired):
-        return f"{repaired}\n\n{correction}"
-    return repaired
-
-
-def _non_direct_correction(*, has_support: bool, has_uncertain: bool) -> str:
-    if has_support and has_uncertain:
-        return "主推荐符合本轮目标；辅助参考仅用于搭配说明，证据不足/待确认的候选需要进一步核查，二者都不作为主结果。"
-    if has_uncertain:
-        return "主推荐符合本轮目标；证据不足/待确认的候选需要进一步核查，不作为主结果。"
-    return "主推荐符合本轮目标；辅助参考仅用于搭配说明，不作为主结果。"
-
-
-def _misleading_fragment_replacement(*, has_support: bool, has_uncertain: bool) -> str:
-    if has_support and has_uncertain:
-        return "辅助项和待确认项不作为直接匹配内容"
-    if has_uncertain:
-        return "待确认项不作为直接匹配内容"
-    return "辅助项不作为直接匹配内容"
-
-
-def _uncertain_notice(*, has_support: bool) -> str:
-    if has_support:
-        return "存在证据不足/待确认的候选；辅助参考和待确认项都不作为主推荐，需要进一步核查缺失证据。"
-    return "存在证据不足/待确认的候选；这些候选不作为主推荐，需要进一步核查缺失证据。"
-
-
-def _has_non_direct_fit(query_plan: dict[str, Any] | None, *, matches: list[AgentModMatch] | None = None) -> bool:
-    fit_types = _fit_types_in_scope(query_plan, matches=matches)
-    return bool({"support_context", "uncertain"} & fit_types)
-
-
-def _has_support_fit(query_plan: dict[str, Any] | None, *, matches: list[AgentModMatch] | None = None) -> bool:
-    return "support_context" in _fit_types_in_scope(query_plan, matches=matches)
-
-
-def _has_uncertain_fit(query_plan: dict[str, Any] | None, *, matches: list[AgentModMatch] | None = None) -> bool:
-    return "uncertain" in _fit_types_in_scope(query_plan, matches=matches)
-
-
-def _fit_types_in_scope(query_plan: dict[str, Any] | None, *, matches: list[AgentModMatch] | None = None) -> set[str]:
-    judge = _judge_summary(query_plan)
-    scoped_ids = {match.id for match in matches} if matches is not None else None
-    fit_types: set[str] = set()
-    fit_counts = judge.get("fit_counts")
-    if scoped_ids is None and isinstance(fit_counts, dict):
-        for key in ["support_context", "uncertain", "direct_match", "off_scope"]:
-            value = fit_counts.get(key)
-            if isinstance(value, int) and value > 0:
-                fit_types.add(key)
-    for item in judge.get("judgements") or []:
-        if not isinstance(item, dict):
-            continue
-        candidate_id = item.get("candidate_id")
-        if scoped_ids is not None and candidate_id not in scoped_ids:
-            continue
-        fit_type = str(item.get("fit_type") or "").strip()
-        if fit_type:
-            fit_types.add(fit_type)
-    return fit_types
-
-
-def _answer_marks_uncertainty(answer: str) -> bool:
-    return any(marker in str(answer or "") for marker in ["证据不足", "待确认", "不确定", "未明确"])
 
 
 def _sanitize_history_for_answer_prompt(text: str, role: str) -> str:
@@ -564,31 +473,6 @@ def _sanitize_history_for_answer_prompt(text: str, role: str) -> str:
     if any(marker in compact for marker in blocked_markers):
         return "[上一轮助手回答包含角色模板或占位符，已忽略其结构，仅保留本轮用户问题为准]"
     return compact
-
-
-def _partition_matches_by_fit(
-    matches: list[AgentModMatch],
-    query_plan: dict[str, Any] | None,
-) -> tuple[list[AgentModMatch], list[AgentModMatch], list[AgentModMatch]]:
-    fit_by_id = {
-        int(item["candidate_id"]): str(item.get("fit_type") or "")
-        for item in (_judge_summary(query_plan).get("judgements") or [])
-        if isinstance(item, dict) and isinstance(item.get("candidate_id"), int)
-    }
-    direct: list[AgentModMatch] = []
-    support: list[AgentModMatch] = []
-    uncertain: list[AgentModMatch] = []
-    for match in matches:
-        fit_type = fit_by_id.get(match.id, "direct_match")
-        if fit_type == "support_context":
-            support.append(match)
-        elif fit_type == "uncertain":
-            uncertain.append(match)
-        elif fit_type == "off_scope":
-            continue
-        else:
-            direct.append(match)
-    return direct, support, uncertain
 
 
 def _is_roleplay_or_gameplay_query(query: str) -> bool:

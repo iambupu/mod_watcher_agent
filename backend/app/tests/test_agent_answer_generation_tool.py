@@ -2,6 +2,7 @@ import logging
 
 import pytest
 
+from app.models.mod import Mod
 from app.services.agent import answer_service as answer_service_module
 from app.services.agent.answer_service import AgentAnswerService, parse_next_steps
 from app.services.agent.schemas import AgentHistoryItem, AgentModMatch
@@ -25,6 +26,95 @@ def _match(title: str = "Stable Bimbo Preset") -> AgentModMatch:
         score=12,
         original_summary="A stable conservative bimbo transformation preset.",
     )
+
+
+def test_detail_question_classifier_separates_bodyslide_from_physics():
+    assert (
+        answer_service_module._classify_detail_question("这个 Mod 的 Bodyslide 支持怎么样？")
+        == "body_slide_support"
+    )
+    assert (
+        answer_service_module._classify_detail_question("这个 Mod 的物理效果支持怎么样？")
+        == "physics_support"
+    )
+    assert (
+        answer_service_module._classify_detail_question("这个 Mod 的 Bodyslide 前置依赖是什么？")
+        == "dependencies"
+    )
+    assert (
+        answer_service_module._classify_detail_question("这个 Mod 兼容 CBBE 吗？")
+        == "compatibility"
+    )
+
+
+@pytest.mark.asyncio
+async def test_answer_detail_physics_prompt_requires_evidence_boundaries(monkeypatch):
+    prompts = []
+
+    class FakeClient:
+        async def chat(self, prompt, *, model, max_tokens):
+            prompts.append(prompt)
+            assert model == "model"
+            assert max_tokens == 800
+            return "physics answer"
+
+    def fake_create_llm_client(provider, api_key, base_url):
+        assert provider == "test"
+        assert api_key == "key"
+        assert base_url == "base"
+        return FakeClient()
+
+    monkeypatch.setattr(answer_service_module, "create_llm_client", fake_create_llm_client)
+    mod = Mod(
+        title="Les Sucettes Outfit CBBE Bodyslide with Physics",
+        source="nexusmods",
+        game="Skyrim Special Edition",
+        game_domain="skyrimspecialedition",
+        category="Clothing and Accessories",
+        adult_content=True,
+        downloads=123,
+        endorsements=45,
+        likes=0,
+        author="Zynx",
+        version="1.1",
+        url="https://example.com/mod",
+    )
+    match = AgentModMatch(
+        id=1,
+        title=mod.title,
+        source=mod.source,
+        game=mod.game,
+        category=mod.category,
+        author=mod.author,
+        version=mod.version,
+        url=mod.url,
+        updated_at_remote=None,
+        adult_content=True,
+        score=100,
+        original_summary="CBBE SSE outfit conversion with Bodyslide and Physics enabled.",
+        translated_summary="CBBE SSE 服装转换，启用 Bodyslide 和物理效果。",
+    )
+
+    answer = await AgentAnswerService().answer_detail(
+        mod=mod,
+        match=match,
+        question="Les Sucettes Outfit CBBE Bodyslide with Physics的物理效果支持情况如何?",
+        provider="test",
+        api_key="key",
+        base_url="base",
+        model="model",
+        history=[],
+    )
+
+    assert answer == "physics answer"
+    prompt = prompts[0]
+    assert "本轮详情类型：physics_support" in prompt
+    assert "第一段必须直接回答本轮问题" in prompt
+    assert "不要输出通用评测模板" in prompt
+    assert "当前数据不能确认具体" in prompt
+    assert "HDT-SMP、CBPC、3BA/3BB、XPMSSE" in prompt
+    assert "不得把 HDT-SMP、CBPC、3BA/3BB、XPMSSE、Physics Engine 写成已确认依赖" in prompt
+    assert "适合人群/不适合人群" in prompt
 
 
 @pytest.mark.asyncio
@@ -87,6 +177,66 @@ async def test_answer_generation_tool_uses_intent_fallback_when_llm_unavailable(
     assert output.used_llm is False
     assert output.reason == "llm_unavailable"
     assert "更推荐：Stable Bimbo Preset" in output.answer
+
+
+@pytest.mark.asyncio
+async def test_answer_generation_self_correction_fallback_blocks_direct_recommendations():
+    output = await AnswerGenerationTool().run(
+        AnswerGenerationInput(
+            query="只看女性服装",
+            query_plan={
+                "_agent_self_correction_trace": {
+                    "final_status": "fallback",
+                    "rounds": [
+                        {
+                            "action": "fallback_no_direct_match",
+                            "review_status": "invalid",
+                            "reason_summary": "候选包含非服装或被排除类型",
+                            "gaps": ["candidate classifier error"],
+                        }
+                    ],
+                }
+            },
+            matches=[_match("SexLab to Ostim")],
+            llm_available=True,
+        )
+    )
+
+    assert output.used_llm is False
+    assert output.reason == "self_correction_no_direct"
+    assert "没有足够明确的直接命中项" in output.answer
+    assert "不能安全作为主推荐" in output.answer
+    assert "待复核候选" in output.answer
+    assert "SexLab to Ostim" in output.answer
+
+
+@pytest.mark.asyncio
+async def test_answer_generation_self_correction_unavailable_does_not_block_fallback_answer():
+    output = await AnswerGenerationTool().run(
+        AnswerGenerationInput(
+            query="只看女性服装",
+            query_plan={
+                "intent": "search",
+                "_agent_self_correction_trace": {
+                    "final_status": "llm_review_unavailable",
+                    "rounds": [
+                        {
+                            "action": "fallback_no_direct_match",
+                            "review_status": "unavailable",
+                            "reason_summary": "LLM review unavailable",
+                        }
+                    ],
+                },
+            },
+            matches=[_match("Stable Outfit")],
+            llm_available=False,
+        )
+    )
+
+    assert output.used_llm is False
+    assert output.reason == "llm_unavailable"
+    assert "找到以下相关 Mod" in output.answer
+    assert "Stable Outfit" in output.answer
 
 
 @pytest.mark.asyncio
