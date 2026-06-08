@@ -9,13 +9,11 @@ load_dotenv()
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     raw = os.getenv(name)
     return parse_bool(raw, default=default)
 
 
 def _env_list(name: str, default: str) -> list[str]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     return [
         item.strip()
         for item in os.getenv(name, default).split(",")
