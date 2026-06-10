@@ -105,6 +105,11 @@ def test_fts_triggers_index_new_mods_and_summary_updates(session):
 
     title_results = query_mods_fts(session, keywords=["Late Imported"], filters={}, limit=5)
     assert [item.mod.id for item in title_results] == [mod.id]
+    fts_row = session.execute(
+        text("SELECT rowid, mod_id FROM mods_fts WHERE mod_id = :mod_id"),
+        {"mod_id": mod.id},
+    ).mappings().one()
+    assert int(fts_row["rowid"]) == mod.id
 
     session.add(
         ModSummary(
@@ -120,6 +125,11 @@ def test_fts_triggers_index_new_mods_and_summary_updates(session):
 
     summary_results = query_mods_fts(session, keywords=["晚礼服"], filters={}, limit=5)
     assert [item.mod.id for item in summary_results] == [mod.id]
+    refreshed_fts_row = session.execute(
+        text("SELECT rowid, mod_id FROM mods_fts WHERE mod_id = :mod_id"),
+        {"mod_id": mod.id},
+    ).mappings().one()
+    assert int(refreshed_fts_row["rowid"]) == mod.id
 
 
 def test_fts_needs_rebuild_when_schema_exists_but_index_is_empty(session):

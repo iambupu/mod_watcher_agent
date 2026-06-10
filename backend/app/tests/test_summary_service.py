@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -11,6 +12,7 @@ from app.jobs.generate_summaries import (
 from app.models.mod import Mod
 from app.models.summary import ModSummary
 from app.services.summary_service import (
+    SUMMARY_BATCH_LOCK,
     SUMMARY_BRIEF_LLM_TIMEOUT_SECONDS,
     SUMMARY_BRIEF_MAX_TOKENS,
     SUMMARY_BRIEF_REASONING_RETRY_MAX_TOKENS,
@@ -155,6 +157,42 @@ async def test_generate_missing_summaries_report_stops_when_requested(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_generate_missing_summaries_report_waits_for_generation_lock(monkeypatch):
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+    generated_ids: list[int] = []
+
+    async def fake_generate_summary(self, mod_id: int, **kwargs):  # noqa: ARG001
+        generated_ids.append(mod_id)
+        return {"content": "ok", "model": "test"}
+
+    monkeypatch.setattr(SummaryService, "generate_summary", fake_generate_summary)
+
+    with Session(engine) as session:
+        mod = _make_mod("batch-generation-lock")
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        mod_id = mod.id
+
+        async with SUMMARY_GENERATION_LOCK:
+            task = asyncio.create_task(
+                SummaryService(session).generate_missing_summaries_report(
+                    language="zh-CN",
+                    max_items=1,
+                )
+            )
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert generated_ids == []
+
+        report = await task
+
+    assert report["generated"] == 1
+    assert generated_ids == [mod_id]
+
+
+@pytest.mark.asyncio
 async def test_generate_missing_summaries_report_retries_invalid_existing_translation(monkeypatch):
     engine = _make_engine()
     SQLModel.metadata.create_all(engine)
@@ -273,6 +311,75 @@ async def test_generate_chinese_brief_summary_persists_translated_title(monkeypa
     assert updated.translated_title_zh == "天际服装包"
     assert summary is not None
     assert summary.content == "增加一套适合天际的服装。"
+
+
+@pytest.mark.asyncio
+async def test_generate_chinese_brief_summary_skips_unchanged_writes(monkeypatch):
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+
+    class FakeClient:
+        async def chat(
+            self,
+            prompt: str,  # noqa: ARG002
+            model: str,  # noqa: ARG002
+            max_tokens: int = 1024,  # noqa: ARG002
+            request_timeout: float | None = None,  # noqa: ARG002
+        ):
+            return '{"translated_title_zh":"稳定标题","translated_summary":"稳定摘要"}'
+
+    monkeypatch.setattr(
+        SummaryService,
+        "_get_provider_chain",
+        lambda self: _provider_chain("openai", "test-model"),
+    )
+    monkeypatch.setattr("app.services.summary_service.create_llm_client", lambda *args: FakeClient())
+
+    with Session(engine) as session:
+        mod = _make_mod("unchanged-translation")
+        mod.title = "Test Mod"
+        mod.original_summary = "Original summary"
+        mod.translated_title_zh = "稳定标题"
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        summary = ModSummary(
+            mod_id=mod.id or 0,
+            language="zh-CN",
+            summary_type="brief",
+            content="稳定摘要",
+            model="test-model",
+            generated_at="2026-05-30T00:00:00",
+        )
+        session.add(summary)
+        session.commit()
+        session.refresh(summary)
+
+        statements: list[str] = []
+
+        def capture_sql(conn, cursor, statement, parameters, context, executemany):  # noqa: ARG001
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", capture_sql)
+        try:
+            result = await SummaryService(session).generate_summary(
+                mod.id or 0,
+                language="zh-CN",
+                summary_type="brief",
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", capture_sql)
+
+        reloaded_summary = session.get(ModSummary, summary.id)
+        reloaded_mod = session.get(Mod, mod.id)
+
+    assert result["content"] == "稳定摘要"
+    assert reloaded_summary is not None
+    assert reloaded_summary.generated_at == "2026-05-30T00:00:00"
+    assert reloaded_mod is not None
+    assert reloaded_mod.translated_title_zh == "稳定标题"
+    assert not any(statement.lstrip().upper().startswith("UPDATE MOD_SUMMARIES") for statement in statements)
+    assert not any(statement.lstrip().upper().startswith("UPDATE MODS") for statement in statements)
 
 
 @pytest.mark.asyncio
@@ -712,5 +819,38 @@ async def test_generate_single_summary_payload_locked_waits_for_summary_lock(mon
         result = await task
 
     assert result["items_scanned"] == 1
+    assert result["items_matched"] == 1
+    assert generated_ids == [mod.id]
+
+
+@pytest.mark.asyncio
+async def test_generate_single_summary_payload_locked_does_not_wait_for_batch_lock(monkeypatch):
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+    generated_ids: list[int] = []
+
+    async def fake_generate_summary(self, mod_id: int, **kwargs):  # noqa: ARG001
+        generated_ids.append(mod_id)
+        return {"content": "中文摘要", "model": "test-model", "provider": "test"}
+
+    monkeypatch.setattr(SummaryService, "generate_summary", fake_generate_summary)
+
+    with Session(engine) as session:
+        mod = _make_mod("batch-lock-single")
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+
+        async with SUMMARY_BATCH_LOCK:
+            result = await asyncio.wait_for(
+                generate_single_summary_payload_locked(
+                    session,
+                    mod_id=mod.id or 0,
+                    language="zh-CN",
+                    summary_type="brief",
+                ),
+                timeout=0.5,
+            )
+
     assert result["items_matched"] == 1
     assert generated_ids == [mod.id]

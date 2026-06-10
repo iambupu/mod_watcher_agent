@@ -11,7 +11,7 @@ from app.jobs.tracked_jobs import run_tracked_job, safe_job_count
 from app.models.job_run import JobRun
 from app.services.llm_provider_config import get_provider_chain, resolve_provider_config
 from app.services.settings_service import SettingsService
-from app.services.summary_service import SUMMARY_GENERATION_LOCK, SummaryService
+from app.services.summary_service import SUMMARY_BATCH_LOCK, SUMMARY_GENERATION_LOCK, SummaryService
 
 logger = logging.getLogger(__name__)
 SUMMARY_BATCH_SIZE = 5
@@ -58,7 +58,7 @@ async def generate_summaries(
     Returns:
         A dict with the count of summaries generated.
     """
-    if SUMMARY_GENERATION_LOCK.locked():
+    if SUMMARY_BATCH_LOCK.locked():
         logger.info("Summary generation already running; recording skipped duplicate request")
 
         async def skipped_handler(session: Session) -> dict:  # noqa: ARG001
@@ -75,7 +75,7 @@ async def generate_summaries(
             return await run_tracked_job("llm_generate_summaries", skipped_handler)
         return await skipped_handler(None)  # type: ignore[arg-type]
 
-    async with SUMMARY_GENERATION_LOCK:
+    async with SUMMARY_BATCH_LOCK:
         async def handler(session: Session) -> dict:
             """处理当前模块的业务逻辑并返回结果。"""
             service = SummaryService(session)
@@ -108,7 +108,7 @@ async def generate_summaries(
 
 async def run_missing_summaries_job(mod_ids: list[int], language: str) -> None:
     """执行任务流程并返回结果。"""
-    if SUMMARY_GENERATION_LOCK.locked():
+    if SUMMARY_BATCH_LOCK.locked():
         async def skipped_handler(session: Session) -> dict:  # noqa: ARG001
             return {
                 "items_scanned": 0,
@@ -128,7 +128,7 @@ async def run_missing_summaries_job(mod_ids: list[int], language: str) -> None:
             metadata={"language": language, "mod_ids": mod_ids, "skipped": True},
         )
         return
-    async with SUMMARY_GENERATION_LOCK:
+    async with SUMMARY_BATCH_LOCK:
         async def handler(session: Session) -> dict:
             """处理当前模块的业务逻辑并返回结果。"""
             service = SummaryService(session)

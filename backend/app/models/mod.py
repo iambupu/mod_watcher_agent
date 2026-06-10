@@ -11,6 +11,13 @@ class Mod(SQLModel, table=True):
         Index("ix_mods_ignored_downloads", "ignored", "downloads"),
         Index("ix_mods_ignored_endorsements", "ignored", "endorsements"),
         Index("ix_mods_ignored_updated_at_remote", "ignored", "updated_at_remote"),
+        Index(
+            "ix_mods_ignored_downloads_endorsements_first_seen_at",
+            "ignored",
+            "downloads",
+            "endorsements",
+            "first_seen_at",
+        ),
         Index("ix_mods_game_ignored", "game", "ignored"),
         Index("ix_mods_game_domain_ignored", "game_domain", "ignored"),
         Index("ix_mods_source_ignored", "source", "ignored"),

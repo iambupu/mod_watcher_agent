@@ -7,7 +7,6 @@ from sqlmodel import Session
 from app.db import get_session
 from app.services.agent import conversation_service as conversations
 from app.services.agent.chat_service import AgentService
-from app.services.agent.runtime import AgentRuntime
 from app.services.agent.schemas import (
     AgentChatRequest,
     AgentChatResponse,
@@ -63,7 +62,7 @@ async def ask_mod_detail(
     session: SessionDep,
 ):
     """处理当前模块的业务逻辑并返回结果。"""
-    return await AgentRuntime(session).ask_mod_detail(body, request)
+    return await AgentService(session).ask_mod_detail(body, request)
 
 @router.get("/conversation-state", response_model=AgentConversationState)
 async def get_conversation_state(

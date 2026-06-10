@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.adapters.base import BaseAdapter
@@ -446,6 +447,62 @@ class TestReconcileLocalMetadataUpdates:
 
         assert service.reconcile_local_metadata_updates() == 0
         assert session.exec(select(ModUpdateEvent)).all() == []
+
+    def test_reconcile_loads_favorites_and_mods_in_bulk(self, service, mod, session, engine):
+        second_mod = Mod(
+            source="nexusmods",
+            external_id="1002",
+            game="Skyrim Special Edition",
+            game_domain="skyrimspecialedition",
+            title="Second Mod",
+            url="https://www.nexusmods.com/skyrimspecialedition/mods/1002",
+            version="1.0.0",
+            updated_at_remote="2025-01-01T00:00:00Z",
+            first_seen_at="2025-01-01T00:00:00Z",
+            last_seen_at="2025-01-01T00:00:00Z",
+        )
+        session.add(second_mod)
+        session.commit()
+        session.refresh(second_mod)
+        session.add(
+            Favorite(
+                mod_id=mod.id,
+                last_known_version=mod.version,
+                last_known_updated_at=mod.updated_at_remote,
+                created_at="2025-01-01T00:00:00Z",
+                updated_at="2025-01-01T00:00:00Z",
+            )
+        )
+        session.add(
+            Favorite(
+                mod_id=second_mod.id,
+                last_known_version=second_mod.version,
+                last_known_updated_at=second_mod.updated_at_remote,
+                created_at="2025-01-01T00:00:00Z",
+                updated_at="2025-01-01T00:00:00Z",
+            )
+        )
+        session.commit()
+        session.expire_all()
+
+        statements: list[str] = []
+
+        def capture_sql(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", capture_sql)
+        try:
+            assert service.reconcile_local_metadata_updates() == 0
+        finally:
+            event.remove(engine, "before_cursor_execute", capture_sql)
+
+        n_plus_one_shapes = [
+            statement
+            for statement in statements
+            if "WHERE mods.id = ?" in statement or "WHERE favorites.mod_id = ?" in statement
+        ]
+        assert n_plus_one_shapes == []
+        assert any("JOIN mods" in statement for statement in statements)
 
 
 class TestCheckAllFavorites:
