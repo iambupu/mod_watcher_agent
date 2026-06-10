@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.adapters.base import BaseAdapter
 from app.api import routes_rules
@@ -222,6 +222,27 @@ class TestCreateRule:
         del payload["sourceConfig"]["gameDomainName"]
         response = client.post("/api/rules", json=payload)
         assert response.status_code == 422
+
+    def test_create_rule_rolls_back_when_scheduler_registration_fails(self, engine, monkeypatch):
+        def override_get_session():
+            with Session(engine) as session:
+                yield session
+
+        def fail_register_jobs(_session: Session) -> None:
+            raise RuntimeError("scheduler unavailable")
+
+        fastapi_app.dependency_overrides[get_session] = override_get_session
+        monkeypatch.setattr(routes_rules, "register_jobs", fail_register_jobs)
+        client = TestClient(fastapi_app, raise_server_exceptions=False)
+        try:
+            response = client.post("/api/rules", json=make_nexusmods_payload())
+        finally:
+            fastapi_app.dependency_overrides.clear()
+
+        assert response.status_code == 500
+        with Session(engine) as session:
+            rules = session.exec(select(WatchRule)).all()
+        assert rules == []
 
     def test_create_loverslab_rss_requires_feed_urls(self, client):
         payload = make_loverslab_payload()

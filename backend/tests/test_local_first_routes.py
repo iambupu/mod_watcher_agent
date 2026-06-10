@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 import types
 from datetime import UTC, datetime, timedelta
 
@@ -14,6 +15,7 @@ from app.db import get_session
 from app.main import app as fastapi_app
 from app.models.agent_message import AgentMessage
 from app.models.settings import Setting
+from app.services.settings_update_service import apply_settings_update
 
 
 @pytest.fixture(name="engine")
@@ -108,6 +110,44 @@ def test_settings_rejects_token_profile_without_admin_token(
 
     assert resp.status_code == 422
     assert "MW_ADMIN_TOKEN" in resp.json()["detail"]
+
+
+def test_settings_update_invalidates_runtime_policy_cache(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.services.settings_payload_service.settings.MW_ADMIN_TOKEN", "secret-token")
+    monkeypatch.setattr(security.settings, "MW_ADMIN_TOKEN", "secret-token")
+    security._policy_cache["value"] = security.RuntimePolicy(
+        profile="local_relaxed",
+        allow_lan=False,
+        admin_token="secret-token",
+    )
+    security._policy_cache["expires_at"] = time.monotonic() + 60
+
+    resp = client.put("/api/settings", json={"settings": {"access_profile": "local_strict"}})
+
+    assert resp.status_code == 200
+    policy = security._load_runtime_policy()
+    assert policy.profile == "local_strict"
+
+
+def test_settings_update_rolls_back_when_scheduler_registration_fails(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_register_jobs(_session: Session) -> None:
+        raise RuntimeError("scheduler unavailable")
+
+    monkeypatch.setattr("app.services.settings_update_service.register_jobs", fail_register_jobs)
+
+    with pytest.raises(RuntimeError, match="scheduler unavailable"):
+        apply_settings_update(session, {"watchdog_check_interval_minutes": "9"})
+
+    row = session.exec(
+        select(Setting).where(Setting.key == "watchdog_check_interval_minutes")
+    ).first()
+    assert row is None
 
 
 def test_auto_start_updates_windows_registry_and_setting(
