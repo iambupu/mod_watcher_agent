@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.db import get_session
@@ -21,10 +23,11 @@ def _favorite_to_read(
     session: Session,
     favorite: Favorite,
     summary_by_mod: dict[int, str] | None = None,
+    mod_by_id: dict[int, Mod] | None = None,
 ) -> dict:
     """内部辅助函数，用于拆分上层流程中的局部规则。"""
     data = FavoriteRead.model_validate(favorite).model_dump()
-    mod = session.get(Mod, favorite.mod_id)
+    mod = mod_by_id.get(favorite.mod_id) if mod_by_id is not None else session.get(Mod, favorite.mod_id)
     if mod is not None:
         mod_data = mod.model_dump()
         mod_data["translated_summary"] = (summary_by_mod or {}).get(favorite.mod_id)
@@ -46,16 +49,21 @@ def _check_update_response(favorite: Favorite, event) -> dict:
 
 @router.get("", response_model=list[FavoriteRead])
 def list_favorites(
+    detail: Literal["full", "refs"] = Query(default="full"),
     session: Session = Depends(get_session),
 ):
     """List all favorites."""
     FavoriteService(session).reconcile_local_metadata_updates()
     items = session.exec(select(Favorite).order_by(Favorite.created_at.desc())).all()
+    if detail == "refs":
+        return [FavoriteRead.model_validate(item).model_dump() for item in items]
     mod_ids = [item.mod_id for item in items if item.mod_id is not None]
     summary_by_mod = load_preferred_brief_summary_map(session, mod_ids)
+    mods = session.exec(select(Mod).where(Mod.id.in_(mod_ids))).all() if mod_ids else []
+    mod_by_id = {mod.id: mod for mod in mods if mod.id is not None}
     result = []
     for item in items:
-        result.append(_favorite_to_read(session, item, summary_by_mod))
+        result.append(_favorite_to_read(session, item, summary_by_mod, mod_by_id))
     return result
 
 

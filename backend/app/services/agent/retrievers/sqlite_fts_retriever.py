@@ -127,10 +127,10 @@ def mods_fts_needs_rebuild(session: Session) -> bool:
                 SELECT 1
                 FROM mod_summaries s
                 JOIN mods m ON m.id = s.mod_id
-                LEFT JOIN mods_fts f ON f.mod_id = s.mod_id
+                LEFT JOIN mods_fts f ON f.rowid = s.mod_id
                 WHERE COALESCE(TRIM(s.content), '') != ''
                   AND (
-                    f.mod_id IS NULL
+                    f.rowid IS NULL
                     OR COALESCE(TRIM(f.translated_summary), '') = ''
                     OR instr(f.translated_summary, s.content) = 0
                   )

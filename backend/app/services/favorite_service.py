@@ -215,18 +215,18 @@ class FavoriteService:
     def reconcile_local_metadata_updates(self) -> int:
         """Backfill update events when local mod metadata advanced outside the tracker."""
         now = datetime.now(UTC).isoformat()
-        favorites = self.session.exec(select(Favorite)).all()
+        rows = self.session.exec(
+            select(Favorite, Mod).join(Mod, Favorite.mod_id == Mod.id)
+        ).all()
         created = 0
-        for favorite in favorites:
-            mod = self.session.get(Mod, favorite.mod_id)
-            if mod is None:
-                continue
+        for favorite, mod in rows:
             event = record_favorite_metadata_update(
                 self.session,
                 mod,
                 new_version=mod.version,
                 new_updated_at=mod.updated_at_remote,
                 detected_at=now,
+                favorite=favorite,
             )
             if event is not None:
                 created += 1

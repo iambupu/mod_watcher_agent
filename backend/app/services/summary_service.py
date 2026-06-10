@@ -4,6 +4,7 @@ import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from time import perf_counter
+from weakref import WeakKeyDictionary
 
 from sqlmodel import Session, select
 
@@ -20,7 +21,39 @@ from app.utils.json import json_object_from_text
 from app.utils.numeric import safe_nonnegative_int
 
 logger = logging.getLogger(__name__)
-SUMMARY_GENERATION_LOCK = asyncio.Lock()
+
+
+class LoopLocalAsyncLock:
+    def __init__(self) -> None:
+        self._locks: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = WeakKeyDictionary()
+
+    def _current_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = self._locks.get(loop)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[loop] = lock
+        return lock
+
+    def locked(self) -> bool:
+        return self._current_lock().locked()
+
+    async def acquire(self) -> bool:
+        return await self._current_lock().acquire()
+
+    def release(self) -> None:
+        self._current_lock().release()
+
+    async def __aenter__(self):
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        self.release()
+
+
+SUMMARY_GENERATION_LOCK = LoopLocalAsyncLock()
+SUMMARY_BATCH_LOCK = LoopLocalAsyncLock()
 SUMMARY_LLM_TIMEOUT_SECONDS = 60.0
 SUMMARY_BRIEF_LLM_TIMEOUT_SECONDS = 20.0
 SUMMARY_DEFAULT_MAX_TOKENS = 1024
@@ -487,10 +520,17 @@ class SummaryService:
                 )
             ).first()
 
+            changed = False
+            now = datetime.now(UTC).isoformat()
             if existing:
-                existing.content = content
-                existing.model = llm_model
-                existing.generated_at = datetime.now(UTC).isoformat()
+                if existing.content != content:
+                    existing.content = content
+                    changed = True
+                if existing.model != llm_model:
+                    existing.model = llm_model
+                    changed = True
+                if changed:
+                    existing.generated_at = now
             else:
                 summary = ModSummary(
                     mod_id=mod_id,
@@ -498,17 +538,24 @@ class SummaryService:
                     summary_type=summary_type,
                     content=content,
                     model=llm_model,
-                    generated_at=datetime.now(UTC).isoformat(),
+                    generated_at=now,
                 )
                 self.session.add(summary)
+                changed = True
 
             if chinese_brief and translated_title_zh:
                 current_mod = self.session.get(Mod, mod_id)
                 if current_mod is not None:
-                    current_mod.translated_title_zh = translated_title_zh[:512]
-                    self.session.add(current_mod)
+                    next_title = translated_title_zh[:512]
+                    if current_mod.translated_title_zh != next_title:
+                        current_mod.translated_title_zh = next_title
+                        self.session.add(current_mod)
+                        changed = True
 
-            self.session.commit()
+            if changed:
+                self.session.commit()
+            else:
+                self.session.rollback()
             return {
                 "content": content,
                 "model": llm_model,
@@ -606,9 +653,10 @@ class SummaryService:
         for mod_id in mod_ids_missing:
             if should_stop is not None and should_stop():
                 break
-            result = await self.generate_summary(
-                mod_id, language=language, summary_type="brief"
-            )
+            async with SUMMARY_GENERATION_LOCK:
+                result = await self.generate_summary(
+                    mod_id, language=language, summary_type="brief"
+                )
             if result.get("model") not in ("error", "none") and not result.get("error"):
                 count += 1
             else:

@@ -148,6 +148,27 @@ class TestFavoriteTranslatedSummary:
         assert len(items) == 1
         assert items[0]["translated_summary"] is None
 
+    def test_favorite_refs_detail_omits_embedded_mod_payload(self, client, session):
+        mod = make_mod(external_id="fav-ref-1")
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        session.add(Favorite(
+            mod_id=mod.id,
+            created_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:00",
+        ))
+        session.commit()
+
+        response = client.get("/api/favorites", params={"detail": "refs"})
+
+        assert response.status_code == 200
+        items = response.json()
+        assert len(items) == 1
+        assert items[0]["id"] is not None
+        assert items[0]["mod_id"] == mod.id
+        assert items[0]["mod"] is None
+
     def test_check_update_route_detects_update(self, client, session, monkeypatch):
         class FakeAdapter:
             def __init__(self, *args, **kwargs):
