@@ -24,6 +24,12 @@ _POLICY_CACHE_TTL_SECONDS = 15.0
 _policy_cache: dict[str, object] = {"expires_at": 0.0, "value": None}
 
 
+def invalidate_runtime_policy_cache() -> None:
+    """Discard cached runtime access policy so the next request reads current settings."""
+    _policy_cache["value"] = None
+    _policy_cache["expires_at"] = 0.0
+
+
 def _normalize_host(value: str) -> str:
     """规范化内部数据，供后续流程使用。"""
     host = (value or "").strip().lower()
@@ -33,7 +39,6 @@ def _normalize_host(value: str) -> str:
 
 
 def _host_to_ip(host: str):
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     try:
         return ip_address(host)
     except ValueError:
@@ -162,7 +167,6 @@ class AccessPolicy:
     _TOKEN_EXEMPT_PREFIXES = ("/api/auth/",)
 
     def _token_required(self, path: str) -> bool:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         if not path.startswith("/api/"):
             return False
         for prefix in self._TOKEN_EXEMPT_PREFIXES:
@@ -171,7 +175,6 @@ class AccessPolicy:
         return self.profile in ACCESS_PROFILES_REQUIRING_TOKEN
 
     def evaluate(self, request: Request) -> AccessDecision:
-        """处理当前模块的业务逻辑并返回结果。"""
         path = request.url.path or ""
         if not path.startswith("/api/"):
             return AccessDecision(allow=True)
@@ -224,7 +227,6 @@ class AccessPolicy:
 
 
 def _provider_default_base_url(provider: str) -> str:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     return provider_default_base_url(provider)
 
 
