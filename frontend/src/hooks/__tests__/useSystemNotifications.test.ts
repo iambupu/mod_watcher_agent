@@ -1,4 +1,6 @@
 import { renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/settings", () => ({
@@ -12,12 +14,23 @@ vi.mock("@/api/system-notifications", () => ({
 }));
 
 describe("useSystemNotifications", () => {
+  let queryClient: QueryClient;
+  let wrapper: ({ children }: { children: ReactNode }) => ReturnType<typeof createElement>;
+
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+    wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
     vi.clearAllMocks();
     vi.useRealTimers();
   });
 
   afterEach(() => {
+    queryClient.clear();
     vi.useRealTimers();
   });
 
@@ -36,7 +49,7 @@ describe("useSystemNotifications", () => {
     (dispatchWindowsNotifications as ReturnType<typeof vi.fn>).mockResolvedValue([1]);
 
     const { useSystemNotifications } = await import("@/hooks/useSystemNotifications");
-    const { unmount } = renderHook(() => useSystemNotifications());
+    const { unmount } = renderHook(() => useSystemNotifications(), { wrapper });
 
     await waitFor(() => {
       expect(fetchSettings).toHaveBeenCalledTimes(1);
@@ -61,7 +74,7 @@ describe("useSystemNotifications", () => {
     );
 
     const { useSystemNotifications } = await import("@/hooks/useSystemNotifications");
-    const { unmount } = renderHook(() => useSystemNotifications());
+    const { unmount } = renderHook(() => useSystemNotifications(), { wrapper });
 
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchSettings).toHaveBeenCalledTimes(1);

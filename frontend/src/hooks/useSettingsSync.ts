@@ -1,10 +1,16 @@
 import { useEffect } from 'react';
-import { fetchSettings } from '@/api/settings';
+import { useQueryClient } from '@tanstack/react-query';
 import { useUIStore } from '@/stores/uiStore';
 
 const SETTINGS_SYNC_TTL_MS = 60_000;
 
+async function fetchSettingsForSync() {
+  const { fetchSettings } = await import('@/api/settings');
+  return fetchSettings();
+}
+
 export function useSettingsSync() {
+  const queryClient = useQueryClient();
   const setSummaryMode = useUIStore((s) => s.setSummaryMode);
   const settingsSyncedAt = useUIStore((s) => s.settingsSyncedAt);
   const markSettingsSynced = useUIStore((s) => s.markSettingsSynced);
@@ -13,7 +19,11 @@ export function useSettingsSync() {
     if (settingsSyncedAt > 0 && Date.now() - settingsSyncedAt < SETTINGS_SYNC_TTL_MS) {
       return;
     }
-    fetchSettings()
+    queryClient.fetchQuery({
+      queryKey: ["settings"],
+      queryFn: fetchSettingsForSync,
+      staleTime: SETTINGS_SYNC_TTL_MS,
+    })
       .then((settings) => {
         if (settings.summaryMode) {
           setSummaryMode(settings.summaryMode);
@@ -23,5 +33,5 @@ export function useSettingsSync() {
       .catch(() => {
         // API failure — keep existing default
       });
-  }, [markSettingsSynced, setSummaryMode, settingsSyncedAt]);
+  }, [markSettingsSynced, queryClient, setSummaryMode, settingsSyncedAt]);
 }

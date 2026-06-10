@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createElement, type ReactNode } from 'react';
 import { useUIStore } from '@/stores/uiStore';
 
 vi.mock('@/api/settings', () => ({
@@ -7,7 +9,17 @@ vi.mock('@/api/settings', () => ({
 }));
 
 describe('useSettingsSync', () => {
+  let queryClient: QueryClient;
+  let wrapper: ({ children }: { children: ReactNode }) => ReturnType<typeof createElement>;
+
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+    wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
     vi.clearAllMocks();
     useUIStore.setState({ summaryMode: 'original', settingsSyncedAt: 0 });
   });
@@ -19,7 +31,7 @@ describe('useSettingsSync', () => {
     });
 
     const { useSettingsSync } = await import('@/hooks/useSettingsSync');
-    renderHook(() => useSettingsSync());
+    renderHook(() => useSettingsSync(), { wrapper });
 
     await waitFor(() => {
       expect(fetchSettings).toHaveBeenCalledTimes(1);
@@ -38,7 +50,7 @@ describe('useSettingsSync', () => {
     const { useSettingsSync } = await import('@/hooks/useSettingsSync');
 
     expect(() => {
-      renderHook(() => useSettingsSync());
+      renderHook(() => useSettingsSync(), { wrapper });
     }).not.toThrow();
 
     await waitFor(() => {
@@ -56,12 +68,12 @@ describe('useSettingsSync', () => {
     });
 
     const { useSettingsSync } = await import('@/hooks/useSettingsSync');
-    renderHook(() => useSettingsSync());
+    renderHook(() => useSettingsSync(), { wrapper });
     await waitFor(() => {
       expect(fetchSettings).toHaveBeenCalledTimes(1);
     });
 
-    renderHook(() => useSettingsSync());
+    renderHook(() => useSettingsSync(), { wrapper });
     await waitFor(() => {
       expect(useUIStore.getState().settingsSyncedAt).toBeGreaterThan(0);
     });

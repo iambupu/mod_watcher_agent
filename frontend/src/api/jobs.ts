@@ -35,6 +35,10 @@ export interface JobRunList {
   items: JobRun[];
 }
 
+export interface FetchJobRunsOptions {
+  metadata?: "full" | "dashboard";
+}
+
 export type PollJobRunResult =
   | { status: "completed"; job: JobRun }
   | { status: "cancelled" }
@@ -42,6 +46,7 @@ export type PollJobRunResult =
 
 export interface PollJobRunOptions {
   attempts?: number;
+  initialDelayMs?: number;
   intervalMs?: number;
   isActive?: () => boolean;
   onRunning?: (job: JobRun) => void;
@@ -97,10 +102,14 @@ const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve
 export async function pollJobRun(jobId: number, options: PollJobRunOptions = {}): Promise<PollJobRunResult> {
   const attempts = options.attempts ?? 60;
   const intervalMs = options.intervalMs ?? 2000;
+  const initialDelayMs = options.initialDelayMs ?? intervalMs;
   const isActive = options.isActive ?? (() => true);
 
   for (let i = 0; i < attempts; i += 1) {
-    await delay(intervalMs);
+    const waitMs = i === 0 ? initialDelayMs : intervalMs;
+    if (waitMs > 0) {
+      await delay(waitMs);
+    }
     if (!isActive()) return { status: "cancelled" };
     const job = await fetchJobRun(jobId);
     if (!isActive()) return { status: "cancelled" };
@@ -114,8 +123,11 @@ export async function pollJobRun(jobId: number, options: PollJobRunOptions = {})
   return { status: "timeout" };
 }
 
-export function fetchJobRuns(limit = 50): Promise<JobRunList> {
-  return get<JobRunList>("/jobs/runs/recent", { limit: boundedIntegerParam(limit, { min: 1, max: 200 }) })
+export function fetchJobRuns(limit = 50, options: FetchJobRunsOptions = {}): Promise<JobRunList> {
+  return get<JobRunList>("/jobs/runs/recent", {
+    limit: boundedIntegerParam(limit, { min: 1, max: 200 }),
+    ...(options.metadata ? { metadata: options.metadata } : {}),
+  })
     .then((data) => ({ items: arrayOrEmpty<JobRun>(data?.items) }));
 }
 

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useSummaryRegeneration } from "@/hooks/useSummaryRegeneration";
 import { regenerateModSummary } from "@/api/mods";
-import type { QueuedJob } from "@/api/jobs";
+import { pollJobRun, type QueuedJob } from "@/api/jobs";
 
 vi.mock("@/api/mods", () => ({
   regenerateModSummary: vi.fn(),
@@ -88,5 +88,48 @@ describe("useSummaryRegeneration", () => {
       await Promise.resolve();
     });
     expect(result.current.regeneratingSummaryIds.has(42)).toBe(false);
+  });
+
+  it("polls queued regeneration jobs immediately with a short interval", async () => {
+    vi.mocked(regenerateModSummary).mockResolvedValue({
+      status: "queued",
+      job_id: 7,
+      mod_id: 42,
+      language: "zh-CN",
+    });
+    vi.mocked(pollJobRun).mockResolvedValue({
+      status: "completed",
+      job: {
+        id: 7,
+        job_name: "llm_regenerate_summary",
+        status: "succeeded",
+        started_at: "2026-06-10T00:00:00Z",
+        items_scanned: 1,
+        items_matched: 1,
+      },
+    });
+
+    const { result } = renderHook(
+      () =>
+        useSummaryRegeneration({
+          t: (key) => key,
+          setStatus: vi.fn(),
+          primaryQueryKey: ["mods"],
+        }),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.regenerateSummary(42);
+    });
+
+    expect(pollJobRun).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        attempts: 60,
+        initialDelayMs: 0,
+        intervalMs: 500,
+      }),
+    );
   });
 });

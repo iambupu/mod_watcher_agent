@@ -42,7 +42,7 @@ import {
   unignoreMod,
 } from "@/api/mods";
 import { importNexusModsGame, pollJobRun, runDiscoveryAll } from "@/api/jobs";
-import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavorites, removeFavorite } from "@/api/favorites";
+import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavoriteRefs, removeFavorite } from "@/api/favorites";
 import { useSummaryRegeneration } from "@/hooks/useSummaryRegeneration";
 import { useUIStore } from "@/stores/uiStore";
 import { formatModSummary } from "@/utils/modSummary";
@@ -157,8 +157,8 @@ const Discover: React.FC = () => {
     queryFn: fetchModGames,
   });
   const { data: favorites = [] } = useQuery({
-    queryKey: ["favorites"],
-    queryFn: fetchFavorites,
+    queryKey: ["favorites", "refs"],
+    queryFn: fetchFavoriteRefs,
   });
 
   const favoriteByModId = useMemo(() => mapFavoritesByModId(favorites), [favorites]);
