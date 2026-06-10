@@ -28,7 +28,6 @@ class FilterService:
     def apply_filters(
         self, rule: Any, mods: list[dict], db_session: Session
     ) -> list[dict]:
-        """处理当前模块的业务逻辑并返回结果。"""
         filters = self._parse_filters(rule)
         self.rejected_reasons: dict[str, int] = {}
         self.rejected_items: list[dict] = []
@@ -140,7 +139,6 @@ class FilterService:
     def _apply_llm_filter(
         self, mods: list[dict], filters: CommonRuleFilters
     ) -> list[dict]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         if not mods:
             return []
         llm_result: Any = None
@@ -177,7 +175,6 @@ class FilterService:
     def _deduplicate(
         self, mods: list[dict], db_session: Session
     ) -> list[dict]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         if not mods:
             return []
 
@@ -233,7 +230,6 @@ class FilterService:
         stage: str,
         llm_feedback: str = "",
     ) -> None:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         self.rejected_reasons[reason] = self.rejected_reasons.get(reason, 0) + 1
         self.rejected_items.append(
             {
