@@ -1,6 +1,7 @@
 """Tests for FilterService deterministic-first + LLM-post filtering."""
 
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
@@ -277,9 +278,11 @@ class TestApplyFiltersV2:
 
     def test_updated_within_days_passes_recent(self, service, session):
         rule = FakeRuleV2(updatedWithinDays=30)
+        recent = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        old = (datetime.now(UTC) - timedelta(days=365)).isoformat()
         mods = [
-            _make_mod(external_id="1", updated_at_remote="2026-05-10T00:00:00+00:00"),
-            _make_mod(external_id="2", updated_at_remote="2020-01-01T00:00:00+00:00"),
+            _make_mod(external_id="1", updated_at_remote=recent),
+            _make_mod(external_id="2", updated_at_remote=old),
         ]
         result = service.apply_filters(rule, mods, session)
         assert len(result) == 1
