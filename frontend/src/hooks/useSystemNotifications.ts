@@ -1,10 +1,20 @@
 import { useEffect, useRef } from "react";
-import { dispatchWindowsNotifications, fetchRecentNotifications, markNotificationsSeen } from "@/api/system-notifications";
-import { fetchSettings } from "@/api/settings";
+import { useQueryClient } from "@tanstack/react-query";
 
 const POLL_INTERVAL_MS = 30_000;
+const SETTINGS_STALE_MS = POLL_INTERVAL_MS - 1;
+
+async function fetchSettingsForNotifications() {
+  const { fetchSettings } = await import("@/api/settings");
+  return fetchSettings();
+}
+
+async function loadSystemNotificationsApi() {
+  return import("@/api/system-notifications");
+}
 
 export function useSystemNotifications(): void {
+  const queryClient = useQueryClient();
   const sinceIdRef = useRef(0);
   const pollingRef = useRef(false);
 
@@ -18,11 +28,18 @@ export function useSystemNotifications(): void {
       pollingRef.current = true;
       try {
         if (!active) return;
-        const settings = await fetchSettings();
+        const settings = await queryClient.fetchQuery({
+          queryKey: ["settings"],
+          queryFn: fetchSettingsForNotifications,
+          staleTime: SETTINGS_STALE_MS,
+        });
         if (!active) return;
         if (!settings.notificationsEnabled || !settings.systemNotificationsEnabled) {
           return;
         }
+        const { dispatchWindowsNotifications, fetchRecentNotifications, markNotificationsSeen } =
+          await loadSystemNotificationsApi();
+        if (!active) return;
         const events = await fetchRecentNotifications(sinceIdRef.current);
         if (!active) return;
         if (events.length === 0) return;
@@ -52,5 +69,5 @@ export function useSystemNotifications(): void {
       active = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [queryClient]);
 }

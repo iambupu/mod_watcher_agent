@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { get, post } from "@/api/client";
-import { checkUpdate, favoriteByModId, favoriteIdByModId, fetchFavorites } from "@/api/favorites";
+import { checkUpdate, favoriteByModId, favoriteIdByModId, fetchFavoriteRefs, fetchFavorites } from "@/api/favorites";
 import type { Favorite } from "@/types";
 
 vi.mock("@/api/client", () => ({
@@ -89,6 +89,21 @@ describe("favorites API", () => {
     vi.mocked(get).mockResolvedValue({ items: [] });
 
     await expect(fetchFavorites()).resolves.toEqual([]);
+  });
+
+  it("fetches lightweight favorite refs without hydrating mods", async () => {
+    vi.mocked(get).mockResolvedValue([
+      {
+        id: 1,
+        mod_id: 10,
+        tracking_enabled: true,
+        notify_on_update: true,
+        user_tags_json: "[]",
+      },
+    ]);
+
+    await expect(fetchFavoriteRefs()).resolves.toEqual([{ id: 1, modId: 10 }]);
+    expect(get).toHaveBeenCalledWith("/favorites", { detail: "refs" });
   });
 
   it("builds favorite lookup maps from canonical mod ids", () => {
