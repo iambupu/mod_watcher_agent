@@ -17,13 +17,11 @@ import {
   askAgentModDetail,
   chatWithAgent,
   fetchAgentConversationState,
-  saveAgentConversationState,
   startAgentConversation,
-  type AgentConversationMessage,
   type AgentHistoryItem,
   type AgentModMatch,
 } from "@/api/agent";
-import { addFavorite, favoriteIdByModId, fetchFavorites, removeFavorite } from "@/api/favorites";
+import { addFavorite, favoriteIdByModId, fetchFavoriteRefs, removeFavorite } from "@/api/favorites";
 import { fetchModGames } from "@/api/mods";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { AgentMatchCard } from "@/features/agentChat/AgentMatchCard";
@@ -34,10 +32,10 @@ import {
   reviewTargetQuestion,
   scopeFieldQuestion,
   sourceCandidateQuestion,
-  toApiResponseCards,
   toChatResponseCards,
 } from "@/features/agentChat/responseCards";
 import type { AgentProviderDisplay, ChatMessage } from "@/features/agentChat/types";
+import { useAgentConversationPersistence } from "@/features/agentChat/useAgentConversationPersistence";
 import { fetchSettings } from "@/api/settings";
 
 const AgentChat: React.FC = () => {
@@ -45,7 +43,6 @@ const AgentChat: React.FC = () => {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
-  const activeSessionIdRef = useRef("");
   const [copiedId, setCopiedId] = useState<string>("");
   const [selectedModelKey, setSelectedModelKey] = useState("");
   const [selectedSource, setSelectedSource] = useState<"" | "nexusmods" | "loverslab">("");
@@ -55,18 +52,13 @@ const AgentChat: React.FC = () => {
   >("");
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const loadedRef = useRef(false);
-  const saveTimerRef = useRef<number | null>(null);
-  const saveRetryTimerRef = useRef<number | null>(null);
   const copiedTimerRef = useRef<number | null>(null);
   const scrollTimerRef = useRef<number | null>(null);
-  const savingRef = useRef(false);
-  const pendingSaveRef = useRef<{ data: ChatMessage[]; sessionId: string; clientUpdatedAt: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const favoritesQuery = useQuery({
-    queryKey: ["favorites"],
-    queryFn: fetchFavorites,
+    queryKey: ["favorites", "refs"],
+    queryFn: fetchFavoriteRefs,
     staleTime: 30_000,
   });
   const favoriteByModId = useMemo(() => {
@@ -87,6 +79,24 @@ const AgentChat: React.FC = () => {
     queryKey: ["mod-games", "agent-chat"],
     queryFn: fetchModGames,
     staleTime: 60_000,
+  });
+
+  const {
+    activeSessionIdRef,
+    createWelcomeMessage,
+    queueActiveSessionSave,
+    flushPendingSave,
+    clearConversation,
+    clearConversationPending,
+  } = useAgentConversationPersistence({
+    messages,
+    setMessages,
+    activeSessionId,
+    setActiveSessionId,
+    conversationState: conversationQuery.data,
+    conversationStateLoading: conversationQuery.isLoading,
+    refetchConversationState: conversationQuery.refetch,
+    welcomeText: t("agent.hint"),
   });
 
   const providerDisplays = useMemo<AgentProviderDisplay[]>(() => {
@@ -131,10 +141,6 @@ const AgentChat: React.FC = () => {
     [providerDisplays, selectedModelKey],
   );
 
-  useEffect(() => {
-    activeSessionIdRef.current = activeSessionId;
-  }, [activeSessionId]);
-
   const visibleMessages = useMemo(
     () => messages.filter((message) => message.sessionId === activeSessionId || message.role === "separator"),
     [activeSessionId, messages],
@@ -173,126 +179,8 @@ const AgentChat: React.FC = () => {
     }, delayMs);
   };
 
-  const createWelcomeMessage = (sessionId: string, id = "welcome"): ChatMessage => ({
-    id,
-    role: "assistant",
-    text: t("agent.hint"),
-    sessionId,
-  });
-
-  useEffect(() => {
-    if (loadedRef.current || conversationQuery.isLoading) return;
-    loadedRef.current = true;
-    const state = conversationQuery.data;
-    if (state && state.messages.length > 0) {
-      const activeConversationId = state.active_session_id || state.messages[state.messages.length - 1]?.session_id || `sess_${Date.now()}`;
-      const currentMessages = state.messages
-        .map((m) => ({
-          id: m.id,
-          role: m.role,
-          text: m.text,
-          sessionId: m.session_id,
-          createdAt: m.created_at,
-          matches: m.matches,
-          responseCards: toChatResponseCards(m.response_cards),
-          llmProvider: m.llm_provider,
-          llmModel: m.llm_model,
-          audit: m.audit,
-        }))
-        .filter((m) => m.sessionId === activeConversationId && m.role !== "separator");
-      const firstWelcomeIndex = currentMessages.findIndex((m) => m.role === "assistant" && m.text === t("agent.hint"));
-      const dedupedMessages = currentMessages.filter(
-        (m, index) => !(m.role === "assistant" && m.text === t("agent.hint") && index !== firstWelcomeIndex),
-      );
-      setActiveSessionId(activeConversationId);
-      setMessages(dedupedMessages.length > 0 ? dedupedMessages : [createWelcomeMessage(activeConversationId)]);
-      return;
-    }
-    const initialSessionId = state?.active_session_id || `sess_${Date.now()}`;
-    setActiveSessionId(initialSessionId);
-    setMessages([createWelcomeMessage(initialSessionId)]);
-  }, [conversationQuery.data, conversationQuery.isLoading, t]);
-
-  const saveConversationMutation = useMutation({
-    mutationFn: ({ data, sessionId, clientUpdatedAt }: { data: ChatMessage[]; sessionId: string; clientUpdatedAt: string }) => {
-      const payload: AgentConversationMessage[] = data.slice(-300).map((m) => ({
-        id: m.id,
-        role: m.role,
-        text: m.text,
-        session_id: m.sessionId,
-        created_at: m.createdAt,
-        matches: m.matches,
-        response_cards: toApiResponseCards(m.responseCards),
-        llm_provider: m.llmProvider,
-        llm_model: m.llmModel,
-        audit: m.audit,
-      }));
-      return saveAgentConversationState(payload, sessionId, clientUpdatedAt);
-    },
-  });
-
-  const clearConversationMutation = useMutation({
-    mutationFn: ({ sessionId, clientUpdatedAt }: { sessionId: string; clientUpdatedAt: string }) =>
-      saveAgentConversationState([], sessionId, clientUpdatedAt),
-  });
-
-  const flushPendingSave = () => {
-    if (savingRef.current) return;
-    const snapshot = pendingSaveRef.current;
-    if (!snapshot) return;
-    pendingSaveRef.current = null;
-    savingRef.current = true;
-    saveConversationMutation.mutate(snapshot, {
-      onSuccess: () => {
-        savingRef.current = false;
-        if (pendingSaveRef.current) {
-          flushPendingSave();
-        }
-      },
-      onError: () => {
-        savingRef.current = false;
-        if (!pendingSaveRef.current) {
-          pendingSaveRef.current = {
-            data: snapshot.data,
-            sessionId: snapshot.sessionId,
-            clientUpdatedAt: new Date().toISOString(),
-          };
-        }
-        if (saveRetryTimerRef.current) {
-          window.clearTimeout(saveRetryTimerRef.current);
-        }
-        saveRetryTimerRef.current = window.setTimeout(() => {
-          saveRetryTimerRef.current = null;
-          flushPendingSave();
-        }, 1000);
-      },
-    });
-  };
-
-  useEffect(() => {
-    if (!loadedRef.current || !activeSessionId) return;
-    const activeMessages = messages.filter((message) => message.sessionId === activeSessionId);
-    pendingSaveRef.current = {
-      data: activeMessages,
-      sessionId: activeSessionId,
-      clientUpdatedAt: new Date().toISOString(),
-    };
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current);
-    }
-    saveTimerRef.current = window.setTimeout(() => {
-      flushPendingSave();
-    }, 300);
-  }, [messages, activeSessionId]);
-
   useEffect(() => {
     return () => {
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current);
-      }
-      if (saveRetryTimerRef.current) {
-        window.clearTimeout(saveRetryTimerRef.current);
-      }
       if (copiedTimerRef.current) {
         window.clearTimeout(copiedTimerRef.current);
       }
@@ -571,6 +459,8 @@ const AgentChat: React.FC = () => {
   };
 
   const handleStartNewConversation = async () => {
+    queueActiveSessionSave();
+    flushPendingSave();
     const res = await startAgentConversation();
     const nextSessionId = res.session_id;
     setActiveSessionId(nextSessionId);
@@ -583,15 +473,7 @@ const AgentChat: React.FC = () => {
       createWelcomeMessage(currentSessionId, `${Date.now()}-assistant-cleared`),
     ];
     try {
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-      pendingSaveRef.current = null;
-      await clearConversationMutation.mutateAsync({
-        sessionId: currentSessionId,
-        clientUpdatedAt: new Date().toISOString(),
-      });
+      await clearConversation(currentSessionId);
       setMessages(nextMessages);
       setClearConfirmOpen(false);
       scheduleViewportScroll(0, 20);
@@ -887,7 +769,7 @@ const AgentChat: React.FC = () => {
           cancelVariant="outline"
           confirmChildren={
             <>
-              {clearConversationMutation.isPending ? (
+              {clearConversationPending ? (
                 <Loader2 size={16} className="mr-1.5 animate-spin" />
               ) : (
                 t("agent.clearConfirmAction")

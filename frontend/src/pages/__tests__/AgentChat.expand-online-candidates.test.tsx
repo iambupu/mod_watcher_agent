@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import AgentChat from "@/pages/AgentChat";
 import * as agentApi from "@/api/agent";
+import { ApiError } from "@/api/client";
 import * as favoritesApi from "@/api/favorites";
 import * as modsApi from "@/api/mods";
 import * as settingsApi from "@/api/settings";
@@ -34,7 +35,7 @@ describe("AgentChat expand online candidates", () => {
     });
     vi.clearAllMocks();
 
-    vi.mocked(favoritesApi.fetchFavorites).mockResolvedValue([]);
+    vi.mocked(favoritesApi.fetchFavoriteRefs).mockResolvedValue([]);
     vi.mocked(modsApi.fetchModGames).mockResolvedValue([]);
     vi.mocked(settingsApi.fetchSettings).mockResolvedValue({
       llmProviders: [],
@@ -59,6 +60,7 @@ describe("AgentChat expand online candidates", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     queryClient.clear();
   });
 
@@ -71,6 +73,60 @@ describe("AgentChat expand online candidates", () => {
       </QueryClientProvider>,
     );
   }
+
+  it("retries failed conversation saves with the original client timestamp", async () => {
+    let shouldReject = true;
+    vi.mocked(agentApi.saveAgentConversationState).mockImplementation(async (messages, activeSessionId) => {
+      if (shouldReject) {
+        shouldReject = false;
+        throw new Error("network unavailable");
+      }
+      return {
+        messages,
+        active_session_id: activeSessionId,
+      };
+    });
+
+    renderPage();
+
+    await screen.findByText("agent.hint");
+    await waitFor(() => expect(agentApi.saveAgentConversationState).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(agentApi.saveAgentConversationState).toHaveBeenCalledTimes(2), { timeout: 2500 });
+
+    const calls = vi.mocked(agentApi.saveAgentConversationState).mock.calls;
+    expect(calls[1][2]).toBe(calls[0][2]);
+  });
+
+  it("refetches conversation state instead of retrying a stale 409 snapshot", async () => {
+    vi.mocked(agentApi.fetchAgentConversationState)
+      .mockResolvedValueOnce({
+        messages: [],
+        active_session_id: "sess_test",
+      })
+      .mockResolvedValueOnce({
+        active_session_id: "sess_test",
+        messages: [
+          {
+            id: "server-message",
+            role: "assistant",
+            text: "server state",
+            session_id: "sess_test",
+          },
+        ],
+      });
+    vi.mocked(agentApi.saveAgentConversationState)
+      .mockRejectedValueOnce(new ApiError("API Error 409: Conversation state changed", 409, "Conversation state changed"))
+      .mockResolvedValue({
+        messages: [],
+        active_session_id: "sess_test",
+      });
+
+    renderPage();
+
+    await screen.findByText("agent.hint");
+    await waitFor(() => expect(agentApi.fetchAgentConversationState).toHaveBeenCalledTimes(2), { timeout: 2500 });
+    expect(await screen.findByText("server state")).toBeInTheDocument();
+  });
 
   it("renders candidate button and applies source shortcut on click", async () => {
     vi.mocked(agentApi.chatWithAgent).mockResolvedValue({
