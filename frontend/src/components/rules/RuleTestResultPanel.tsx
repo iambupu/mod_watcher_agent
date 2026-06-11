@@ -1,3 +1,5 @@
+// 中文注释：提供规则编辑器里的 RuleTestResultPanel 表单组件。
+
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { Card, CardHeader, CardContent } from "@/components/ui/Card";

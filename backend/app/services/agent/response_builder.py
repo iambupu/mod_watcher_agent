@@ -7,7 +7,7 @@ from app.services.agent.semantic_search import strip_scope
 
 
 def display_query(query: str) -> str:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """展示给用户时移除前端附加的 [scope] 硬约束块。"""
     return strip_scope(query)
 
 
@@ -41,7 +41,7 @@ def build_response_cards(
     matches: list[AgentModMatch],
     next_steps: list[str] | None = None,
 ) -> dict[str, list[str]]:
-    """构建后续流程需要的数据结构。"""
+    """构建前端响应卡片，拆出理解、过滤器、证据、结论和下一步。"""
     plan = query_plan or {}
     visible_query = display_query(query)
     filters: list[str] = []

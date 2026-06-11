@@ -6,576 +6,43 @@ import {
   Loader2,
   Copy,
   Check,
-  ChevronDown,
-  ChevronUp,
-  Heart,
-  HeartOff,
   Sparkles,
   Plus,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { FilterSelect } from "@/components/ui/FilterControls";
-import { MarkdownText } from "@/components/MarkdownText";
-import { Panel } from "@/components/ui/Panel";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import {
   askAgentModDetail,
   chatWithAgent,
   fetchAgentConversationState,
-  saveAgentConversationState,
   startAgentConversation,
-  type AgentConversationMessage,
   type AgentHistoryItem,
   type AgentModMatch,
-  type AgentAudit,
-  type AgentResponseCards as ApiAgentResponseCards,
 } from "@/api/agent";
-import { addFavorite, favoriteIdByModId, fetchFavorites, removeFavorite } from "@/api/favorites";
+import { addFavorite, favoriteIdByModId, fetchFavoriteRefs, removeFavorite } from "@/api/favorites";
 import { fetchModGames } from "@/api/mods";
 import AppSidebar from "@/components/layout/AppSidebar";
+import { AgentMatchCard } from "@/features/agentChat/AgentMatchCard";
+import { AssistantResponseCard } from "@/features/agentChat/AssistantResponseCard";
+import {
+  conflictFieldQuestion,
+  normalizeSourceCandidate,
+  reviewTargetQuestion,
+  scopeFieldQuestion,
+  sourceCandidateQuestion,
+  toChatResponseCards,
+} from "@/features/agentChat/responseCards";
+import type { AgentProviderDisplay, ChatMessage } from "@/features/agentChat/types";
+import { useAgentConversationPersistence } from "@/features/agentChat/useAgentConversationPersistence";
 import { fetchSettings } from "@/api/settings";
-import { useUIStore } from "@/stores/uiStore";
-import { isAdultContent } from "@/utils/modAdult";
-import { formatModSummary } from "@/utils/modSummary";
-import { formatModTitle } from "@/utils/modTitle";
-
-type ChatResponseCards = Omit<ApiAgentResponseCards, "next_steps"> & {
-  nextSteps?: ApiAgentResponseCards["next_steps"];
-};
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant" | "separator";
-  text: string;
-  sessionId: string;
-  createdAt?: string;
-  matches?: AgentModMatch[];
-  responseCards?: ChatResponseCards;
-  llmProvider?: string;
-  llmModel?: string;
-  audit?: AgentAudit;
-}
-
-interface AgentProviderDisplay {
-  key: string;
-  provider: string;
-  model: string;
-  label: string;
-}
-
-interface AssistantSections {
-  analysis: string[];
-  evidence: string[];
-  conclusion: string[];
-  understanding: string[];
-  filters: string[];
-  results: string[];
-  nextSteps: string[];
-}
-
-const toChatResponseCards = (cards?: ApiAgentResponseCards): ChatResponseCards | undefined => {
-  if (!cards) return undefined;
-  return {
-    analysis: cards.analysis,
-    evidence: cards.evidence,
-    conclusion: cards.conclusion,
-    understanding: cards.understanding,
-    filters: cards.filters,
-    results: cards.results,
-    nextSteps: cards.next_steps,
-  };
-};
-
-const toApiResponseCards = (cards?: ChatResponseCards): AgentConversationMessage["response_cards"] | undefined => {
-  if (!cards) return undefined;
-  return {
-    analysis: cards.analysis,
-    evidence: cards.evidence,
-    conclusion: cards.conclusion,
-    understanding: cards.understanding,
-    filters: cards.filters,
-    results: cards.results,
-    next_steps: cards.nextSteps,
-  };
-};
-
-const normalizeSourceCandidate = (candidate: string): "" | "nexusmods" | "loverslab" => {
-  const normalized = candidate.trim().toLowerCase();
-  if (normalized.includes("nexusmods") || normalized.includes("nexus")) {
-    return "nexusmods";
-  }
-  if (normalized.includes("loverslab") || normalized.includes("lovers")) {
-    return "loverslab";
-  }
-  return "";
-};
-
-const sourceCandidateLabel = (candidate: string): string => {
-  const source = normalizeSourceCandidate(candidate);
-  if (source === "nexusmods") return "NexusMods";
-  if (source === "loverslab") return "LoversLab";
-  return candidate;
-};
-
-const scopeFieldLabel = (field: string): string => {
-  const key = field.trim().toLowerCase();
-  if (key === "game") return "游戏";
-  if (key === "source") return "来源";
-  if (key === "keywords") return "关键词";
-  if (key === "category" || key === "categories") return "类型/风格";
-  return field;
-};
-
-const reviewTargetLabel = (target: string): string => {
-  const key = target.trim().toLowerCase();
-  if (key === "memory_signals") return "记忆信号";
-  if (key === "context_slots") return "上下文槽位";
-  return target;
-};
-
-const sourceCandidateQuestion = (candidate: string): string => {
-  const label = sourceCandidateLabel(candidate);
-  return `继续查 ${label} 来源的结果`;
-};
-
-const scopeFieldQuestion = (field: string): string => {
-  const key = field.trim().toLowerCase();
-  if (key === "game") return "我想限定目标游戏";
-  if (key === "source") return "我想指定检索来源";
-  if (key === "keywords") return "我想补充更具体的关键词";
-  if (key === "category" || key === "categories") return "我想确认类型或风格";
-  return `我想补充${scopeFieldLabel(field)}`;
-};
-
-const reviewTargetQuestion = (target: string): string => {
-  const key = target.trim().toLowerCase();
-  if (key === "memory_signals") return "请解释你参考了哪些记忆信号";
-  if (key === "context_slots") return "请解释你继承了哪些上下文条件";
-  if (key === "analysis_evidence") return "请说明你理解这个需求的依据";
-  return `请解释${reviewTargetLabel(target)}`;
-};
-
-const conflictFieldQuestion = (field: string): string => {
-  const key = field.trim().toLowerCase();
-  if (key === "game") return "这次目标游戏应该按哪个来查？";
-  if (key === "source") return "这次应该优先查哪个来源？";
-  if (key === "keywords") return "这次应该保留哪些关键词？";
-  if (key === "category" || key === "categories") return "这次应该按哪种类型或风格来查？";
-  return `这次${scopeFieldLabel(field)}应该按哪个来查？`;
-};
-
-const extractAssistantSections = (text: string): AssistantSections => {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const sections: AssistantSections = {
-    analysis: [],
-    evidence: [],
-    conclusion: [],
-    understanding: [],
-    filters: [],
-    results: [],
-    nextSteps: [],
-  };
-  const normalize = (line: string) => line.replace(/^[•\-\d\.\)\(]+\s*/, "").trim();
-
-  for (const line of lines) {
-    const plain = normalize(line);
-    if (!plain) continue;
-    if (/^(我理解|理解你的需求|你想找|需求|目标|I understand|You want|理解しました)/i.test(plain)) {
-      sections.understanding.push(plain);
-      continue;
-    }
-    if (/^(游戏|類型|类型|時間|时间|来源|來源|source|game|type|filter|条件|條件|条件|來源|ソース)/i.test(plain)) {
-      sections.filters.push(plain);
-      continue;
-    }
-    if (/^(找到|命中|候选|候補|推荐|推薦|结果|結果|found|matched)/i.test(plain)) {
-      sections.results.push(plain);
-      continue;
-    }
-    if (/^(下一步|建议|建議|你可以|可继续|next step|next action|suggestion)/i.test(plain)) {
-      sections.nextSteps.push(plain);
-      continue;
-    }
-  }
-
-  if (sections.understanding.length === 0 && lines.length > 0) {
-    sections.understanding.push(lines[0]);
-  }
-  if (sections.filters.length === 0) {
-    const compact = lines.join(" ");
-    const gameMatch = compact.match(/《([^》]+)》/);
-    if (gameMatch?.[1]) {
-      sections.filters.push(`游戏：${gameMatch[1]}`);
-    }
-    if (/成人|NSFW/i.test(compact)) {
-      sections.filters.push("内容分级：NSFW");
-    } else if (/SFW|非成人/i.test(compact)) {
-      sections.filters.push("内容分级：SFW");
-    }
-    if (/最近更新|latest|recent/i.test(compact)) {
-      sections.filters.push("排序：updated_at_remote (降序)");
-    }
-  }
-  if (sections.results.length === 0 && lines.length > 1) {
-    sections.results.push(lines[1]);
-  }
-  if (sections.nextSteps.length === 0 && lines.length > 2) {
-    sections.nextSteps.push(lines[lines.length - 1]);
-  }
-
-  return sections;
-};
-
-const AssistantResponseCard: React.FC<{
-  text: string;
-  matches?: AgentModMatch[];
-  responseCards?: ChatMessage["responseCards"];
-  onSelectNextStep?: (value: string) => void;
-  expandOnlineCandidates?: string[];
-  expandOnlineCandidateDetails?: { id: string; label: string }[];
-  narrowScopeFields?: string[];
-  reviewTargets?: string[];
-  conflictFields?: string[];
-  onApplyScopeField?: (field: string) => void;
-  onApplyReviewTarget?: (target: string) => void;
-  onApplyConflictField?: (field: string) => void;
-  onApplySourceCandidate?: (candidate: string) => void;
-}> = ({
-  text,
-  matches,
-  responseCards,
-  onSelectNextStep,
-  expandOnlineCandidates = [],
-  expandOnlineCandidateDetails = [],
-  narrowScopeFields = [],
-  reviewTargets = [],
-  conflictFields = [],
-  onApplyScopeField,
-  onApplyReviewTarget,
-  onApplyConflictField,
-  onApplySourceCandidate,
-}) => {
-  const { t } = useTranslation();
-  const sections = responseCards
-    ? {
-        analysis: responseCards.analysis || [],
-        evidence: responseCards.evidence || [],
-        conclusion: responseCards.conclusion || [],
-        understanding: responseCards.understanding || [],
-        filters: responseCards.filters || [],
-        results: responseCards.results || [],
-        nextSteps: responseCards.nextSteps || [],
-      }
-    : extractAssistantSections(text);
-
-  if ((sections.results.length <= 1 || !responseCards) && (matches?.length || 0) > 1) {
-    const preview = (matches || []).slice(0, 5).map((item, idx) => `${idx + 1}. ${item.title}`);
-    sections.results = [`找到 ${matches?.length || 0} 个候选结果：`, ...preview];
-  } else if (sections.results.length === 0 && (matches?.length || 0) === 1 && matches?.[0]) {
-    sections.results = [`找到 1 个候选结果：`, `1. ${matches[0].title}`];
-  }
-
-  if (
-    sections.analysis.length === 0 &&
-    sections.evidence.length === 0 &&
-    sections.conclusion.length === 0 &&
-    sections.understanding.length === 0 &&
-    sections.filters.length === 0 &&
-    sections.results.length === 0 &&
-    sections.nextSteps.length === 0
-  ) {
-    return <MarkdownText text={text} className="text-sm" />;
-  }
-
-  const sectionClass = "rounded-xl border px-3 py-2";
-  const hasActionButtons =
-    expandOnlineCandidateDetails.length > 0 ||
-    expandOnlineCandidates.length > 0 ||
-    narrowScopeFields.length > 0 ||
-    reviewTargets.length > 0 ||
-    conflictFields.length > 0;
-  const shouldShowAnswerBody = Boolean(responseCards && text.trim());
-
-  return (
-    <div className="space-y-3 text-[14px]">
-      {shouldShowAnswerBody && (
-        <MarkdownText
-          text={text}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
-        />
-      )}
-
-      {sections.analysis.length > 0 && (
-        <div className={`${sectionClass} border-slate-200 bg-white`}>
-          <p className="mb-1 text-[12px] font-semibold tracking-wide text-slate-700">{t("agent.section.analysis")}</p>
-          <ul className="space-y-1 text-slate-800">
-            {sections.analysis.map((line, idx) => (
-              <li key={`analysis-${idx}`} className="leading-6">{line}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {sections.evidence.length > 0 && (
-        <div className={`${sectionClass} border-cyan-200 bg-cyan-50/60`}>
-          <p className="mb-1 text-[12px] font-semibold tracking-wide text-cyan-700">{t("agent.section.evidence")}</p>
-          <ul className="space-y-1 text-slate-800">
-            {sections.evidence.map((line, idx) => (
-              <li key={`evidence-${idx}`} className="leading-6">{line}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {sections.conclusion.length > 0 && (
-        <div className={`${sectionClass} border-teal-200 bg-teal-50/60`}>
-          <p className="mb-1 text-[12px] font-semibold tracking-wide text-teal-700">{t("agent.section.conclusion")}</p>
-          <ul className="space-y-1 text-slate-800">
-            {sections.conclusion.map((line, idx) => (
-              <li key={`conclusion-${idx}`} className="leading-6">{line}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {sections.understanding.length > 0 && (
-        <div className={`${sectionClass} border-sky-200 bg-sky-50/70`}>
-          <p className="mb-1 text-[12px] font-semibold tracking-wide text-sky-700">{t("agent.section.understanding")}</p>
-          <ul className="space-y-1 text-slate-800">
-            {sections.understanding.map((line, idx) => (
-              <li key={`understanding-${idx}`} className="leading-6">{line}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {sections.filters.length > 0 && (
-        <div className={`${sectionClass} border-indigo-200 bg-indigo-50/60`}>
-          <p className="mb-1 text-[12px] font-semibold tracking-wide text-indigo-700">{t("agent.section.filters")}</p>
-          <ul className="space-y-1 text-slate-800">
-            {sections.filters.map((line, idx) => (
-              <li key={`filters-${idx}`} className="leading-6">{line}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {sections.results.length > 0 && (
-        <div className={`${sectionClass} border-emerald-200 bg-emerald-50/60`}>
-          <p className="mb-1 text-[12px] font-semibold tracking-wide text-emerald-700">{t("agent.section.results")}</p>
-          <ul className="space-y-1 text-slate-800">
-            {sections.results.map((line, idx) => (
-              <li key={`results-${idx}`} className="leading-6">{line}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {(sections.nextSteps.length > 0 || hasActionButtons) && (
-        <div className={`${sectionClass} border-amber-200 bg-amber-50/60`}>
-          <p className="mb-1 text-[12px] font-semibold tracking-wide text-amber-700">{t("agent.section.nextSteps")}</p>
-          {sections.nextSteps.length > 0 && (
-          <ul className="space-y-1 text-slate-800">
-            {sections.nextSteps.map((line, idx) => (
-              <li key={`next-${idx}`}>
-                <button
-                  type="button"
-                  onClick={() => onSelectNextStep?.(line)}
-                  className="w-full rounded-md px-1.5 py-1 text-left leading-6 transition hover:bg-amber-100/80 hover:text-amber-900 focus:outline-none focus:ring-2 focus:ring-amber-300"
-                >
-                  {line}
-                </button>
-              </li>
-            ))}
-          </ul>
-          )}
-        {(expandOnlineCandidateDetails.length > 0 || expandOnlineCandidates.length > 0) && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {(expandOnlineCandidateDetails.length > 0
-              ? expandOnlineCandidateDetails
-              : expandOnlineCandidates.map((candidate) => ({
-                  id: candidate,
-                  label: sourceCandidateLabel(candidate),
-                }))
-            ).map((candidate) => (
-                <button
-                  key={candidate.id}
-                  type="button"
-                  onClick={() => onApplySourceCandidate?.(candidate.id)}
-                  className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-amber-700 transition hover:bg-amber-100"
-                >
-                  {sourceCandidateQuestion(candidate.label)}
-                </button>
-              ))}
-          </div>
-        )}
-        {narrowScopeFields.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {narrowScopeFields.map((field) => (
-              <button
-                key={field}
-                type="button"
-                onClick={() => onApplyScopeField?.(field)}
-                className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-amber-700 transition hover:bg-amber-100"
-              >
-                {scopeFieldQuestion(field)}
-              </button>
-            ))}
-          </div>
-        )}
-        {reviewTargets.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {reviewTargets.map((target) => (
-              <button
-                key={target}
-                type="button"
-                onClick={() => onApplyReviewTarget?.(target)}
-                className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-amber-700 transition hover:bg-amber-100"
-              >
-                {reviewTargetQuestion(target)}
-              </button>
-            ))}
-          </div>
-        )}
-        {conflictFields.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {conflictFields.map((field) => (
-              <button
-                key={field}
-                type="button"
-                onClick={() => onApplyConflictField?.(field)}
-                className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-amber-700 transition hover:bg-amber-100"
-              >
-                {conflictFieldQuestion(field)}
-              </button>
-            ))}
-          </div>
-        )}
-        </div>
-      )}
-    </div>
-  );
-};
-
-const AgentMatchCard: React.FC<{
-  item: AgentModMatch;
-  isFavorited: boolean;
-  onToggleFavorite: (modId: number, isFavorited: boolean) => void;
-  onAskDetail: (mod: AgentModMatch) => void;
-}> = ({ item, isFavorited, onToggleFavorite, onAskDetail }) => {
-  const { t } = useTranslation();
-  const summaryMode = useUIStore((s) => s.summaryMode);
-  const [expanded, setExpanded] = useState(false);
-  const displayTitle = formatModTitle(item, summaryMode);
-  const translated = (item.translated_summary || "").trim();
-  const original = (item.original_summary || "").trim();
-  const summaryText = formatModSummary({
-    original,
-    translated,
-    mode: summaryMode,
-  }).trim();
-  const matchReason = (item.rank_reason || "").trim();
-  const description = summaryText || matchReason || t("mod.noSummary");
-  const canToggleSummary = description.length > 120 || description.includes("\n\n");
-  const sourceClass =
-    item.source?.toLowerCase() === "nexusmods"
-      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-      : "border-slate-200 bg-slate-100 text-slate-700";
-  const hasAdultFlag = item.adult_content !== null && item.adult_content !== undefined;
-  const adultContent = isAdultContent(item.adult_content);
-  const safetyLabel = hasAdultFlag ? (adultContent ? "NSFW" : "SFW") : "";
-  const safetyClass =
-    hasAdultFlag && adultContent
-      ? "border-rose-200 bg-rose-50 text-rose-700"
-      : hasAdultFlag
-        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-        : "";
-
-  return (
-    <Panel padding="none" shadow="sm" radius="xl" className="p-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-      <div className="whitespace-pre-line text-[14px] font-semibold text-slate-900">{displayTitle}</div>
-      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${sourceClass}`}>
-          {item.source}
-        </span>
-        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-600">
-          {item.game}
-        </span>
-        {hasAdultFlag && (
-          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${safetyClass}`}>
-            {safetyLabel}
-          </span>
-        )}
-      </div>
-      <div className="mt-1 text-[12px] text-slate-500">
-        {item.author || "unknown"}
-      </div>
-      <div className="mt-2 space-y-1.5">
-        {summaryText ? null : matchReason ? (
-          <p className="text-[11px] font-medium text-slate-400">{t("agent.matchReason")}</p>
-        ) : null}
-        <p
-          className={`mt-0.5 whitespace-pre-wrap text-[13px] leading-6 text-slate-700 ${
-            expanded ? "" : "line-clamp-3"
-          } ${summaryText || matchReason ? "" : "text-slate-400"}`}
-        >
-          {description}
-        </p>
-      </div>
-      {canToggleSummary && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="mt-2 inline-flex items-center gap-1 text-[12px] text-indigo-600 hover:text-indigo-700"
-          title={expanded ? t("mod.collapseSummary") : t("mod.expandSummary")}
-        >
-          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-          <span>{expanded ? t("mod.collapseSummary") : t("mod.expandSummary")}</span>
-        </button>
-      )}
-      <div className="mt-2 flex items-center gap-3 text-[12px]">
-        <button
-          type="button"
-          onClick={() => onToggleFavorite(item.id, isFavorited)}
-          className="inline-flex items-center gap-1 text-slate-600 hover:text-slate-900"
-          title={isFavorited ? t("mod.unfavorite") : t("mod.favorite")}
-        >
-          {isFavorited ? <HeartOff size={12} className="text-red-500" /> : <Heart size={12} className="text-gray-400" />}
-          <span>{isFavorited ? t("mod.unfavorite") : t("mod.favorite")}</span>
-        </button>
-        <a
-          href={item.url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700"
-          title={t("mod.openOriginal")}
-        >
-          <span>{t("mod.openOriginal")}</span>
-        </a>
-        <button
-          type="button"
-          onClick={() => onAskDetail(item)}
-          className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700"
-          title={t("mod.detail")}
-        >
-          <Sparkles size={12} />
-          <span>{t("mod.detail")}</span>
-        </button>
-      </div>
-    </Panel>
-  );
-};
 
 const AgentChat: React.FC = () => {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
-  const activeSessionIdRef = useRef("");
   const [copiedId, setCopiedId] = useState<string>("");
   const [selectedModelKey, setSelectedModelKey] = useState("");
   const [selectedSource, setSelectedSource] = useState<"" | "nexusmods" | "loverslab">("");
@@ -585,18 +52,13 @@ const AgentChat: React.FC = () => {
   >("");
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const loadedRef = useRef(false);
-  const saveTimerRef = useRef<number | null>(null);
-  const saveRetryTimerRef = useRef<number | null>(null);
   const copiedTimerRef = useRef<number | null>(null);
   const scrollTimerRef = useRef<number | null>(null);
-  const savingRef = useRef(false);
-  const pendingSaveRef = useRef<{ data: ChatMessage[]; sessionId: string; clientUpdatedAt: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const favoritesQuery = useQuery({
-    queryKey: ["favorites"],
-    queryFn: fetchFavorites,
+    queryKey: ["favorites", "refs"],
+    queryFn: fetchFavoriteRefs,
     staleTime: 30_000,
   });
   const favoriteByModId = useMemo(() => {
@@ -619,11 +81,30 @@ const AgentChat: React.FC = () => {
     staleTime: 60_000,
   });
 
+  const {
+    activeSessionIdRef,
+    createWelcomeMessage,
+    queueActiveSessionSave,
+    flushPendingSave,
+    clearConversation,
+    clearConversationPending,
+  } = useAgentConversationPersistence({
+    messages,
+    setMessages,
+    activeSessionId,
+    setActiveSessionId,
+    conversationState: conversationQuery.data,
+    conversationStateLoading: conversationQuery.isLoading,
+    refetchConversationState: conversationQuery.refetch,
+    welcomeText: t("agent.hint"),
+  });
+
   const providerDisplays = useMemo<AgentProviderDisplay[]>(() => {
     const settings = settingsQuery.data;
     if (!settings) return [];
     const options: AgentProviderDisplay[] = [];
     const seen = new Set<string>();
+    // 设置页允许多个供应商；这里按优先级生成会话级可选模型，并去掉重复配置。
     const enabled = [...(settings.llmProviders || [])]
       .filter((item) => item.enabled)
       .sort((a, b) => a.priority - b.priority);
@@ -661,10 +142,6 @@ const AgentChat: React.FC = () => {
     [providerDisplays, selectedModelKey],
   );
 
-  useEffect(() => {
-    activeSessionIdRef.current = activeSessionId;
-  }, [activeSessionId]);
-
   const visibleMessages = useMemo(
     () => messages.filter((message) => message.sessionId === activeSessionId || message.role === "separator"),
     [activeSessionId, messages],
@@ -674,6 +151,7 @@ const AgentChat: React.FC = () => {
     if (!activeSessionId || providerDisplays.length === 0) return;
     const storageKey = `agent:selected-model:${activeSessionId}`;
     const stored = window.sessionStorage.getItem(storageKey) || "";
+    // 模型选择只在当前浏览器 session 内记忆，避免影响服务端保存的对话内容。
     const nextKey = providerDisplays.some((item) => item.key === stored) ? stored : providerDisplays[0].key;
     setSelectedModelKey((current) => {
       if (current && providerDisplays.some((item) => item.key === current)) return current;
@@ -703,126 +181,8 @@ const AgentChat: React.FC = () => {
     }, delayMs);
   };
 
-  const createWelcomeMessage = (sessionId: string, id = "welcome"): ChatMessage => ({
-    id,
-    role: "assistant",
-    text: t("agent.hint"),
-    sessionId,
-  });
-
-  useEffect(() => {
-    if (loadedRef.current || conversationQuery.isLoading) return;
-    loadedRef.current = true;
-    const state = conversationQuery.data;
-    if (state && state.messages.length > 0) {
-      const activeConversationId = state.active_session_id || state.messages[state.messages.length - 1]?.session_id || `sess_${Date.now()}`;
-      const currentMessages = state.messages
-        .map((m) => ({
-          id: m.id,
-          role: m.role,
-          text: m.text,
-          sessionId: m.session_id,
-          createdAt: m.created_at,
-          matches: m.matches,
-          responseCards: toChatResponseCards(m.response_cards),
-          llmProvider: m.llm_provider,
-          llmModel: m.llm_model,
-          audit: m.audit,
-        }))
-        .filter((m) => m.sessionId === activeConversationId && m.role !== "separator");
-      const firstWelcomeIndex = currentMessages.findIndex((m) => m.role === "assistant" && m.text === t("agent.hint"));
-      const dedupedMessages = currentMessages.filter(
-        (m, index) => !(m.role === "assistant" && m.text === t("agent.hint") && index !== firstWelcomeIndex),
-      );
-      setActiveSessionId(activeConversationId);
-      setMessages(dedupedMessages.length > 0 ? dedupedMessages : [createWelcomeMessage(activeConversationId)]);
-      return;
-    }
-    const initialSessionId = state?.active_session_id || `sess_${Date.now()}`;
-    setActiveSessionId(initialSessionId);
-    setMessages([createWelcomeMessage(initialSessionId)]);
-  }, [conversationQuery.data, conversationQuery.isLoading, t]);
-
-  const saveConversationMutation = useMutation({
-    mutationFn: ({ data, sessionId, clientUpdatedAt }: { data: ChatMessage[]; sessionId: string; clientUpdatedAt: string }) => {
-      const payload: AgentConversationMessage[] = data.slice(-300).map((m) => ({
-        id: m.id,
-        role: m.role,
-        text: m.text,
-        session_id: m.sessionId,
-        created_at: m.createdAt,
-        matches: m.matches,
-        response_cards: toApiResponseCards(m.responseCards),
-        llm_provider: m.llmProvider,
-        llm_model: m.llmModel,
-        audit: m.audit,
-      }));
-      return saveAgentConversationState(payload, sessionId, clientUpdatedAt);
-    },
-  });
-
-  const clearConversationMutation = useMutation({
-    mutationFn: ({ sessionId, clientUpdatedAt }: { sessionId: string; clientUpdatedAt: string }) =>
-      saveAgentConversationState([], sessionId, clientUpdatedAt),
-  });
-
-  const flushPendingSave = () => {
-    if (savingRef.current) return;
-    const snapshot = pendingSaveRef.current;
-    if (!snapshot) return;
-    pendingSaveRef.current = null;
-    savingRef.current = true;
-    saveConversationMutation.mutate(snapshot, {
-      onSuccess: () => {
-        savingRef.current = false;
-        if (pendingSaveRef.current) {
-          flushPendingSave();
-        }
-      },
-      onError: () => {
-        savingRef.current = false;
-        if (!pendingSaveRef.current) {
-          pendingSaveRef.current = {
-            data: snapshot.data,
-            sessionId: snapshot.sessionId,
-            clientUpdatedAt: new Date().toISOString(),
-          };
-        }
-        if (saveRetryTimerRef.current) {
-          window.clearTimeout(saveRetryTimerRef.current);
-        }
-        saveRetryTimerRef.current = window.setTimeout(() => {
-          saveRetryTimerRef.current = null;
-          flushPendingSave();
-        }, 1000);
-      },
-    });
-  };
-
-  useEffect(() => {
-    if (!loadedRef.current || !activeSessionId) return;
-    const activeMessages = messages.filter((message) => message.sessionId === activeSessionId);
-    pendingSaveRef.current = {
-      data: activeMessages,
-      sessionId: activeSessionId,
-      clientUpdatedAt: new Date().toISOString(),
-    };
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current);
-    }
-    saveTimerRef.current = window.setTimeout(() => {
-      flushPendingSave();
-    }, 300);
-  }, [messages, activeSessionId]);
-
   useEffect(() => {
     return () => {
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current);
-      }
-      if (saveRetryTimerRef.current) {
-        window.clearTimeout(saveRetryTimerRef.current);
-      }
       if (copiedTimerRef.current) {
         window.clearTimeout(copiedTimerRef.current);
       }
@@ -836,6 +196,7 @@ const AgentChat: React.FC = () => {
     if (message.role !== "assistant" || !message.matches?.length) {
       return message.text;
     }
+    // 把已展示候选压缩进历史，后端才能理解“第二个”“类似这个”等追问。
     const shownMods = message.matches.slice(0, 12).map((item, index) =>
       `${index + 1}. title=${item.title}; source=${item.source}; game=${item.game}; category=${item.category || ""}`,
     );
@@ -870,6 +231,7 @@ const AgentChat: React.FC = () => {
     if (constraints.length === 0) {
       return rawMessage;
     }
+    // [scope] 是前后端约定的硬约束块；后端会把它从自然语言关键词中剥离。
     return `${rawMessage}\n\n[scope]\n${constraints.join("\n")}`;
   };
 
@@ -926,6 +288,7 @@ const AgentChat: React.FC = () => {
     const message = input.trim();
     if (!message) return;
     const requestSessionId = activeSessionId || `sess_${Date.now()}`;
+    // 先乐观插入用户消息，提交给后端的 history 使用插入前快照，避免当前消息重复出现。
     setMessages((prev) => [
       ...prev,
       { id: `${Date.now()}-user`, role: "user", text: message, sessionId: requestSessionId },
@@ -1006,6 +369,7 @@ const AgentChat: React.FC = () => {
   const applySourceCandidate = (candidate: string) => {
     const source = normalizeSourceCandidate(candidate);
     if (source === "nexusmods" || source === "loverslab") {
+      // 来源候选按钮同时更新筛选器和输入框，使下一次请求携带显式 scope。
       setSelectedSource(source);
       setInput((prev) => (prev.trim() ? prev : sourceCandidateQuestion(source)));
       window.requestAnimationFrame(() => inputRef.current?.focus());
@@ -1051,6 +415,7 @@ const AgentChat: React.FC = () => {
   const onAskDetail = (mod: AgentModMatch) => {
     const askText = `请详细解析这个 Mod：${mod.title}`;
     const requestSessionId = activeSessionId || `sess_${Date.now()}`;
+    // 详情追问走独立接口，但仍携带当前会话历史，让后端保留上下文引用。
     setMessages((prev) => [
       ...prev,
       { id: `${Date.now()}-user-detail`, role: "user", text: askText, sessionId: requestSessionId },
@@ -1072,6 +437,7 @@ const AgentChat: React.FC = () => {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(value);
       } else {
+        // 兼容没有 Clipboard API 的 WebView/旧浏览器环境。
         const textarea = document.createElement("textarea");
         textarea.value = value;
         textarea.setAttribute("readonly", "true");
@@ -1101,6 +467,9 @@ const AgentChat: React.FC = () => {
   };
 
   const handleStartNewConversation = async () => {
+    // 新会话前主动刷写当前 session，减少切换时最后一条消息丢失的概率。
+    queueActiveSessionSave();
+    flushPendingSave();
     const res = await startAgentConversation();
     const nextSessionId = res.session_id;
     setActiveSessionId(nextSessionId);
@@ -1113,15 +482,7 @@ const AgentChat: React.FC = () => {
       createWelcomeMessage(currentSessionId, `${Date.now()}-assistant-cleared`),
     ];
     try {
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-      pendingSaveRef.current = null;
-      await clearConversationMutation.mutateAsync({
-        sessionId: currentSessionId,
-        clientUpdatedAt: new Date().toISOString(),
-      });
+      await clearConversation(currentSessionId);
       setMessages(nextMessages);
       setClearConfirmOpen(false);
       scheduleViewportScroll(0, 20);
@@ -1417,7 +778,7 @@ const AgentChat: React.FC = () => {
           cancelVariant="outline"
           confirmChildren={
             <>
-              {clearConversationMutation.isPending ? (
+              {clearConversationPending ? (
                 <Loader2 size={16} className="mr-1.5 animate-spin" />
               ) : (
                 t("agent.clearConfirmAction")

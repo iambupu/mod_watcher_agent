@@ -9,7 +9,7 @@ class UpdateTrackingService:
     """Dedicated service for querying and managing update events."""
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于查询和标记收藏更新事件。"""
         self.session = session
 
     def get_events(
@@ -78,11 +78,15 @@ def record_favorite_metadata_update(
     new_version: str | None,
     new_updated_at: str | None,
     detected_at: str,
+    favorite: Favorite | None = None,
 ) -> ModUpdateEvent | None:
     """Record an update when a metadata refresh advances a favorited mod."""
     if mod.id is None:
         return None
-    favorite = session.exec(select(Favorite).where(Favorite.mod_id == mod.id)).first()
+    if favorite is not None and favorite.mod_id != mod.id:
+        favorite = None
+    if favorite is None:
+        favorite = session.exec(select(Favorite).where(Favorite.mod_id == mod.id)).first()
     if favorite is None:
         return None
 

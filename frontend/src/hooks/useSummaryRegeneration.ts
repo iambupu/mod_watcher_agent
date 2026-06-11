@@ -1,3 +1,5 @@
+// 中文注释：封装 useSummaryRegeneration 相关的 React 状态同步逻辑。
+
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 
@@ -74,8 +76,9 @@ export function useSummaryRegeneration({
 
       setStatus(t("mod.summaryRegenerateQueued", { jobId: result.job_id }));
       const pollResult = await pollJobRun(result.job_id, {
-        attempts: 30,
-        intervalMs: 1000,
+        attempts: 60,
+        initialDelayMs: 0,
+        intervalMs: 500,
         isActive,
         onRunning: (job) => {
           setStatus(t("mod.summaryRegenerateRunning", { jobId: result.job_id, status: t(`jobs.status.${job.status}`) }));

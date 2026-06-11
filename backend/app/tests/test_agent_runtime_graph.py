@@ -14,6 +14,7 @@ from app.services.agent.reflection.audit_service import (
     classify_retrieval_reason_group,
     expected_reason_for_action,
 )
+from app.services.agent.routing.specific_mod_question_router import SpecificModRouteResult
 from app.services.agent.runtime import (
     AgentRuntime,
 )
@@ -21,6 +22,7 @@ from app.services.agent.schemas import (
     AgentAudit,
     AgentChatRequest,
     AgentChatResponse,
+    AgentHistoryItem,
     AgentModDetailRequest,
 )
 from app.services.agent.tools.mod_detail_answer_tool import ModDetailAnswerTool
@@ -82,7 +84,9 @@ def _assert_succeeded_trace(trace: list[dict], *, compat: bool = False) -> None:
                 "diagnose_query",
                 "plan_tools",
                 "staged_retrieval",
+                "bounded_react_retrieval",
                 "rank_results",
+                "self_correction_review",
                 "generate_answer",
                 "reflect",
                 "persist_result",
@@ -285,6 +289,137 @@ async def test_agent_runtime_chat_detail_phrase_routes_to_mod_detail_by_title(mo
     assert response is expected
     assert seen["tool_input"].mod_id == mod.id
     assert seen["tool_input"].question == "请详细解析这个 Mod：Bimbos of Skyrim - BimboLips 1.3.1"
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_chat_specific_title_question_routes_to_mod_detail(monkeypatch):
+    expected = _response("detail response")
+    seen = {}
+
+    async def fake_detail(self, tool_input):
+        seen["tool_input"] = tool_input
+        return expected
+
+    monkeypatch.setattr(ModDetailAnswerTool, "run", fake_detail)
+    with _session() as session:
+        mod = Mod(
+            source="nexusmods",
+            external_id="les-sucettes-physics",
+            game="Skyrim Special Edition",
+            game_domain="skyrimspecialedition",
+            title="Les Sucettes Outfit CBBE Bodyslide with Physics",
+            url="https://example.com/les-sucettes",
+            original_summary="CBBE SSE outfit conversion with Bodyslide and Physics enabled.",
+            first_seen_at="2026-05-28T00:00:00+00:00",
+            last_seen_at="2026-05-28T00:00:00+00:00",
+        )
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+
+        response = await AgentRuntime(session).chat(
+            AgentChatRequest(message="Les Sucettes Outfit CBBE Bodyslide with Physics的物理效果支持情况如何?"),
+            object(),
+        )
+
+    assert response is expected
+    assert seen["tool_input"].mod_id == mod.id
+    assert seen["tool_input"].question == "Les Sucettes Outfit CBBE Bodyslide with Physics的物理效果支持情况如何?"
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_chat_llm_router_routes_specific_history_reference(monkeypatch):
+    expected = _response("detail response")
+    seen = {}
+
+    async def fake_detail(self, tool_input):
+        seen["tool_input"] = tool_input
+        return expected
+
+    async def fake_route(self, route_input):
+        mod = seen["mod"]
+        return SpecificModRouteResult(
+            route="mod_detail",
+            mod_id=mod.id,
+            confidence=0.92,
+            reason="history ordinal points to a specific Mod",
+            used_llm=True,
+            candidate_count=2,
+        )
+
+    monkeypatch.setattr(ModDetailAnswerTool, "run", fake_detail)
+    monkeypatch.setattr(runtime_module.SpecificModQuestionRouter, "route", fake_route)
+    with _session() as session:
+        mod = Mod(
+            source="nexusmods",
+            external_id="layer-bikini",
+            game="Skyrim Special Edition",
+            game_domain="skyrimspecialedition",
+            title="Layer Bikini (CBBE 3BB)",
+            url="https://example.com/layer-bikini",
+            original_summary="A bikini outfit.",
+            first_seen_at="2026-05-28T00:00:00+00:00",
+            last_seen_at="2026-05-28T00:00:00+00:00",
+        )
+        session.add(mod)
+        session.commit()
+        session.refresh(mod)
+        seen["mod"] = mod
+
+        response = await AgentRuntime(session).chat(
+            AgentChatRequest(
+                message="第二个物理效果怎么样？",
+                history=[
+                    AgentHistoryItem(
+                        role="assistant",
+                        text="[shown_mods]\n1. title=Other Outfit; source=nexusmods\n2. title=Layer Bikini (CBBE 3BB); source=nexusmods",
+                    )
+                ],
+            ),
+            object(),
+        )
+
+    assert response is expected
+    assert seen["tool_input"].mod_id == mod.id
+    assert seen["tool_input"].question == "第二个物理效果怎么样？"
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_chat_llm_router_keeps_broad_question_on_search_path(monkeypatch):
+    expected = _response("search response")
+    seen = {"graph": False}
+
+    async def fake_detail(self, tool_input):
+        raise AssertionError("broad search question should not use mod detail route")
+
+    async def fake_route(self, route_input):
+        seen["route_input"] = route_input
+        return SpecificModRouteResult(
+            route="search",
+            confidence=0.86,
+            reason="user asks for a generalized recommendation list",
+            used_llm=True,
+            candidate_count=3,
+        )
+
+    async def fake_run_agent_graph(session, state):
+        seen["graph"] = True
+        state["response"] = expected
+        return state
+
+    monkeypatch.setattr(ModDetailAnswerTool, "run", fake_detail)
+    monkeypatch.setattr(runtime_module.SpecificModQuestionRouter, "route", fake_route)
+    monkeypatch.setattr(runtime_module, "run_agent_graph", fake_run_agent_graph)
+
+    with _session() as session:
+        response = await AgentRuntime(session).chat(
+            AgentChatRequest(message="推荐几个支持物理效果的服装"),
+            object(),
+        )
+
+    assert seen["graph"] is True
+    assert seen["route_input"].message == "推荐几个支持物理效果的服装"
+    assert response.answer == "search response"
 
 
 @pytest.mark.asyncio

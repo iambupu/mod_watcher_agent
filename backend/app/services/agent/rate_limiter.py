@@ -15,7 +15,7 @@ _AGENT_RATE_LOCK = asyncio.Lock()
 
 
 def build_rate_limit_key(request: Request, settings: SettingsService) -> str:
-    """构建后续流程需要的数据结构。"""
+    """优先按 Agent 会话限流；没有活动会话时退回客户端 IP。"""
     active_session = (settings.get(AGENT_CHAT_ACTIVE_SESSION_KEY) or "").strip()
     if active_session:
         return f"agent:{active_session}"
@@ -24,7 +24,7 @@ def build_rate_limit_key(request: Request, settings: SettingsService) -> str:
 
 
 async def enforce_rate_limit(key: str) -> None:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """使用内存 token bucket 限制 Agent 请求频率，并定期清理闲置 bucket。"""
     now = time.monotonic()
     async with _AGENT_RATE_LOCK:
         stale_keys = [k for k, (_, last_seen) in _AGENT_RATE_BUCKETS.items() if now - last_seen > AGENT_RATE_BUCKET_TTL_SEC]

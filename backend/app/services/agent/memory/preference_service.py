@@ -1,3 +1,5 @@
+# 中文注释：管理 Agent 长期记忆、偏好和证据记录。
+
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -26,8 +28,12 @@ class AgentPreferenceService:
     def save_preferences(self, preferences: dict[str, Any]) -> dict[str, Any]:
         data = {**self.load_preferences(), **preferences}
         data["updated_at"] = datetime.now(UTC).isoformat()
-        self.settings.set(PREFERENCES_KEY, json.dumps(data, ensure_ascii=False))
-        self.settings.set(PREFERENCES_DIRTY_KEY, "false")
+        self.settings.set_batch(
+            {
+                PREFERENCES_KEY: json.dumps(data, ensure_ascii=False),
+                PREFERENCES_DIRTY_KEY: "false",
+            }
+        )
         return data
 
     def save_last_query_context(self, context: dict[str, Any]) -> dict[str, Any]:
@@ -36,8 +42,8 @@ class AgentPreferenceService:
             return self.load_preferences()
         return self.save_preferences({"last_query_context": cleaned})
 
-    def mark_dirty(self) -> None:
-        self.settings.set(PREFERENCES_DIRTY_KEY, "true")
+    def mark_dirty(self, *, commit: bool = True) -> None:
+        self.settings.set(PREFERENCES_DIRTY_KEY, "true", commit=commit)
 
     def is_dirty(self) -> bool:
         return parse_bool(self.settings.get(PREFERENCES_DIRTY_KEY))

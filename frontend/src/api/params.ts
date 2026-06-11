@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端查询参数序列化接口的类型和请求函数。
+
 export function boundedIntegerParam(
   value: number,
   {

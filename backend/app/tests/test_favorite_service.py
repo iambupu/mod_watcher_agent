@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.adapters.base import BaseAdapter
@@ -353,6 +354,29 @@ class TestCheckUpdate:
 
 class TestImportFavorite:
     @pytest.mark.asyncio
+    async def test_import_rolls_back_mod_and_favorite_when_final_update_fails(self, service, session, monkeypatch):
+        async def failing_update(*args, **kwargs):
+            raise RuntimeError("favorite update failed")
+
+        monkeypatch.setattr(service, "update_favorite", failing_update)
+
+        with pytest.raises(RuntimeError, match="favorite update failed"):
+            await service.import_and_favorite(
+                FavoriteImportCreate(
+                    source="nexusmods",
+                    external_id="4242",
+                    game="Skyrim Special Edition",
+                    game_domain="skyrimspecialedition",
+                    title="Rollback Test Mod",
+                    url="https://www.nexusmods.com/skyrimspecialedition/mods/4242",
+                    user_note="force update path",
+                )
+            )
+
+        assert session.exec(select(Mod).where(Mod.external_id == "skyrimspecialedition:4242")).first() is None
+        assert session.exec(select(Favorite)).all() == []
+
+    @pytest.mark.asyncio
     async def test_import_existing_favorite_records_local_metadata_update(self, service, mod, session):
         fav = await service.add_favorite(mod.id)
 
@@ -423,6 +447,62 @@ class TestReconcileLocalMetadataUpdates:
 
         assert service.reconcile_local_metadata_updates() == 0
         assert session.exec(select(ModUpdateEvent)).all() == []
+
+    def test_reconcile_loads_favorites_and_mods_in_bulk(self, service, mod, session, engine):
+        second_mod = Mod(
+            source="nexusmods",
+            external_id="1002",
+            game="Skyrim Special Edition",
+            game_domain="skyrimspecialedition",
+            title="Second Mod",
+            url="https://www.nexusmods.com/skyrimspecialedition/mods/1002",
+            version="1.0.0",
+            updated_at_remote="2025-01-01T00:00:00Z",
+            first_seen_at="2025-01-01T00:00:00Z",
+            last_seen_at="2025-01-01T00:00:00Z",
+        )
+        session.add(second_mod)
+        session.commit()
+        session.refresh(second_mod)
+        session.add(
+            Favorite(
+                mod_id=mod.id,
+                last_known_version=mod.version,
+                last_known_updated_at=mod.updated_at_remote,
+                created_at="2025-01-01T00:00:00Z",
+                updated_at="2025-01-01T00:00:00Z",
+            )
+        )
+        session.add(
+            Favorite(
+                mod_id=second_mod.id,
+                last_known_version=second_mod.version,
+                last_known_updated_at=second_mod.updated_at_remote,
+                created_at="2025-01-01T00:00:00Z",
+                updated_at="2025-01-01T00:00:00Z",
+            )
+        )
+        session.commit()
+        session.expire_all()
+
+        statements: list[str] = []
+
+        def capture_sql(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", capture_sql)
+        try:
+            assert service.reconcile_local_metadata_updates() == 0
+        finally:
+            event.remove(engine, "before_cursor_execute", capture_sql)
+
+        n_plus_one_shapes = [
+            statement
+            for statement in statements
+            if "WHERE mods.id = ?" in statement or "WHERE favorites.mod_id = ?" in statement
+        ]
+        assert n_plus_one_shapes == []
+        assert any("JOIN mods" in statement for statement in statements)
 
 
 class TestCheckAllFavorites:

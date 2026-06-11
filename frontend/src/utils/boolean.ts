@@ -1,3 +1,5 @@
+// 中文注释：提供 boolean 相关的前端纯函数工具。
+
 export function parseBoolean(value: unknown, fallback = false): boolean {
   if (typeof value === "boolean") {
     return value;

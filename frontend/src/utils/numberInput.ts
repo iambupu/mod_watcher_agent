@@ -1,3 +1,5 @@
+// 中文注释：提供 numberInput 相关的前端纯函数工具。
+
 export function parseIntegerInput(
   raw: string,
   {

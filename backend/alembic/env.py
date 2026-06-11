@@ -1,3 +1,5 @@
+# 中文注释：配置 Alembic 迁移上下文和数据库连接来源。
+
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool

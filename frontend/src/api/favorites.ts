@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端收藏接口的类型和请求函数。
+
 import { get, post, put, del } from "./client";
 import { fetchMod } from "./mods";
 import { fallbackModItem, mergeTranslatedSummary } from "./modHydration";
@@ -6,6 +8,8 @@ import { hydrateUpdateEvent, type BackendUpdateEvent } from "./updates";
 import { arrayOrEmpty } from "@/utils/array";
 import { parseJsonStringArray } from "@/utils/json";
 import { parseBoolean } from "@/utils/boolean";
+
+export type FavoriteRef = Pick<Favorite, "id" | "modId">;
 
 interface BackendFavorite {
   id: number;
@@ -59,19 +63,19 @@ function toBackendFavoriteUpdate(data: Partial<Favorite>): Record<string, unknow
   return payload;
 }
 
-export function getFavoriteModId(favorite: Favorite): number {
+export function getFavoriteModId(favorite: Pick<Favorite, "modId">): number {
   return favorite.modId;
 }
 
-export function favoriteByModId(favorites: Favorite[] | undefined): Map<number, Favorite> {
-  const pairs = new Map<number, Favorite>();
+export function favoriteByModId<T extends FavoriteRef>(favorites: T[] | undefined): Map<number, T> {
+  const pairs = new Map<number, T>();
   for (const favorite of favorites ?? []) {
     pairs.set(getFavoriteModId(favorite), favorite);
   }
   return pairs;
 }
 
-export function favoriteIdByModId(favorites: Favorite[] | undefined): Map<number, number> {
+export function favoriteIdByModId(favorites: FavoriteRef[] | undefined): Map<number, number> {
   const pairs = new Map<number, number>();
   for (const favorite of favorites ?? []) {
     pairs.set(getFavoriteModId(favorite), favorite.id);
@@ -82,6 +86,14 @@ export function favoriteIdByModId(favorites: Favorite[] | undefined): Map<number
 export const fetchFavorites = async (): Promise<Favorite[]> => {
   const raw = await get<BackendFavorite[]>("/favorites");
   return Promise.all(arrayOrEmpty<BackendFavorite>(raw).map(hydrateFavorite));
+};
+
+export const fetchFavoriteRefs = async (): Promise<FavoriteRef[]> => {
+  const raw = await get<BackendFavorite[]>("/favorites", { detail: "refs" });
+  return arrayOrEmpty<BackendFavorite>(raw).map((favorite) => ({
+    id: favorite.id,
+    modId: favorite.mod_id,
+  }));
 };
 
 export const addFavorite = async (data: {

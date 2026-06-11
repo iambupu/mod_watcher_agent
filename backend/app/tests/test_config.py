@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_config.py 的模块职责，便于后续维护定位。
+
 from app.config import _env_bool, _env_int
 
 

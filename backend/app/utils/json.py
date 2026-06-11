@@ -1,3 +1,5 @@
+# 中文注释：提供JSON 容错解析相关的纯函数工具。
+
 import json
 import re
 from typing import Any, TypeVar

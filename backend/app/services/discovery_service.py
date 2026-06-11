@@ -9,6 +9,7 @@ from app.adapters.base import BaseAdapter
 from app.models.mod import Mod
 from app.models.mod_item import ModItem
 from app.models.watch_rule import WatchRule
+from app.services.adapter_utils import call_with_adapter
 from app.services.filter_service import FilterService
 from app.services.llm_client import create_llm_filter_client
 from app.services.settings_service import SettingsService
@@ -27,11 +28,12 @@ class DiscoveryService:
     """Service for discovering new mods from configured sources."""
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于读取规则、过滤结果和持久化 Mod。"""
         self.session = session
 
     async def discover_from_rule(self, rule_id: int) -> list[dict]:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """执行单条监控规则的抓取、过滤和入库流程。"""
+        adapter = None
         try:
             rule = self.session.get(WatchRule, rule_id)
             if rule is None:
@@ -50,21 +52,26 @@ class DiscoveryService:
             if rule.source == "nexusmods":
                 nexus_api_key = SettingsService(self.session).get("nexus_api_key") or ""
             adapter = adapter_class(api_key=nexus_api_key) if rule.source == "nexusmods" else adapter_class()
-            raw_items: list[ModItem] = await adapter.fetch(rule.source_config_json)
 
-            all_mods: list[dict] = [_mod_item_to_dict(item) for item in raw_items]
+            async def _run(a: BaseAdapter) -> list[dict]:
+                raw_items: list[ModItem] = await a.fetch(rule.source_config_json)
+                all_mods: list[dict] = [_mod_item_to_dict(item) for item in raw_items]
+                filter_service = FilterService(llm_client=create_llm_filter_client(self.session))
+                filtered = filter_service.apply_filters(rule, all_mods, self.session)
+                results = self.upsert_mod_dicts(filtered)
+                return list(results["created_items"])
 
-            filter_service = FilterService(llm_client=create_llm_filter_client(self.session))
-            filtered = filter_service.apply_filters(rule, all_mods, self.session)
-
-            results = self.upsert_mod_dicts(filtered)
-            return list(results["created_items"])
+            return await call_with_adapter(
+                adapter=adapter,
+                callback=_run,
+                logger=logger,
+                context=f"discover_from_rule rule_id={rule_id}",
+            )
 
         except Exception:
             logger.exception("discover_from_rule failed for rule_id=%s", rule_id)
             self.session.rollback()
             raise
-
     def upsert_mod_items(self, items: list[ModItem]) -> dict:
         """Persist normalized mod items and return created/updated counts."""
         return self.upsert_mod_dicts([_mod_item_to_dict(item) for item in items])
@@ -145,7 +152,7 @@ class DiscoveryService:
 
 
 def _mod_item_to_dict(item: ModItem) -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """把适配器 ModItem 统一转换为入库前的字段字典。"""
     raw = item.raw or {}
     game = raw.get("game") if isinstance(raw.get("game"), dict) else {}
     category = item.categories[0] if item.categories and len(item.categories) > 0 else None
@@ -252,7 +259,7 @@ def _tags_json_value(value) -> str | None:
 
 
 def _mod_to_dict(mod: Mod) -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """把已持久化的 Mod 行转换为发现结果字典。"""
     return {
         "id": mod.id,
         "source": mod.source,

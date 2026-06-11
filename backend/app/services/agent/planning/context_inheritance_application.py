@@ -13,6 +13,7 @@ def apply_followup_context(raw: dict[str, Any], context: dict[str, Any], query: 
     context_semantic_anchors = string_list(context.get("semantic_anchors"))
     effective_context_keywords = context_keywords or context_semantic_anchors
     current_keywords = string_list(raw.get("keywords"))
+    primary_keywords = list(current_keywords)
     context_quality = safe_float(context.get("quality_score"))
     inherit_decision = decide_context_inheritance(
         query=query,
@@ -31,11 +32,29 @@ def apply_followup_context(raw: dict[str, Any], context: dict[str, Any], query: 
     inherited_fields: list[str] = []
     skipped_reason = ""
     overridden_by_current_signal = False
-    if llm_selected_context:
-        # LLM context selector 已结合完整上下文判断是否继承；这里仍保留显式当前槽位优先。
-        inherit_keywords = True
-        topic_shift = False
-    if not inherit_keywords:
+    fallback_keywords: list[str] = []
+    context_hints = list(effective_context_keywords)
+    blocked_terms: list[str] = []
+    inherit_mode = "none"
+    keyword_source = "current"
+    current_is_weak = _only_weak_current_keywords(current_keywords)
+    can_use_context_keywords = inherit_keywords and not topic_shift
+    if can_use_context_keywords and current_is_weak:
+        fallback_keywords = merge_context_keywords(
+            current_keywords=current_keywords,
+            context_keywords=effective_context_keywords,
+        )
+        if fallback_keywords:
+            raw["keywords"] = fallback_keywords
+            inherited_fields.append("keywords")
+            inherit_mode = "fallback_keywords"
+            keyword_source = "fallback_from_context"
+    elif can_use_context_keywords:
+        inherit_mode = "constraints_only"
+        keyword_source = "current_with_context_constraints"
+        blocked_terms = _blocked_context_terms(context_hints, current_keywords)
+    else:
+        blocked_terms = _blocked_context_terms(context_hints, current_keywords)
         if topic_shift:
             skipped_reason = "topic_shift"
             overridden_by_current_signal = True
@@ -44,14 +63,10 @@ def apply_followup_context(raw: dict[str, Any], context: dict[str, Any], query: 
             overridden_by_current_signal = True
         else:
             skipped_reason = "low_inherit_score"
-    if inherit_keywords:
-        raw["keywords"] = merge_context_keywords(
-            current_keywords=current_keywords,
-            context_keywords=effective_context_keywords,
-        )
-        inherited_fields.append("keywords")
-        # memory 默认是提示，不是命令；只有低信息追问且连续性足够高时才升级成 executor 字段。
-        if _allow_context_field_promotion(
+
+    should_promote_context_fields = (
+        inherit_mode in {"fallback_keywords", "constraints_only"}
+        and _allow_context_field_promotion(
             current_keywords=current_keywords,
             inherit_score=inherit_score,
             inherit_threshold=inherit_threshold,
@@ -59,15 +74,27 @@ def apply_followup_context(raw: dict[str, Any], context: dict[str, Any], query: 
             context_quality=context_quality,
             low_signal=inherit_decision.low_signal,
             raw=raw,
-        ):
-            _copy_context_value(raw, "game", "games", context, inherited_fields=inherited_fields)
-            _copy_context_value(raw, "source_name", "sources", context, inherited_fields=inherited_fields)
-            _copy_context_value(raw, "category", "categories", context, inherited_fields=inherited_fields)
-            for key in ["adult_content", "sort_field", "sort_order"]:
-                if raw.get(key) is None and context.get(key) is not None:
-                    raw[key] = context[key]
-                    inherited_fields.append(key)
-        raw["_agent_context_hint"] = _context_hint(context)
+        )
+    )
+    if should_promote_context_fields:
+        # memory 默认是提示，不是命令；只有低信息追问且连续性足够高时才升级成 executor 字段。
+        _copy_context_value(raw, "game", "games", context, inherited_fields=inherited_fields)
+        _copy_context_value(raw, "source_name", "sources", context, inherited_fields=inherited_fields)
+        _copy_context_value(raw, "category", "categories", context, inherited_fields=inherited_fields)
+        for key in ["adult_content", "sort_field", "sort_order"]:
+            if raw.get(key) is None and context.get(key) is not None:
+                raw[key] = context[key]
+                inherited_fields.append(key)
+    if inherit_mode == "constraints_only" and not inherited_fields:
+        inherit_mode = "none"
+        keyword_source = "current"
+        if not skipped_reason:
+            skipped_reason = "strong_current_signal" if current_keywords and not inherit_decision.low_signal else "low_inherit_score"
+            overridden_by_current_signal = bool(current_keywords and not inherit_decision.low_signal)
+    raw["_agent_context_hint"] = _context_hint(context)
+    inherited = bool(inherited_fields)
+    if not inherited and not blocked_terms:
+        blocked_terms = _blocked_context_terms(context_hints, current_keywords)
     raw["_agent_context_signal"] = {
         "source": context.get("source"),
         "quality_score": round(context_quality, 3),
@@ -75,7 +102,13 @@ def apply_followup_context(raw: dict[str, Any], context: dict[str, Any], query: 
         "continuity_score": round(float(continuity), 3),
         "inherit_score": round(float(inherit_score), 3),
         "inherit_threshold": round(float(inherit_threshold), 3),
-        "inherited": bool(inherit_keywords),
+        "inherited": inherited,
+        "inherit_mode": inherit_mode,
+        "primary_keywords": primary_keywords,
+        "fallback_keywords": fallback_keywords,
+        "context_hints": context_hints,
+        "blocked_terms": blocked_terms,
+        "keyword_source": keyword_source,
         "topic_shift": bool(topic_shift),
         "low_signal": bool(inherit_decision.low_signal),
         "inherited_fields": list(inherited_fields),
@@ -89,9 +122,10 @@ def apply_followup_context(raw: dict[str, Any], context: dict[str, Any], query: 
         raw["_agent_context_signal"]["llm_confidence"] = context.get("llm_confidence")
         raw["_agent_context_signal"]["llm_reason"] = context.get("llm_reason")
     logger.info(
-        "agent.context_inherit source=%s inherited=%s inherited_fields=%s skipped_reason=%s overridden_by_current_signal=%s inherit_keywords=%s followup_score=%.2f continuity_score=%.2f inherit_score=%.2f inherit_threshold=%.2f topic_shift=%s low_signal=%s quality_score=%.2f reasons=%s policy_reasons=%s current_keywords=%s context_keywords=%s context_semantic_anchors=%s",
+        "agent.context_inherit source=%s inherited=%s inherit_mode=%s inherited_fields=%s skipped_reason=%s overridden_by_current_signal=%s inherit_keywords=%s followup_score=%.2f continuity_score=%.2f inherit_score=%.2f inherit_threshold=%.2f topic_shift=%s low_signal=%s quality_score=%.2f reasons=%s policy_reasons=%s current_keywords=%s context_keywords=%s context_semantic_anchors=%s fallback_keywords=%s blocked_terms=%s",
         context.get("source"),
-        bool(inherit_keywords),
+        inherited,
+        inherit_mode,
         inherited_fields,
         skipped_reason,
         overridden_by_current_signal,
@@ -108,6 +142,8 @@ def apply_followup_context(raw: dict[str, Any], context: dict[str, Any], query: 
         current_keywords,
         context_keywords,
         context_semantic_anchors,
+        fallback_keywords,
+        blocked_terms,
     )
 
 
@@ -120,6 +156,13 @@ def mark_current_context_not_inherited(raw: dict[str, Any], context: dict[str, A
         "inherit_score": 0.0,
         "inherit_threshold": 0.0,
         "inherited": False,
+        "inherit_mode": "none",
+        "primary_keywords": string_list(raw.get("keywords")),
+        "fallback_keywords": [],
+        "context_hints": string_list((context or {}).get("keywords"))
+        or string_list((context or {}).get("semantic_anchors")),
+        "blocked_terms": [],
+        "keyword_source": "current",
         "topic_shift": False,
         "low_signal": False,
         "inherited_fields": [],
@@ -168,6 +211,19 @@ def _context_hint(context: dict[str, Any]) -> dict[str, Any]:
         "source": context.get("source"),
         "quality_score": context.get("quality_score"),
     }
+
+
+def _blocked_context_terms(context_terms: list[str], current_keywords: list[str]) -> list[str]:
+    current = {str(value or "").strip().lower() for value in current_keywords if str(value or "").strip()}
+    blocked: list[str] = []
+    seen: set[str] = set()
+    for value in context_terms:
+        token = str(value or "").strip().lower()
+        if not token or token in current or token in seen:
+            continue
+        blocked.append(token)
+        seen.add(token)
+    return blocked
 
 
 def merge_context_keywords(*, current_keywords: list[str], context_keywords: list[str]) -> list[str]:
@@ -233,7 +289,34 @@ def _copy_context_value(
 def _is_weak_keyword(token: str) -> bool:
     if len(token) <= 1:
         return True
-    return token in {"mod", "mods", "style", "related", "similar", "continue", "继续", "相关", "类似", "风格", "相关风格"}
+    return token in {
+        "mod",
+        "mods",
+        "style",
+        "related",
+        "similar",
+        "same",
+        "continue",
+        "more",
+        "another",
+        "result",
+        "results",
+        "ll",
+        "loverslab",
+        "nexus",
+        "nexusmods",
+        "继续",
+        "相关",
+        "类似",
+        "同类",
+        "结果",
+        "的结果",
+        "风格",
+        "相关风格",
+        "相关结果",
+        "类似结果",
+        "同类结果",
+    }
 
 
 def _only_weak_current_keywords(values: list[str]) -> bool:

@@ -173,6 +173,7 @@ def _fallback_strategy(tool_input: SemanticStrategyInput) -> SemanticStrategy:
     hard_filters = _fallback_hard_filters(tool_input)
     core_terms = base_keywords(query)[:6]
     soft_signals = _fallback_soft_signals(tool_input, core_terms)
+    contract = _fallback_contract(task_type, query)
     return SemanticStrategy(
         task_type=task_type,
         user_goal=query.strip()[:500],
@@ -180,6 +181,10 @@ def _fallback_strategy(tool_input: SemanticStrategyInput) -> SemanticStrategy:
         hard_filters=hard_filters,
         core_terms=core_terms,
         soft_signals=soft_signals,
+        direct_match_definition=contract["direct_match_definition"],
+        support_context_definition=contract["support_context_definition"],
+        reject_as_primary=contract["reject_as_primary"],
+        answer_policy=contract["answer_policy"],
         ranking_goal=_ranking_goal(task_type, query),
         answer_shape=answer_shape_map[task_type],
         confidence=0.55 if task_type != "unknown" else 0.25,
@@ -250,6 +255,38 @@ def _ranking_goal(task_type: str, query: str) -> str:
     if task_type == "preference":
         return "优先总结用户长期偏好和收藏画像。"
     return f"先澄清用户目标：{query[:120]}"
+
+
+def _fallback_contract(task_type: str, query: str) -> dict[str, Any]:
+    text = query.lower()
+    has_strict_scope = any(marker in text for marker in ["只看", "不要", "排除", "不看", "别看", "only", "exclude", "without"])
+    direct = ["候选本体必须直接满足用户本轮主目标，不能只靠宽泛关联或搭配价值。"]
+    support = ["依赖、兼容、背景、搭配、补丁、预设和上下文资料只能作为辅助说明。"]
+    reject = ["off_topic", "violates_explicit_exclusion", "only_supports_goal_but_not_primary_result"]
+    if task_type == "comparative":
+        direct = ["候选必须是用户要比较、替代或评估的目标，或能补足比较所需证据。"]
+        support = ["安装、兼容、风险、指标和上下文证据可辅助比较，但不能替代比较对象。"]
+    elif task_type == "advisory":
+        direct = ["候选必须能直接支持用户询问的安装、兼容、风险、依赖或建议判断。"]
+        support = ["相关生态、前置和补丁可以作为辅助上下文，但要标明用途。"]
+    elif task_type == "exact_lookup":
+        direct = ["候选必须匹配用户指定标题、URL、ID 或详情目标。"]
+        support = ["同名、相似名或相关上下文只能作为辅助确认信息。"]
+    elif task_type == "preference":
+        direct = ["回答应直接总结用户偏好、收藏画像或历史模式。"]
+        support = ["单个候选或历史片段只能作为偏好证据。"]
+    policy = {
+        "main_results": "only_direct_match" if has_strict_scope else "ranked_by_fit_type",
+        "support_context": "separate_section",
+        "uncertain_items": "mark_uncertain",
+        "insufficient_direct_matches": "state_insufficient_before_support_items",
+    }
+    return {
+        "direct_match_definition": direct,
+        "support_context_definition": support,
+        "reject_as_primary": reject,
+        "answer_policy": policy,
+    }
 
 
 def _evidence(result: SemanticStrategyResult, *, evidence_id: str) -> dict[str, Any]:

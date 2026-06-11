@@ -40,14 +40,14 @@ class LoversLabGoogleSearchTool:
     name = "loverslab_google_search"
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话和搜索配置，状态字段用于 evidence 说明跳过/降级原因。"""
         self.session = session
         self.settings = SettingsService(session)
         self.last_status = "not_started"
         self.last_reason: str | None = None
 
     async def run(self, tool_input: LoversLabGoogleSearchInput) -> list[SearchResult]:
-        """执行任务流程并返回结果。"""
+        """调用 Google Custom Search，物化 LoversLab 链接后按本轮查询排序。"""
         self.last_status = "succeeded"
         self.last_reason = None
         api_key = (self.settings.get("google_search_api_key") or "").strip()
@@ -78,7 +78,7 @@ class LoversLabGoogleSearchTool:
         api_key: str,
         engine_id: str,
     ) -> dict[str, str | int]:
-        """构建内部流程需要的数据结构。"""
+        """构建 Google Custom Search 参数，并把查询限制到 loverslab.com。"""
         query = semantic_query(clean_loverslab_query(tool_input.query)).search_text()
         if tool_input.game:
             query = f"{query} {tool_input.game}".strip()
@@ -98,7 +98,7 @@ class LoversLabGoogleSearchTool:
         return params
 
     async def _fetch(self, params: dict[str, str | int]) -> dict[str, Any]:
-        """请求外部数据并返回标准化结果。"""
+        """请求 Google Custom Search API 并校验响应是对象。"""
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             response = await client.get(GOOGLE_CUSTOM_SEARCH_ENDPOINT, params=params)
             response.raise_for_status()
@@ -108,7 +108,7 @@ class LoversLabGoogleSearchTool:
             return data
 
     def _upsert(self, items: list[dict[str, Any]], tool_input: LoversLabGoogleSearchInput) -> list[Mod]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """把 Google 搜索条目转换成 LoversLab 搜索记录并写回本地缓存。"""
         records: list[LoversLabSearchRecord] = []
         for item in items:
             url = str(item.get("link") or "").strip()
@@ -132,13 +132,13 @@ class LoversLabGoogleSearchTool:
         )
 
     def _score_and_sort(self, mods: list[Mod], tool_input: LoversLabGoogleSearchInput) -> list[SearchResult]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """复用 LoversLab 公共排序，返回统一 SearchResult。"""
         scored = score_and_sort_loverslab_mods(mods, query=tool_input.query, limit=tool_input.limit)
         return [SearchResult(score=score, mod=mod, tool_name=self.name) for score, mod in scored]
 
 
 def loverslab_google_input_from_plan(query: str, plan: dict[str, Any]) -> LoversLabGoogleSearchInput | None:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """从通用 query_plan 构造 Google LoversLab 搜索输入；非 LoversLab 来源直接跳过。"""
     sources = [str(value).strip().lower() for value in (plan.get("sources") or []) if str(value).strip()]
     if sources and "loverslab" not in sources:
         return None
@@ -158,7 +158,7 @@ def loverslab_google_input_from_plan(query: str, plan: dict[str, Any]) -> Lovers
 
 
 def _thumbnail_url(item: dict[str, Any]) -> str | None:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """从 Google pagemap 中提取可展示缩略图。"""
     pagemap = item.get("pagemap")
     if not isinstance(pagemap, dict):
         return None

@@ -1,3 +1,5 @@
+// 中文注释：提供 modAdult.test 相关的前端纯函数工具。
+
 import { describe, expect, it } from "vitest";
 
 import { isAdultContent } from "@/utils/modAdult";

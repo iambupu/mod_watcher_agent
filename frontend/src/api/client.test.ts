@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端client.test接口的类型和请求函数。
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { clearSecurityToken, get, post, setSecurityToken } from "./client";

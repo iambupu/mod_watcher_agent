@@ -1,3 +1,5 @@
+// 中文注释：提供规则编辑器里的 CommonFilterSection 表单组件。
+
 import React from "react";
 import { useRuleEditorStore } from "@/stores/ruleEditorStore";
 import type { CommonRuleFilters } from "@/types";

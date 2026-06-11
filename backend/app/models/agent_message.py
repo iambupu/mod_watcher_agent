@@ -1,3 +1,4 @@
+# 中文注释：定义Agent 会话消息相关的数据库持久化模型。
 
 from sqlmodel import Field, SQLModel
 

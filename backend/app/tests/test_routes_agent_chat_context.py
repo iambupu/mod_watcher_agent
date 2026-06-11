@@ -159,6 +159,7 @@ def _assert_graph_stage_logs(messages: list[str]) -> None:
         "plan_tools",
         "staged_retrieval",
         "rank_results",
+        "self_correction_review",
         "generate_answer",
         "reflect",
         "persist_result",
@@ -3553,7 +3554,18 @@ def test_chat_endpoint_returns_standard_understanding_and_evidence_id(client, en
     assert all(str(item.get("fragment_id", "")).startswith("r_") for item in body["retrieval_evidence"])
     assert any(isinstance(item.get("fields"), list) for item in body["retrieval_evidence"])
     assert any(item.get("stage") == "local_retrieval" for item in body["retrieval_evidence"])
-    assert all(item.get("stage") in {"local_retrieval", "vector_retrieval", "online_retrieval", "final_ranking", "online_adaptation"} for item in body["retrieval_evidence"])
+    assert all(
+        item.get("stage")
+        in {
+            "local_retrieval",
+            "vector_retrieval",
+            "online_retrieval",
+            "bounded_react_retrieval",
+            "final_ranking",
+            "online_adaptation",
+        }
+        for item in body["retrieval_evidence"]
+    )
     assert isinstance(body.get("audit"), dict)
     assert set(body["audit"].keys()) == {"analysis", "evidence", "conclusion"}
     assert body["audit"]["analysis"]["intent"] == "search"

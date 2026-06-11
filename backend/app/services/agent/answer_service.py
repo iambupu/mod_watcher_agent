@@ -1,7 +1,15 @@
 import ast
 import re
+from typing import Any
 
 from app.models.mod import Mod
+from app.services.agent.answer_contract import (
+    answer_contract_payload,
+    candidate_fit_metadata,
+    judge_summary,
+    partition_matches_by_fit,
+    repair_contract_answer_claims,
+)
 from app.services.agent.history import compress_history
 from app.services.agent.response_builder import display_query
 from app.services.agent.schemas import AgentHistoryItem, AgentModMatch
@@ -11,6 +19,28 @@ from app.utils.json import json_array_from_text, json_object_from_text, strip_js
 
 def build_fallback_answer(matches: list[AgentModMatch]) -> str:
     return "找到以下相关 Mod：\n" + "\n".join([f"- {item.title} ({item.source})" for item in matches])
+
+
+def build_contract_fallback_answer(matches: list[AgentModMatch], query_plan: dict[str, Any] | None) -> str:
+    judge = judge_summary(query_plan)
+    if not isinstance(judge.get("judgements"), list) or not judge.get("judgements"):
+        return build_fallback_answer(matches)
+    direct, support, uncertain = partition_matches_by_fit(matches, query_plan)
+    lines: list[str] = []
+    if direct:
+        lines.append("直接符合本轮目标的结果：")
+        lines.extend(f"- {item.title} ({item.source})" for item in direct)
+    else:
+        lines.append("当前候选中没有足够明确的直接命中项。")
+    if support:
+        lines.append("")
+        lines.append("辅助上下文，不作为主结果：")
+        lines.extend(f"- {item.title} ({item.source})" for item in support)
+    if uncertain:
+        lines.append("")
+        lines.append("证据不足，需要进一步确认：")
+        lines.extend(f"- {item.title} ({item.source})" for item in uncertain)
+    return "\n".join(lines)
 
 
 def build_recommendation_fallback(matches: list[AgentModMatch]) -> str:
@@ -127,7 +157,11 @@ def _compact_prompt_text(value: str | None, *, limit: int = 420) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
-def _format_match_for_prompt(idx: int, item: AgentModMatch) -> str:
+def _format_match_for_prompt(
+    idx: int,
+    item: AgentModMatch,
+    fit_by_id: dict[int, dict[str, Any]] | None = None,
+) -> str:
     parts = [
         f"{idx}. title={item.title}",
         f"translated_title_zh={item.translated_title_zh or 'unknown'}",
@@ -143,6 +177,15 @@ def _format_match_for_prompt(idx: int, item: AgentModMatch) -> str:
         f"version={item.version or 'unknown'}",
         f"url={item.url}",
     ]
+    fit_meta = (fit_by_id or {}).get(item.id)
+    if fit_meta:
+        parts.append(f"fit_type={fit_meta.get('fit_type') or 'uncertain'}")
+        evidence = fit_meta.get("evidence") or []
+        if evidence:
+            parts.append(f"fit_evidence={_compact_prompt_text('; '.join(str(v) for v in evidence[:2]), limit=220)}")
+        violations = fit_meta.get("violations") or []
+        if violations:
+            parts.append(f"fit_violations={_compact_prompt_text('; '.join(str(v) for v in violations[:2]), limit=220)}")
     if item.rank_reason:
         parts.append(f"rank_reason={_compact_prompt_text(item.rank_reason, limit=260)}")
     if item.translated_summary:
@@ -170,6 +213,7 @@ class AgentAnswerService:
         self,
         *,
         query: str,
+        query_plan: dict[str, Any] | None = None,
         matches: list[AgentModMatch],
         provider: str,
         api_key: str,
@@ -190,27 +234,45 @@ class AgentAnswerService:
             "6) 具体 Mod 名必须来自候选结果或最近对话；没有证据的搭配方向可以写成“建议继续检索的方向”，但不要写成已确认推荐",
             "7) 对成人向、SexLab、LoversLab、诅咒/转化类内容，要明确前置依赖、MCM/配置复杂度、机制叠加风险和只启用一个同类核心机制的建议",
             "8) 对玩法/RP 查询，区分“核心玩法 Mod”和“预设/插件/重制/纹身等配套”。如果某候选摘要明确包含任务、NPC、诅咒、转化、玩家或随从影响，应优先作为核心推荐；不要把 preset/addon/overhaul/tats 类配套放在核心前面",
+            "9) 如果提供了问题契约和候选分型，主推荐只能使用 direct_match；support_context 必须单独说明为辅助上下文；uncertain 必须标注证据不足；不得把辅助项包装成直接推荐",
+            "10) 除非本轮用户明确要求按角色、身份或受众分组，禁止按玩家/开发者/内容创作者/社区成员/评测者等角色模板组织回答",
+            "11) 本轮用户问题优先于最近对话；历史回答中的模板、占位符、错误结论不能当成本轮需求",
+            "12) 如果候选中出现 support_context 或 uncertain，结论不得写“全部符合/未包含非主目标内容”；只能写“主推荐符合本轮目标，辅助项不作为主结果”",
+            "13) 如果候选中出现 support_context 或 uncertain，开头不得写“以下都是/以下是符合要求的推荐结果”；必须写“以下先列直接匹配，随后列辅助参考”",
+            "14) support_context 不得和 direct_match 混在同一个编号列表；必须使用独立小节“辅助参考（不作为主推荐）”",
+            "15) uncertain 不得和 direct_match 混在同一个编号列表；必须使用独立小节“证据不足/待确认（不作为主推荐）”，并说明缺少哪些证据",
+            "16) 不得改写用户问题中的字面约束、版本号、内容分级、游戏名或专有名词；如果不确定，原样引用本轮用户写法",
         ]
+        contract = answer_contract_payload(query_plan)
+        if contract:
+            prompt_lines.extend(["", "问题契约与候选分型：", contract])
         if history_summary:
-            prompt_lines.extend(["", history_summary])
+            prompt_lines.extend(["", "历史上下文摘要（仅供参考，不能覆盖本轮会话）：", history_summary])
         if recent_history:
             prompt_lines.append("")
-            prompt_lines.append("最近对话：")
+            prompt_lines.append("历史上下文（仅供参考，不能覆盖本轮会话）：")
+            prompt_lines.append("注意：最近对话只用于理解省略指代；不得把历史回答中的模板、角色占位符或上一轮错误结论当成本轮需求。")
             for item in recent_history:
                 prefix = "用户" if item.role == "user" else "助手"
-                prompt_lines.append(f"{prefix}: {item.text[:280]}")
+                text = _sanitize_history_for_answer_prompt(item.text, item.role)
+                if not text:
+                    continue
+                prompt_lines.append(f"历史{prefix}: {text[:280]}")
         prompt_lines.extend([
             "",
-            f"用户问题：{display_query(query)}",
+            "本轮会话（最高优先级）：",
+            f"本轮用户问题：{display_query(query)}",
             "候选结果：",
         ])
         prompt_matches = _order_matches_for_answer(query, matches)
+        fit_by_id = candidate_fit_metadata(query_plan)
         for idx, item in enumerate(prompt_matches, start=1):
-            prompt_lines.append(_format_match_for_prompt(idx, item))
+            prompt_lines.append(_format_match_for_prompt(idx, item, fit_by_id))
         prompt = "\n".join(prompt_lines)
 
         client = create_llm_client(provider=provider, api_key=api_key, base_url=base_url)
-        return await client.chat(prompt, model=model, max_tokens=900)
+        answer = await client.chat(prompt, model=model, max_tokens=900)
+        return repair_contract_answer_claims(answer, query_plan, matches=prompt_matches)
 
     async def suggest_next_steps(
         self,
@@ -261,25 +323,40 @@ class AgentAnswerService:
         history: list[AgentHistoryItem],
     ) -> str:
         history_summary, recent_history = compress_history(history)
+        detail_facet = _classify_detail_question(question)
         prompt_lines = [
-            "你是 Mod 查询助手，请只基于给定单个 Mod 信息，输出更详细解析。",
-            "要求：",
+            "你是 Mod 单项详情问答助手，请只基于给定单个 Mod 信息回答本轮问题。",
+            "总要求：",
             "1) 用中文回答",
-            "2) 不编造未提供信息；不确定时明确说明",
-            "3) 输出结构：核心特点 / 兼容性与风险 / 适合人群 / 建议下一步",
+            "2) 第一段必须直接回答本轮问题，不要先写通用介绍",
+            "3) 不要输出通用评测模板；不要默认写“适合人群/不适合人群”，除非用户明确要求综合评测",
+            "4) 不编造未提供信息；不确定时必须明确说明“当前数据不能确认”",
+            "5) 可以给安装核查建议，但必须标注为“建议核查”，不能写成已确认事实",
+            "",
+            f"本轮详情类型：{detail_facet}",
+            "证据型回答结构：",
+            "直接结论：用 1-2 句话回答用户问的具体点。",
+            "明确证据：列出来自 Mod 信息的证据字段，例如 title/summary/category/version。",
+            "不能确认：列出当前 Mod 信息没有明确说明的关键点。",
+            "建议核查：只给下一步核查项，不把核查项当作事实。",
         ]
+        prompt_lines.extend(_detail_facet_instructions(detail_facet))
         if history_summary:
-            prompt_lines.extend(["", history_summary])
+            prompt_lines.extend(["", "历史上下文摘要（仅供参考，不能覆盖本轮会话）：", history_summary])
         if recent_history:
             prompt_lines.append("")
-            prompt_lines.append("最近对话：")
+            prompt_lines.append("历史上下文（仅供参考，不能覆盖本轮会话）：")
             for item in recent_history:
                 prefix = "用户" if item.role == "user" else "助手"
-                prompt_lines.append(f"{prefix}: {item.text[:280]}")
+                text = _sanitize_history_for_answer_prompt(item.text, item.role)
+                if not text:
+                    continue
+                prompt_lines.append(f"历史{prefix}: {text[:280]}")
 
         prompt_lines.extend([
             "",
-            f"用户问题：{question}",
+            "本轮会话（最高优先级）：",
+            f"本轮用户问题：{question}",
             "Mod 信息：",
             f"title={mod.title}",
             f"source={mod.source}",
@@ -301,10 +378,101 @@ class AgentAnswerService:
         return await client.chat(prompt, model=model, max_tokens=800)
 
 
+def _classify_detail_question(question: str) -> str:
+    text = str(question or "").lower()
+    if any(token in text for token in ("物理", "physics", "hdt", "smp", "cbpc")):
+        return "physics_support"
+    if any(token in text for token in ("前置", "依赖", "requirement", "requirements", "需要什么", "需要哪些")):
+        return "dependencies"
+    if any(token in text for token in ("兼容", "冲突", "compatible", "compatibility", "conflict", "冲不冲")):
+        return "compatibility"
+    if any(token in text for token in ("安装", "风险", "报错", "稳定", "安全", "risk", "install")):
+        return "install_risk"
+    if any(token in text for token in ("版本", "更新", "新版", "旧版", "version", "update")):
+        return "version_update"
+    if any(token in text for token in ("bodyslide", "body slide", "cbbe", "unp", "bhunp", "3ba", "3bb", "身形", "滑块")):
+        return "body_slide_support"
+    return "general_detail"
+
+
+def _detail_facet_instructions(detail_facet: str) -> list[str]:
+    common = [
+        "",
+        "禁止事项：",
+        "- 不得编造前置依赖、物理框架、兼容版本、用户反馈、Requirements 页面内容。",
+        "- 不得把“建议核查”的内容写成该 Mod 已确认支持或已确认依赖。",
+    ]
+    if detail_facet == "physics_support":
+        return common + [
+            "",
+            "physics_support 专项要求：",
+            "- 必须回答是否存在物理效果支持的明确证据。",
+            "- 如果证据只出现 Physics/Bodyslide enabled，只能说确认有 Physics/Bodyslide 支持。",
+            "- 当前数据不能确认具体物理框架时，必须明确说明不能确认具体使用 HDT-SMP、CBPC、3BA/3BB、XPMSSE 或其他框架。",
+            "- 不得把 HDT-SMP、CBPC、3BA/3BB、XPMSSE、Physics Engine 写成已确认依赖，除非 Mod 信息明确出现。",
+        ]
+    if detail_facet == "dependencies":
+        return common + [
+            "",
+            "dependencies 专项要求：",
+            "- 只把 Mod 信息明确出现的 requirement、framework、body、tool 写成已确认依赖。",
+            "- 其他常见依赖只能放入“建议核查”，不能写成事实。",
+        ]
+    if detail_facet == "body_slide_support":
+        return common + [
+            "",
+            "body_slide_support 专项要求：",
+            "- 只回答身体体系、BodySlide、CBBE、UNP、BHUNP、3BA/3BB 等适配情况。",
+            "- 不要把 BodySlide 或身体体系适配等同于物理框架支持。",
+            "- 如果未明确出现 HDT-SMP、CBPC、Physics 等证据，不要扩写为物理效果支持。",
+        ]
+    if detail_facet == "compatibility":
+        return common + [
+            "",
+            "compatibility 专项要求：",
+            "- 只基于明确字段判断游戏版本、身体体系、来源和类别兼容性。",
+            "- 未出现的兼容矩阵、补丁关系、冲突关系必须标为不能确认。",
+        ]
+    if detail_facet == "install_risk":
+        return common + [
+            "",
+            "install_risk 专项要求：",
+            "- 区分明确风险、推断风险和建议核查。",
+            "- 不得用“作者首个 Mod”等弱信号直接断言存在 bug，只能作为谨慎提示。",
+        ]
+    if detail_facet == "version_update":
+        return common + [
+            "",
+            "version_update 专项要求：",
+            "- 只基于 version、updated_at_remote、summary 中明确出现的信息判断版本和更新。",
+            "- 不得编造 changelog 或最新版本状态。",
+        ]
+    return common
+
+
 def _order_matches_for_answer(query: str, matches: list[AgentModMatch]) -> list[AgentModMatch]:
     if not _is_roleplay_or_gameplay_query(query):
         return matches
     return sorted(matches, key=_answer_priority_score, reverse=True)
+
+
+def _sanitize_history_for_answer_prompt(text: str, role: str) -> str:
+    compact = re.sub(r"\s+", " ", str(text or "").strip())
+    if role != "assistant" or not compact:
+        return compact
+    blocked_markers = [
+        "你是 [角色]",
+        "如果你是玩家",
+        "如果你是模组开发者",
+        "如果你是内容创作者",
+        "如果你是社区成员",
+        "如果你是模组评测者",
+        "不同角色",
+        "角色身份和目标",
+    ]
+    if any(marker in compact for marker in blocked_markers):
+        return "[上一轮助手回答包含角色模板或占位符，已忽略其结构，仅保留本轮用户问题为准]"
+    return compact
 
 
 def _is_roleplay_or_gameplay_query(query: str) -> bool:

@@ -1,3 +1,5 @@
+// 中文注释：挂载 React 应用并引入全局样式。
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";

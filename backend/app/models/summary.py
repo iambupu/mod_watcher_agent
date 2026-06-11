@@ -1,3 +1,4 @@
+# 中文注释：定义AI 摘要相关的数据库持久化模型。
 
 from sqlalchemy import Index
 from sqlmodel import Field, SQLModel

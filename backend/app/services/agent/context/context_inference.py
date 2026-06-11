@@ -10,6 +10,27 @@ _GENERIC_TERMS = {
     "风格",
     "style",
     "效果",
+    "相关",
+    "相关结果",
+    "类似",
+    "类似结果",
+    "同类",
+    "同类结果",
+    "继续",
+    "结果",
+    "的结果",
+    "related",
+    "similar",
+    "same",
+    "continue",
+    "more",
+    "another",
+    "result",
+    "results",
+    "ll",
+    "loverslab",
+    "nexus",
+    "nexusmods",
     "这种",
     "那种",
     "方向",
@@ -96,7 +117,7 @@ def should_inherit_context_keywords(
     context_terms = _clean_terms(context_keywords or [])
     if not context_terms:
         return False
-    current_terms = _clean_terms(current_keywords or base_keywords(current_text))
+    current_terms = _clean_terms(current_keywords if current_keywords is not None else base_keywords(current_text))
     decision = followup_decision(current_text)
     continuity = semantic_continuity_score(current_text, current_terms, context_terms)
     if not current_terms:
@@ -123,7 +144,7 @@ def context_keyword_inherit_score(
     context_terms = _clean_terms(context_keywords or [])
     if not context_terms:
         return 0.0
-    current_terms = _clean_terms(current_keywords or base_keywords(current_text))
+    current_terms = _clean_terms(current_keywords if current_keywords is not None else base_keywords(current_text))
     decision = followup_decision(current_text)
     continuity = semantic_continuity_score(current_text, current_terms, context_terms)
     lexical_terms = [term for term in current_terms if _is_lexical_token(term)]
@@ -168,9 +189,12 @@ def decide_context_inheritance(
 ) -> ContextInheritDecision:
     effective_context_keywords = _clean_terms(context_keywords or [])
     decision = followup_decision(query)
-    continuity = semantic_continuity_score(query, current_keywords or [], effective_context_keywords)
-    inherit_score = context_keyword_inherit_score(query, current_keywords or [], effective_context_keywords)
-    topic_shift = bool(current_keywords) and continuity < 0.22 and inherit_score < 0.2
+    continuity = semantic_continuity_score(query, current_keywords, effective_context_keywords)
+    inherit_score = context_keyword_inherit_score(query, current_keywords, effective_context_keywords)
+    current_terms = _clean_terms(current_keywords or [])
+    lexical_terms = [term for term in current_terms if _is_lexical_token(term)]
+    distinctive_current = _has_distinctive_terms(lexical_terms)
+    topic_shift = distinctive_current and continuity < 0.22 and inherit_score < 0.2
 
     threshold = 0.54
     policy_reasons: list[str] = []
@@ -180,7 +204,7 @@ def decide_context_inheritance(
     if context_quality >= 0.45:
         threshold -= 0.04
         policy_reasons.append("high_context_quality_relax")
-    if current_keywords and continuity < 0.25:
+    if distinctive_current and continuity < 0.25:
         threshold += 0.08
         policy_reasons.append("low_continuity_tighten")
     threshold = max(0.38, min(threshold, 0.75))
@@ -191,7 +215,7 @@ def decide_context_inheritance(
     if semantic_anchor_bias:
         policy_reasons.append("semantic_anchor_bias")
     refinement_bias = (
-        (not current_keywords)
+        (not distinctive_current)
         and has_refinement_constraints
         and decision.low_signal
         and context_quality >= 0.2
@@ -220,7 +244,7 @@ def semantic_continuity_score(
     current_keywords: list[str] | None,
     context_keywords: list[str] | None,
 ) -> float:
-    current_terms = _clean_terms(current_keywords or base_keywords(current_text))
+    current_terms = _clean_terms(current_keywords if current_keywords is not None else base_keywords(current_text))
     context_terms = _clean_terms(context_keywords or [])
     if not current_terms or not context_terms:
         return 0.0
@@ -254,9 +278,11 @@ def _has_relational_intent(text: str) -> bool:
     compact = re.sub(r"\s+", " ", text).strip()
     if not compact:
         return False
+    if any(marker in compact for marker in ("类似", "同类", "相关结果", "类似结果", "同类结果")):
+        return True
     patterns = (
         r"(?:^|[\s，。,？！!?.])(?:more|another|same|similar|related)(?:$|[\s，。,？！!?.])",
-        r"(?:^|[\s，。,？！!?.]).{0,2}(?:继续|再来|还有|同类|类似|相关)(?:$|[\s，。,？！!?.])",
+        r"(?:^|[\s，。,？！!?.]).{0,2}(?:继续|再来|还有|更多|同类|类似|相关).{0,4}(?:$|[\s，。,？！!?.])",
         r"(?:继续|保持).{0,4}(?:方向|这个方向|这个路子)",
         r"(?:^|[\s，。,？！!?.])(?:这种|那种|这个|那个)(?:$|[\s，。,？！!?.])",
     )
@@ -285,7 +311,7 @@ def _clean_terms(values: list[str]) -> list[str]:
 
 def _has_distinctive_terms(terms: list[str]) -> bool:
     for term in terms:
-        if term in _GENERIC_TERMS:
+        if _is_generic_term(term):
             continue
         if re.search(r"[\u4e00-\u9fff]", term) and len(term) >= 2:
             return True
@@ -297,7 +323,7 @@ def _has_distinctive_terms(terms: list[str]) -> bool:
 def _information_density(terms: list[str]) -> float:
     if not terms:
         return 0.0
-    informative = sum(1 for term in terms if term not in _GENERIC_TERMS)
+    informative = sum(1 for term in terms if not _is_generic_term(term))
     return informative / len(terms)
 
 
@@ -308,12 +334,12 @@ def _is_lexical_token(term: str) -> bool:
 def _informative_tokens(terms: list[str]) -> set[str]:
     tokens: set[str] = set()
     for term in terms:
-        if term in _GENERIC_TERMS:
+        if _is_generic_term(term):
             continue
         parts = re.split(r"[_\-\s]+", term)
         for part in parts:
             token = _normalize_semantic_token(part.strip())
-            if not token or token in _GENERIC_TERMS:
+            if not token or _is_generic_term(token):
                 continue
             if _is_lexical_token(token):
                 tokens.add(token)
@@ -332,3 +358,12 @@ def _topic_novelty_score(current_tokens: set[str], context_tokens: set[str]) -> 
 
 def _normalize_semantic_token(token: str) -> str:
     return canonical_semantic_token(token)
+
+
+def _is_generic_term(term: str) -> bool:
+    token = str(term or "").strip().lower()
+    if not token or "\ufffd" in token or "�" in token:
+        return True
+    if re.fullmatch(r"的?(?:结果|风格)", token):
+        return True
+    return token in _GENERIC_TERMS

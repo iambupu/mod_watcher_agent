@@ -1,4 +1,9 @@
+# 中文注释：说明 backend/app/tests/test_agent_quality_runner.py 的模块职责，便于后续维护定位。
+
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -9,6 +14,16 @@ from app.services.agent.quality.runner import (
     run_quality_cases,
     supported_expect_fields,
 )
+
+
+@contextmanager
+def _temporary_quality_case_file(filename: str, content: str) -> Iterator[Path]:
+    path = Path(__file__).resolve().parent / f"_tmp_{uuid4().hex}_{filename}"
+    path.write_text(content, encoding="utf-8")
+    try:
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def test_quality_runner_loads_yaml_cases_and_reports_passes():
@@ -56,11 +71,11 @@ def test_quality_runner_loads_yaml_cases_and_reports_passes():
         assert "diagnosis.understanding.semantic_domains_contains" in target_checks
 
 
-def test_quality_runner_loader_rejects_non_object_cases(tmp_path):
-    path = tmp_path / "bad-core.yaml"
-    path.write_text("- id: ok\n  query: bimbo\n- bad-case\n", encoding="utf-8")
-
-    with pytest.raises(ValueError, match=r"indexes: \[1\]"):
+def test_quality_runner_loader_rejects_non_object_cases():
+    with (
+        _temporary_quality_case_file("bad-core.yaml", "- id: ok\n  query: bimbo\n- bad-case\n") as path,
+        pytest.raises(ValueError, match=r"indexes: \[1\]"),
+    ):
         load_quality_cases(path)
 
 

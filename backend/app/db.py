@@ -1,3 +1,5 @@
+# 中文注释：初始化 SQLModel 引擎，并提供请求级数据库会话依赖。
+
 import json
 import logging
 from collections.abc import Generator
@@ -40,7 +42,6 @@ if "sqlite" in settings.DATABASE_URL:
 
 
 def init_db() -> None:
-    """处理当前模块的业务逻辑并返回结果。"""
     SQLModel.metadata.create_all(engine)
 
     # ── Alembic managed migrations ──────────────────────────────────
@@ -57,29 +58,30 @@ def init_db() -> None:
             with engine.connect() as conn:
                 version_rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
             if not version_rows:
+                _apply_lightweight_migrations()
                 command.stamp(cfg, "head")
-                _ensure_performance_indexes()
-                _normalize_mod_identity_data()
-                _ensure_sqlite_fts()
+                _finalize_runtime_schema()
                 return
             command.upgrade(cfg, "head")
-            _ensure_performance_indexes()
-            _normalize_mod_identity_data()
-            _ensure_sqlite_fts()
+            _apply_lightweight_migrations()
+            _finalize_runtime_schema()
         else:
             # Existing databases created by SQLModel metadata may not have
             # alembic_version yet. Schema is already present after create_all(),
             # so stamp current head to avoid replaying initial CREATE TABLE ops.
+            _apply_lightweight_migrations()
             command.stamp(cfg, "head")
-            _ensure_performance_indexes()
-            _normalize_mod_identity_data()
-            _ensure_sqlite_fts()
+            _finalize_runtime_schema()
         return
     except Exception:
         logger.exception("Alembic upgrade failed; falling back to manual migrations.")
 
     # ── Fallback: lightweight runtime migration for existing SQLite DBs ──
     _apply_lightweight_migrations()
+    _finalize_runtime_schema()
+
+
+def _finalize_runtime_schema() -> None:
     _ensure_performance_indexes()
     _ensure_sqlite_fts()
 
@@ -109,12 +111,15 @@ def _ensure_performance_indexes() -> None:
         "CREATE INDEX IF NOT EXISTS ix_mods_ignored_downloads ON mods(ignored, downloads)",
         "CREATE INDEX IF NOT EXISTS ix_mods_ignored_endorsements ON mods(ignored, endorsements)",
         "CREATE INDEX IF NOT EXISTS ix_mods_ignored_updated_at_remote ON mods(ignored, updated_at_remote)",
+        "CREATE INDEX IF NOT EXISTS ix_mods_ignored_downloads_endorsements_first_seen_at ON mods(ignored, downloads DESC, endorsements DESC, first_seen_at DESC)",
         "CREATE INDEX IF NOT EXISTS ix_mods_game_ignored ON mods(game, ignored)",
         "CREATE INDEX IF NOT EXISTS ix_mods_game_domain_ignored ON mods(game_domain, ignored)",
+        "CREATE INDEX IF NOT EXISTS ix_mods_ignored_game_domain_game ON mods(ignored, game_domain, game)",
         "CREATE INDEX IF NOT EXISTS ix_mods_source_ignored ON mods(source, ignored)",
         "CREATE INDEX IF NOT EXISTS ix_mods_category_ignored ON mods(category, ignored)",
         "CREATE INDEX IF NOT EXISTS ix_mod_summaries_lookup ON mod_summaries(mod_id, language, summary_type, id)",
         "CREATE INDEX IF NOT EXISTS ix_mod_summaries_language_type_mod ON mod_summaries(language, summary_type, mod_id)",
+        "CREATE INDEX IF NOT EXISTS ix_job_runs_started_at_desc ON job_runs(started_at DESC)",
     ]
     with engine.begin() as conn:
         mod_cols = conn.execute(text("PRAGMA table_info('mods')")).fetchall()
@@ -490,6 +495,5 @@ def _table_exists(conn, table_name: str) -> bool:
 
 
 def get_session() -> Generator[Session, None, None]:
-    """读取并返回对应的数据。"""
     with Session(engine) as session:
         yield session

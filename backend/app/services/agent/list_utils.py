@@ -1,3 +1,5 @@
+# 中文注释：封装 Agent 服务层的Agent 列表安全处理逻辑。
+
 from collections.abc import Callable, Iterable
 
 

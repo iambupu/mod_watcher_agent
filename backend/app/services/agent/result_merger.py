@@ -90,14 +90,20 @@ def filter_by_distinctive_terms(
                 query,
                 fallback_terms=fallback_terms,
                 include_author=include_author,
+                require_fallback_semantic_hit=_requires_direct_semantic_filter(query_plan),
             )
         results_with_scores.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+        if _requires_direct_semantic_filter(query_plan):
+            direct_results = [item for score, _, item in results_with_scores if score > 0]
+            if direct_results:
+                return direct_results
         return [item for _, _, item in results_with_scores]
     return _legacy_filter_by_distinctive_terms(
         results,
         query,
         fallback_terms=fallback_terms,
         include_author=include_author,
+        require_fallback_semantic_hit=_requires_direct_semantic_filter(query_plan),
     )
 
 
@@ -107,19 +113,42 @@ def _legacy_filter_by_distinctive_terms(
     *,
     fallback_terms: list[str] | None = None,
     include_author: bool = False,
+    require_fallback_semantic_hit: bool = False,
 ) -> list[SearchResult]:
     terms = distinctive_query_terms(query)
     if terms:
         min_hits = _required_term_hits(len(terms))
-        return [
+        matched = [
             item
             for item in results
             if _mod_term_hit_count(item.mod, terms, include_author=include_author) >= min_hits
         ]
-    fallback = [term for term in (fallback_terms or []) if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", str(term).strip().lower())]
+        fallback = _fallback_filter_terms_for_matching(fallback_terms)
+        semantic_fallback = [term for term in fallback if term not in terms]
+        if semantic_fallback:
+            direct = [
+                item
+                for item in matched
+                if _mod_contains_any_term(item.mod, semantic_fallback, include_author=include_author)
+            ]
+            if direct or require_fallback_semantic_hit:
+                return direct
+        return matched
+    fallback = _fallback_filter_terms_for_matching(fallback_terms)
     if not fallback:
         return results
     return [item for item in results if _mod_contains_any_term(item.mod, fallback, include_author=include_author)]
+
+
+def _fallback_filter_terms_for_matching(fallback_terms: list[str] | None) -> list[str]:
+    terms: list[str] = []
+    for value in fallback_terms or []:
+        term = str(value or "").strip().lower()
+        if not term:
+            continue
+        if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", term) or re.search(r"[\u4e00-\u9fff]", term):
+            terms.append(term)
+    return list(dict.fromkeys(terms))
 
 
 def _query_plan_anchor_groups(query_plan: dict | None) -> list[tuple[tuple[str, ...], float]]:
@@ -153,6 +182,19 @@ def _query_plan_anchor_groups(query_plan: dict | None) -> list[tuple[tuple[str, 
         seen.add(anchor_term)
         deduped.append((terms, weight))
     return deduped
+
+
+def _requires_direct_semantic_filter(query_plan: dict | None) -> bool:
+    if not isinstance(query_plan, dict):
+        return False
+    strategy = query_plan.get("_agent_semantic_strategy")
+    if not isinstance(strategy, dict):
+        return False
+    policy = strategy.get("answer_policy")
+    if not isinstance(policy, dict):
+        return False
+    main_results = str(policy.get("main_results") or "").strip().lower()
+    return main_results in {"only_direct_match", "direct_match_only"}
 
 
 def _query_group_match_count(

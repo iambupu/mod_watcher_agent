@@ -1,3 +1,5 @@
+// 中文注释：定义 uiStore 的 Zustand 状态边界。
+
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { SummaryMode } from "@/types";

@@ -64,6 +64,10 @@ from app.services.agent.planning.query_intent import (
     is_open_discovery_query,
     is_recent_query,
 )
+from app.services.agent.planning.query_plan_hygiene import (
+    sanitize_category_slot_options,
+    sanitize_query_plan_fields,
+)
 from app.services.agent.planning.slot_normalization import (
     normalize_absolute_date as _normalize_absolute_date,
 )
@@ -187,7 +191,7 @@ SORT_COLUMNS = {
 }
 
 def _distinct_non_empty_values(session: Session, column: Any, limit: int = SLOT_OPTION_LIMIT) -> list[str]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """从数据库列读取非空去重槽位，作为查询计划的允许值集合。"""
     rows = session.exec(
         select(column)
         .where(column.is_not(None), column != "")
@@ -199,7 +203,7 @@ def _distinct_non_empty_values(session: Session, column: Any, limit: int = SLOT_
 
 
 def load_slot_options(session: Session) -> dict[str, list[str]]:
-    """加载配置或持久化数据。"""
+    """加载当前库内可用的游戏、分类和来源，约束 LLM 计划不要生成离散值。"""
     return {
         "games": _distinct_non_empty_values(session, Mod.game),
         "game_domains": _distinct_non_empty_values(session, Mod.game_domain),
@@ -209,7 +213,7 @@ def load_slot_options(session: Session) -> dict[str, list[str]]:
 
 
 def _infer_allowed_values_from_text(text: str, aliases: dict[str, list[str]]) -> list[str]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """用规范化别名 key 从用户文本里推断已知槽位值。"""
     key = alias_key(text)
     if not key:
         return []
@@ -221,7 +225,7 @@ def _infer_allowed_values_from_text(text: str, aliases: dict[str, list[str]]) ->
 
 
 def _normalize_sort_field(raw: Any, intent: str) -> str:
-    """规范化内部数据，供后续流程使用。"""
+    """把用户或 LLM 给出的排序别名收敛到数据库字段或相关性排序。"""
     value = str(raw or "").strip().lower()
     aliases = {
         "updated": "updated_at_remote",
@@ -324,6 +328,8 @@ def _normalize_keywords_and_games(
     game_aliases_raw = raw.get("game_aliases")
     if game_aliases_raw:
         add_game_alias_mappings(game_aliases_raw, slot_options["games"])
+    # 游戏名既可能来自用户原文，也可能来自 LLM 的 keyword 列表；先统一成 alias key
+    # 再回写到 games，避免把 "Skyrim SE" 同时当成游戏和普通关键词。
     game_aliases = {alias_key(game): [game] for game in slot_options["games"] if alias_key(game)}
     game_aliases.update(_builtin_game_aliases(slot_options["games"]))
     game_aliases.update(build_resolved_aliases(slot_options["games"]))
@@ -344,6 +350,7 @@ def _normalize_keywords_and_games(
 
 
 def _builtin_game_aliases(allowed_games: list[str]) -> dict[str, list[str]]:
+    """补齐数据库里常见英文缩写和正式游戏名之间的映射。"""
     allowed_by_key = {alias_key(game): game for game in allowed_games}
     aliases: dict[str, list[str]] = {}
 
@@ -366,6 +373,7 @@ def _builtin_game_aliases(allowed_games: list[str]) -> dict[str, list[str]]:
 
 
 def _drop_broader_game_matches(games: list[str]) -> list[str]:
+    """同一句命中 Skyrim 与 Skyrim Special Edition 时，只保留更具体的游戏。"""
     keys = {game: alias_key(game) for game in games}
     return [
         game
@@ -379,6 +387,7 @@ def _drop_broader_game_matches(games: list[str]) -> list[str]:
 
 
 def _keyword_matches_game_alias(keyword: str, game_alias_keys: set[str]) -> bool:
+    """判断关键词是否已经被游戏槽位吸收，避免后续 FTS 再用它硬匹配。"""
     keyword_key = alias_key(keyword)
     if not keyword_key:
         return False
@@ -404,9 +413,10 @@ def _normalize_categories(
 ) -> tuple[list[str], list[str], str, list[str]]:
     """合并上游分类和语义分类；未明确要求分类时只产生软提示。"""
 
+    available_categories = sanitize_category_slot_options(slot_options["categories"])
     explicit_categories = _normalize_allowed_list(
         raw.get("categories") or raw.get("category"),
-        slot_options["categories"],
+        available_categories,
     )
     if explicit_categories and is_open_discovery_query(query) and not _query_mentions_category_scope(query):
         explicit_categories = []
@@ -421,7 +431,7 @@ def _normalize_categories(
         ]
         if semantic_matched_categories:
             explicit_categories = semantic_matched_categories
-    inferred_categories = infer_categories(query, slot_options["categories"], [], semantic=explicit_semantic)
+    inferred_categories = infer_categories(query, available_categories, [], semantic=explicit_semantic)
     hard_category_query = _query_mentions_category_scope(query)
     if explicit_categories or hard_category_query:
         categories = _merge_unique(explicit_categories, inferred_categories)
@@ -442,6 +452,7 @@ def normalize_query_plan(
     """将 executor 兼容查询计划规范化为数据库查询可消费的结构。"""
 
     raw = plan if isinstance(plan, dict) else {}
+    # 前端筛选器通过 [scope] 追加的是用户显式选择，优先级高于 LLM 解析结果。
     raw = _apply_scope_overrides(raw, query, slot_options)
     if not raw.get("excluded_keywords") and not raw.get("exclude_keywords"):
         inferred_exclusions = infer_excluded_keywords(query)
@@ -457,6 +468,7 @@ def normalize_query_plan(
         slot_options,
     )
     keywords = _merge_unique(keywords, semantic_keywords)
+    # 结构化槽位已经承载的词要从 keywords 中移除，避免同一约束重复参与硬过滤。
     keywords = _drop_excluded_keywords(keywords, excluded_keywords)
     categories = _drop_excluded_categories(categories, excluded_keywords)
     category_hints = _drop_excluded_categories(category_hints, excluded_keywords)
@@ -558,6 +570,7 @@ def normalize_query_plan(
         slot_options["game_domains"],
     )
     game_domains = _merge_unique(game_domains, _game_domains_from_games(games, slot_options["game_domains"]))
+    # URL 和外部 ID 是最强身份约束；能识别来源时同步收窄 sources。
     identity = infer_identity_constraints(query)
     source_url = _normalize_source_url(raw.get("source_url") or raw.get("url") or identity.get("source_url"))
     external_id = _normalize_external_id(raw.get("external_id") or raw.get("source_id") or identity.get("external_id"))
@@ -580,6 +593,7 @@ def normalize_query_plan(
     open_discovery = bool(raw_open_discovery) or is_open_discovery_query(query)
     retrieval_mode = "fuzzy" if open_discovery else "filtered"
 
+    # normalized 是所有后续工具共享的契约，只保留已验证或可推断的字段。
     normalized = {
         "intent": intent,
         "open_discovery": open_discovery,
@@ -638,10 +652,11 @@ def normalize_query_plan(
         normalized["keyword_match_mode"] = "all"
     if excluded_keywords:
         normalized["excluded_keywords"] = excluded_keywords
-    return normalized
+    return sanitize_query_plan_fields(normalized, query=query)
 
 
 def _query_mentions_category_scope(query: str) -> bool:
+    """判断用户是否真的在问分类/类型，避免开放发现被误收窄到错误分类。"""
     text = str(query or "").lower()
     markers = [
         "服装",
@@ -672,6 +687,7 @@ def _query_mentions_category_scope(query: str) -> bool:
 
 
 def _game_domains_from_games(games: list[str], allowed_domains: list[str]) -> list[str]:
+    """根据游戏名推回 Nexus game_domain，供在线检索使用。"""
     domains: list[str] = []
     for game in games:
         game_key = alias_key(game)
@@ -689,6 +705,7 @@ def _canonicalize_nexus_external_id(
     game_domains: list[str],
     slot_options: dict[str, list[str]],
 ) -> str | None:
+    """Nexus 纯数字 ID 需要带 game_domain，避免不同游戏的 mod id 冲突。"""
     if not external_id or not re.fullmatch(r"\d{2,12}", external_id):
         return external_id
     if "nexusmods" not in {source.strip().lower() for source in sources}:
@@ -702,6 +719,7 @@ def _identity_game_domain(
     game_domains: list[str],
     slot_options: dict[str, list[str]],
 ) -> str | None:
+    """从显式 domain 或游戏名中推断 Nexus 身份命名空间。"""
     if game_domains:
         return game_domains[0]
     for game in games:

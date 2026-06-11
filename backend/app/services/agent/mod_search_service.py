@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def score_mod(query: str, mod: Mod, extra_text: str = "") -> int:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """用标题、翻译标题、分类、摘要和补充摘要文本计算候选相关性。"""
     return text_score(
         query,
         [mod.title, mod.translated_title_zh, mod.game, mod.author, mod.category, mod.original_summary, extra_text],
@@ -42,16 +42,10 @@ def score_mod(query: str, mod: Mod, extra_text: str = "") -> int:
 
 
 def _build_mod_query_from_plan(plan: dict[str, Any]):
-    """构建内部流程需要的数据结构。"""
+    """把规范化 query_plan 翻译成只读 SQLModel 查询。"""
     conditions = [Mod.ignored == False]  # noqa: E712
-    game_values = plan.get("games") or []
-    game_domain_values = plan.get("game_domains") or []
-    if game_values or game_domain_values:
-        game_conditions = []
-        if game_values:
-            game_conditions.append(Mod.game.in_(game_values))
-        if game_domain_values:
-            game_conditions.append(Mod.game_domain.in_(game_domain_values))
+    game_conditions = _game_scope_conditions(plan)
+    if game_conditions:
         conditions.append(or_(*game_conditions))
 
     categories = plan.get("categories") or []
@@ -112,6 +106,7 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
         conditions.append(Mod.tags_json.ilike(f"%{tag}%"))
     summary_languages = _string_list(plan.get("summary_languages"))
     if summary_languages:
+        # 指定摘要语言时必须 join ModSummary，且只看用户可读的 brief/introduction。
         conditions.append(ModSummary.language.in_(summary_languages))
         conditions.append(ModSummary.summary_type.in_(["brief", "introduction"]))
     excluded_summary_languages = _string_list(plan.get("excluded_summary_languages"))
@@ -131,6 +126,7 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
         conditions.append(_compatibility_condition(term))
     exact_title = str(plan.get("exact_title") or "").strip()
     if exact_title:
+        # 精确标题同时匹配原文和中文标题，避免翻译标题查询漏召回。
         exact_key = _title_key(exact_title)
         conditions.append(
             or_(
@@ -164,6 +160,7 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
     category_conditions = [Mod.category.in_(categories)] if categories else []
     if category_conditions or keyword_conditions:
         if plan.get("category_match_mode") == "db_fuzzy" and category_conditions and keyword_conditions:
+            # 语义推断出的分类是软提示，和关键词 OR 起来提升召回，不能变成硬过滤。
             conditions.append(or_(*(category_conditions + keyword_conditions)))
         else:
             if category_conditions:
@@ -178,6 +175,7 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
     sort_column = SORT_COLUMNS.get(sort_field, Mod.first_seen_at)
     sort_expr = sort_column.asc() if plan.get("sort_order") == "asc" else sort_column.desc()
     result_limit = _result_limit(plan)
+    # 相关性排序需要先多取一批，再用 Python 结合摘要和身份分重排。
     query_limit = max(RELEVANCE_PREFETCH_LIMIT, result_limit) if sort_field == "relevance" else result_limit
     return (
         select(Mod)
@@ -190,14 +188,27 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
 
 
 def _db_fuzzy_keywords(plan: dict[str, Any], categories: list[str]) -> list[str]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """把 query_plan 关键词和语义扩展词合并成数据库模糊匹配词。"""
     keywords = [str(value).strip().lower() for value in (plan.get("keywords") or []) if str(value).strip()]
     semantic = semantic_query(" ".join(keywords), categories)
     return unique_terms([*keywords, *semantic.expanded_terms])
 
 
+def _game_scope_conditions(plan: dict[str, Any]) -> list[Any]:
+    game_values = _string_list(plan.get("games"))
+    game_domain_values = _string_list(plan.get("game_domains"))
+    if game_values and game_domain_values:
+        values = list(dict.fromkeys([*game_values, *game_domain_values]))
+        return [Mod.game.in_(values), Mod.game_domain.in_(values)]
+    if game_domain_values:
+        return [Mod.game.in_(game_domain_values), Mod.game_domain.in_(game_domain_values)]
+    if game_values:
+        return [Mod.game.in_(game_values)]
+    return []
+
+
 def _keyword_condition(keyword: str):
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """构造跨标题、作者、分类、标签、原摘要和生成摘要的模糊匹配。"""
     pattern = f"%{keyword}%"
     return or_(
         func.coalesce(Mod.title, "").ilike(pattern),
@@ -272,7 +283,7 @@ def _identity_score(plan: dict[str, Any], mod: Mod) -> int:
 
 
 def validate_agent_sql(statement: Any, session: Session) -> str:
-    """校验输入是否符合业务约束。"""
+    """验证 Agent 生成/拼装的 SQL 仍是只读 mods 查询。"""
     compiled = statement.compile(bind=session.get_bind(), compile_kwargs={"literal_binds": False})
     sql = str(compiled).strip()
     normalized = re.sub(r"--.*?\n|/\*.*?\*/", "", sql, flags=re.DOTALL)
@@ -284,7 +295,7 @@ def validate_agent_sql(statement: Any, session: Session) -> str:
 
 
 def query_mods_with_plan(session: Session, query: str, plan: dict[str, Any]) -> list[tuple[int, Mod]]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """先走 FTS 召回，再用结构化 SQL 兜底并合并重排。"""
     retrieval_plan = build_open_discovery_retrieval_plan(plan, query)
     fts_results = _query_mods_with_fts(session, retrieval_plan)
     if fts_results:
@@ -413,10 +424,12 @@ def query_mods_with_plan(session: Session, query: str, plan: dict[str, Any]) -> 
 
 
 def _result_limit(plan: dict[str, Any]) -> int:
+    """开放发现会扩大候选池，普通检索则使用 Agent 默认结果数。"""
     return open_discovery_result_limit(plan, default_limit=DEFAULT_AGENT_LIMIT)
 
 
 def _category_hint_score(plan: dict[str, Any], mod: Mod) -> int:
+    """给软分类提示一个小加分，不让它压过文本相关性和身份命中。"""
     hints = {str(value).strip().lower() for value in (plan.get("category_hints") or []) if str(value).strip()}
     if not hints:
         return 0
@@ -429,6 +442,7 @@ def _merge_scored_results(
     secondary: list[tuple[int, Mod]],
     limit: int,
 ) -> list[tuple[int, Mod]]:
+    """合并 FTS 和 SQL 结果，同一个 Mod 保留最高分。"""
     if not primary:
         return secondary[:limit]
     merged: dict[int, tuple[int, Mod]] = {}
@@ -442,6 +456,7 @@ def _merge_scored_results(
 
 
 def _query_mods_with_fts(session: Session, plan: dict[str, Any]) -> list[tuple[int, Mod]]:
+    """仅在相关性排序时启用 FTS，避免破坏用户显式指定的排序字段。"""
     if plan.get("sort_field") not in {None, "relevance"}:
         return []
     keywords = [str(value).strip() for value in (plan.get("keywords") or []) if str(value).strip()]
@@ -457,16 +472,17 @@ def _query_mods_with_fts(session: Session, plan: dict[str, Any]) -> list[tuple[i
 
 
 def _title_key(value: str | None) -> str:
+    """标题精确匹配使用折叠空白和小写后的 key。"""
     return " ".join(str(value or "").lower().split())
 
 
 def build_summary_map(session: Session, mod_ids: list[int]) -> dict[int, str]:
-    """构建后续流程需要的数据结构。"""
+    """读取每个 Mod 首选的简短摘要，供回答生成展示。"""
     return load_preferred_brief_summary_map(session, mod_ids)
 
 
 def build_search_text_map(session: Session, mod_ids: list[int]) -> dict[int, str]:
-    """构建后续流程需要的数据结构。"""
+    """拼接 brief/introduction 摘要，供 Python 相关性重排补充搜索文本。"""
     if not mod_ids:
         return {}
     rows = session.exec(

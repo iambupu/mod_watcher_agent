@@ -26,12 +26,12 @@ def create_job_run(
     job_name: str,
     metadata: dict[str, Any] | None = None,
 ) -> JobRun:
-    """创建并持久化对应的数据。"""
+    """创建手动任务运行记录，初始状态为 queued。"""
     return create_job_run_record(session, job_name, metadata)
 
 
 def enqueue_job_run(job_run_id: int, handler: JobHandler) -> None:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """把手动任务排进 APScheduler，立即触发异步执行。"""
     scheduler.add_job(
         run_job,
         DateTrigger(run_date=datetime.now(UTC)),
@@ -44,7 +44,7 @@ def enqueue_job_run(job_run_id: int, handler: JobHandler) -> None:
 
 
 async def run_job(job_run_id: int, handler: JobHandler) -> None:
-    """执行任务流程并返回结果。"""
+    """执行排队的手动任务，并把成功/失败状态写回 job_runs。"""
     with Session(engine) as session:
         job_run = session.get(JobRun, job_run_id)
         if job_run is None:

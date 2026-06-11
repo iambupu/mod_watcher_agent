@@ -1,3 +1,5 @@
+# 中文注释：封装后端服务层的来源身份归一化和匹配逻辑。
+
 import hashlib
 import re
 from urllib.parse import urlparse

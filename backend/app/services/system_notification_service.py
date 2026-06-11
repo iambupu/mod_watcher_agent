@@ -22,7 +22,7 @@ DESKTOP_DISPATCH_EVENT_TYPES = {
 class SystemNotificationService:
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于创建和查询系统通知事件。"""
         self.session = session
 
     def create_event(
@@ -33,7 +33,7 @@ class SystemNotificationService:
         mod_id: int | None = None,
         related_url: str | None = None,
     ) -> SystemNotificationEvent:
-        """创建并持久化对应的数据。"""
+        """创建系统通知事件，符合配置时立即尝试派发桌面通知。"""
         now = datetime.now(UTC).isoformat()
         event = SystemNotificationEvent(
             event_type=event_type,
@@ -57,7 +57,7 @@ class SystemNotificationService:
         return event
 
     def _desktop_notifications_enabled(self) -> bool:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """读取全局通知开关和系统通知开关。"""
         settings = SettingsService(self.session)
         return (
             parse_bool(settings.get("notifications_enabled"), default=True)
@@ -67,7 +67,7 @@ class SystemNotificationService:
     def get_recent_events(
         self, since_id: int = 0, limit: int = 50
     ) -> list[SystemNotificationEvent]:
-        """读取并返回对应的数据。"""
+        """读取指定 ID 之后的最近系统通知事件。"""
         stmt = (
             select(SystemNotificationEvent)
             .where(SystemNotificationEvent.id > since_id)
@@ -77,7 +77,7 @@ class SystemNotificationService:
         return list(self.session.exec(stmt).all())
 
     def mark_seen(self, event_ids: list[int]) -> int:
-        """标记状态变更并返回结果。"""
+        """批量标记系统通知为已读，并返回实际更新数量。"""
         deduped_ids = positive_integer_ids(event_ids)
         if not deduped_ids:
             return 0
@@ -99,7 +99,7 @@ class SystemNotificationService:
         event_ids: list[int],
         limit: int = 50,
     ) -> list[SystemNotificationEvent]:
-        """读取并返回对应的数据。"""
+        """按 ID 读取仍未读的系统通知，用于手动桌面派发。"""
         deduped_ids = positive_integer_ids(event_ids)
         if not deduped_ids:
             return []

@@ -83,6 +83,10 @@ class SemanticStrategy(BaseModel):
     hard_filters: SemanticHardFilters = Field(default_factory=SemanticHardFilters)
     core_terms: list[str] = Field(default_factory=list)
     soft_signals: list[str] = Field(default_factory=list)
+    direct_match_definition: list[str] = Field(default_factory=list)
+    support_context_definition: list[str] = Field(default_factory=list)
+    reject_as_primary: list[str] = Field(default_factory=list)
+    answer_policy: dict[str, str] = Field(default_factory=dict)
     ranking_goal: str = ""
     answer_shape: AnswerShape = "clarify_first"
     confidence: float = 0.0
@@ -93,12 +97,39 @@ class SemanticStrategy(BaseModel):
     def _strip_text(cls, value: object) -> str:
         return str(value or "").strip()[:1000]
 
-    @field_validator("core_terms", "soft_signals", mode="before")
+    @field_validator(
+        "core_terms",
+        "soft_signals",
+        "direct_match_definition",
+        "support_context_definition",
+        "reject_as_primary",
+        mode="before",
+    )
     @classmethod
     def _normalize_terms(cls, value: object) -> list[str]:
         if not isinstance(value, list):
             return []
         return unique_text((str(item or "").strip()[:120] for item in value), limit=16)
+
+    @field_validator("answer_policy", mode="before")
+    @classmethod
+    def _normalize_answer_policy(cls, value: object) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        allowed_keys = {
+            "main_results",
+            "main_recommendations",
+            "support_context",
+            "uncertain_items",
+            "insufficient_direct_matches",
+        }
+        policy: dict[str, str] = {}
+        for key, raw in value.items():
+            normalized_key = str(key or "").strip()
+            text = str(raw or "").strip()
+            if normalized_key in allowed_keys and text:
+                policy[normalized_key] = text[:160]
+        return policy
 
     @field_validator("confidence", mode="before")
     @classmethod

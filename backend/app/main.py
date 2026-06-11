@@ -1,3 +1,5 @@
+# 中文注释：装配 FastAPI 应用、中间件、静态资源和 API 路由。
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -43,7 +45,7 @@ async def _run_deferred_startup_maintenance() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """Initialize runtime services and shut down the scheduler on app exit."""
     require_safe_bind_host()
     setup_logging()
     init_db()
@@ -82,7 +84,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def local_only_api_guard(request: Request, call_next):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """Apply the configured local/LAN access policy before route handlers run."""
     policy = AccessPolicy()
     decision = policy.evaluate(request)
     if not decision.allow:
@@ -129,7 +131,7 @@ if FRONTEND_DIST_DIR.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_frontend(full_path: str):
-        """处理当前模块的业务逻辑并返回结果。"""
+        """Serve built frontend files and fall back to the SPA entrypoint."""
         requested_path = (FRONTEND_DIST_DIR / full_path).resolve()
         try:
             requested_path.relative_to(FRONTEND_DIST_DIR.resolve())
@@ -142,5 +144,4 @@ if FRONTEND_DIST_DIR.exists():
 else:
     @app.get("/")
     async def root():
-        """处理当前模块的业务逻辑并返回结果。"""
         return {"service": "Mod Watcher Agent", "version": "0.2.1"}

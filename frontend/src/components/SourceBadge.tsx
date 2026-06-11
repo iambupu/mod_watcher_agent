@@ -1,3 +1,5 @@
+// 中文注释：提供 SourceBadge 业务组件。
+
 import React from "react";
 import type { ModSource } from "@/types";
 

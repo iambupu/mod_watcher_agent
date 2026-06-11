@@ -49,8 +49,13 @@ def _resolve_log_dir() -> Path:
     return (backend_root / configured).resolve()
 
 
+def get_log_directory() -> Path:
+    """Return the resolved log directory used by logger setup and file readers."""
+    return _resolve_log_dir()
+
+
 def redact_sensitive_text(text: str) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """Mask API keys, bearer tokens, and webhook URLs before logs are stored."""
     redacted = text
     for pattern, replacement in _SENSITIVE_PATTERNS:
         redacted = pattern.sub(replacement, redacted)
@@ -59,7 +64,6 @@ def redact_sensitive_text(text: str) -> str:
 
 class SensitiveDataFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        """处理当前模块的业务逻辑并返回结果。"""
         message = record.getMessage()
         record.msg = redact_sensitive_text(message)
         record.args = ()
@@ -68,7 +72,6 @@ class SensitiveDataFilter(logging.Filter):
 
 class ThirdPartyNoiseFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        """处理当前模块的业务逻辑并返回结果。"""
         if record.levelno >= logging.WARNING:
             return True
         return not record.name.startswith(_QUIET_THIRD_PARTY_LOGGERS)
@@ -76,13 +79,12 @@ class ThirdPartyNoiseFilter(logging.Filter):
 
 class RingBufferHandler(logging.Handler):
     def __init__(self, capacity=2000):
-        """初始化实例并保存运行所需的依赖。"""
         super().__init__()
         self._buffer: deque[dict] = deque(maxlen=capacity)
         self._lock = Lock()
 
     def emit(self, record: logging.LogRecord) -> None:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """Store a redacted log entry in the in-memory UI buffer."""
         try:
             entry = {
                 "timestamp": datetime.fromtimestamp(record.created, tz=UTC)
@@ -100,7 +102,7 @@ class RingBufferHandler(logging.Handler):
     def get_entries(
         self, level: str | None = None, search: str | None = None, limit: int = 200
     ) -> list[dict]:
-        """读取并返回对应的数据。"""
+        """Return recent in-memory entries with optional level and text filters."""
         with self._lock:
             entries = list(self._buffer)
         if level:
@@ -121,7 +123,7 @@ _logging_initialized = False
 
 
 def setup_logging() -> None:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """Configure console, rotating file, and in-memory log handlers once."""
     global _ring_buffer, _logging_initialized
     if _logging_initialized:
         return
@@ -177,7 +179,7 @@ def setup_logging() -> None:
 def get_log_entries(
     level: str | None = None, search: str | None = None, limit: int = 200
 ) -> list[dict]:
-    """读取并返回对应的数据。"""
+    """Merge ring-buffer and file logs for the UI log viewer."""
     entries = _ring_buffer.get_entries(limit=limit) if _ring_buffer is not None else []
     entries.extend(_read_file_log_entries(limit=limit))
     entries = _dedupe_entries(entries)
@@ -199,7 +201,7 @@ def get_log_entries(
 
 
 def _read_file_log_entries(limit: int) -> list[dict]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """Read recent entries from known backend log files."""
     log_dir = _resolve_log_dir()
     entries: list[dict] = []
     for file_name in _LOG_FILE_NAMES:
@@ -217,7 +219,7 @@ def _read_file_log_entries(limit: int) -> list[dict]:
 
 
 def _tail_lines(path: Path, limit: int) -> list[str]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """Return the last log lines without loading the full file into memory."""
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
             return list(deque(handle, maxlen=limit))
@@ -226,7 +228,7 @@ def _tail_lines(path: Path, limit: int) -> list[str]:
 
 
 def _parse_log_lines(lines: list[str], *, source: str, fallback_timestamp: str = "") -> list[dict]:
-    """解析原始内容并返回结构化结果。"""
+    """把日志尾部行解析为结构化条目，并把续行合并到上一条消息。"""
     entries: list[dict] = []
     last_timestamp = fallback_timestamp
     for order, raw_line in enumerate(lines):
@@ -246,7 +248,7 @@ def _parse_log_lines(lines: list[str], *, source: str, fallback_timestamp: str =
 
 
 def _parse_log_line(line: str, *, source: str, fallback_timestamp: str = "") -> dict | None:
-    """解析原始内容并返回结构化结果。"""
+    """按文件日志、服务日志和纯文本日志三种格式解析单行。"""
     matched = _FILE_LOG_PATTERN.match(line)
     if matched:
         return {
@@ -278,7 +280,7 @@ def _parse_log_line(line: str, *, source: str, fallback_timestamp: str = "") -> 
 
 
 def _file_timestamp(path: Path) -> str:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """Use the file modified time as a fallback timestamp for parsed lines."""
     try:
         return (
             datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
@@ -290,7 +292,7 @@ def _file_timestamp(path: Path) -> str:
 
 
 def _normalize_level(level: str) -> str:
-    """规范化内部数据，供后续流程使用。"""
+    """规范化截断或别名日志级别。"""
     normalized = level.upper()
     if normalized == "WARNI":
         return "WARNING"
@@ -300,7 +302,7 @@ def _normalize_level(level: str) -> str:
 
 
 def _dedupe_entries(entries: list[dict]) -> list[dict]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """Remove duplicate entries seen through both memory and file sources."""
     seen: set[tuple[str, str, str, str]] = set()
     unique: list[dict] = []
     for entry in entries:
@@ -318,7 +320,7 @@ def _dedupe_entries(entries: list[dict]) -> list[dict]:
 
 
 def _public_log_entry(entry: dict) -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """Drop internal ordering metadata before returning log entries."""
     return {
         "timestamp": entry.get("timestamp", ""),
         "level": entry.get("level", ""),

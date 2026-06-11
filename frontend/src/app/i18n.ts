@@ -1,3 +1,5 @@
+// 中文注释：配置前端应用级 i18n 基础设施。
+
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import zhCN from "@/locales/zh-CN.json";

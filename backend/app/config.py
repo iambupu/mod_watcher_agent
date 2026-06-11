@@ -1,3 +1,5 @@
+# 中文注释：集中定义后端运行配置、环境变量默认值和路径开关。
+
 import os
 from pathlib import Path
 
@@ -9,13 +11,11 @@ load_dotenv()
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     raw = os.getenv(name)
     return parse_bool(raw, default=default)
 
 
 def _env_list(name: str, default: str) -> list[str]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     return [
         item.strip()
         for item in os.getenv(name, default).split(",")

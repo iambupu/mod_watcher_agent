@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端设置接口的类型和请求函数。
+
 import { get, put, post, buildApiUrl, buildAuthHeaders, apiErrorFromResponse } from "./client";
 import {
   ACCESS_PROFILES,

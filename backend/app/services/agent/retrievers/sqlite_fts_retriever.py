@@ -1,3 +1,5 @@
+# 中文注释：封装 Agent 检索器的SQLite FTS 检索逻辑。
+
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -127,10 +129,10 @@ def mods_fts_needs_rebuild(session: Session) -> bool:
                 SELECT 1
                 FROM mod_summaries s
                 JOIN mods m ON m.id = s.mod_id
-                LEFT JOIN mods_fts f ON f.mod_id = s.mod_id
+                LEFT JOIN mods_fts f ON f.rowid = s.mod_id
                 WHERE COALESCE(TRIM(s.content), '') != ''
                   AND (
-                    f.mod_id IS NULL
+                    f.rowid IS NULL
                     OR COALESCE(TRIM(f.translated_summary), '') = ''
                     OR instr(f.translated_summary, s.content) = 0
                   )
@@ -583,8 +585,7 @@ def _contains_cjk(text: str) -> bool:
 def _filter_sql(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     clauses: list[str] = []
     params: dict[str, Any] = {}
-    _add_in_filter(clauses, params, "m.game", "game", filters.get("games"))
-    _add_in_filter(clauses, params, "m.game_domain", "game_domain", filters.get("game_domains"))
+    _add_game_scope_filter(clauses, params, filters)
     _add_in_filter(clauses, params, "m.source", "source", filters.get("sources"))
     _add_not_in_filter(clauses, params, "m.source", "excluded_source", filters.get("excluded_sources"))
     _add_in_filter(clauses, params, "m.category", "category", filters.get("categories"))
@@ -794,6 +795,31 @@ def _add_in_filter(
         placeholders.append(f":{name}")
         params[name] = value
     clauses.append(f"{column} IN ({', '.join(placeholders)})")
+
+
+def _add_game_scope_filter(clauses: list[str], params: dict[str, Any], filters: dict[str, Any]) -> None:
+    games = [str(value).strip() for value in (filters.get("games") or []) if str(value).strip()]
+    game_domains = [str(value).strip() for value in (filters.get("game_domains") or []) if str(value).strip()]
+    if games and game_domains:
+        values = list(dict.fromkeys([*games, *game_domains]))
+        placeholders = _bind_filter_values(params, "game_scope", values)
+        clauses.append(f"(m.game IN ({placeholders}) OR m.game_domain IN ({placeholders}))")
+        return
+    if game_domains:
+        placeholders = _bind_filter_values(params, "game_scope", game_domains)
+        clauses.append(f"(m.game IN ({placeholders}) OR m.game_domain IN ({placeholders}))")
+        return
+    if games:
+        _add_in_filter(clauses, params, "m.game", "game", games)
+
+
+def _bind_filter_values(params: dict[str, Any], prefix: str, values: list[str]) -> str:
+    placeholders = []
+    for index, value in enumerate(values):
+        name = f"{prefix}_{index}"
+        placeholders.append(f":{name}")
+        params[name] = value
+    return ", ".join(placeholders)
 
 
 def _add_not_in_filter(

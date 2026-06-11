@@ -95,17 +95,17 @@ SUPPORTED_PROVIDERS = set(DEFAULT_MODELS)
 
 
 def provider_default_model(provider: str) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """返回 provider 的默认模型，未知 provider 回退到 OpenAI 默认。"""
     return DEFAULT_MODELS.get((provider or "").strip().lower(), "gpt-4o-mini")
 
 
 def provider_default_base_url(provider: str) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """返回 provider 的默认 base_url，未知 provider 回退到 OpenAI。"""
     return DEFAULT_BASE_URLS.get((provider or "").strip().lower(), DEFAULT_BASE_URLS["openai"])
 
 
 def resolve_provider_config(provider_config: dict[str, Any]) -> tuple[str, str, str, str]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """把前端或设置中的 provider 配置规范化为调用参数。"""
     provider = str(provider_config.get("provider") or "openai").strip().lower()
     api_key = str(provider_config.get("api_key") or "")
     base_url = str(provider_config.get("base_url") or "")
@@ -114,23 +114,23 @@ def resolve_provider_config(provider_config: dict[str, Any]) -> tuple[str, str, 
 
 
 def provider_requires_api_key(provider: str) -> bool:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """判断 provider 是否需要 API key；本地 Ollama 例外。"""
     return (provider or "").strip().lower() != "ollama"
 
 
 def provider_has_credentials(provider: str, api_key: str) -> bool:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """判断 provider 是否具备可尝试调用的凭据。"""
     return bool((api_key or "").strip()) or not provider_requires_api_key(provider)
 
 
 def provider_config_has_credentials(provider_config: dict[str, Any]) -> bool:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """判断一条 provider 配置是否具备可用凭据。"""
     provider, api_key, _, _ = resolve_provider_config(provider_config)
     return provider_has_credentials(provider, api_key)
 
 
 def default_provider_configs() -> list[dict[str, Any]]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """构建首次启动时的 provider 列表，并吸收环境变量默认值。"""
     default_api_key = os.getenv("LLM_API_KEY", "")
     openai_api_key = os.getenv("OPENAI_API_KEY", "")
     configs: list[dict[str, Any]] = []
@@ -159,7 +159,7 @@ def default_provider_configs() -> list[dict[str, Any]]:
 
 
 def get_provider_chain(settings: "SettingsService") -> list[dict[str, Any]]:
-    """读取并返回对应的数据。"""
+    """读取启用的 provider 链，缺省时兼容旧版单 provider 设置。"""
     raw = settings.get("llm_providers_json") or ""
     providers: list[dict[str, Any]] = []
     if raw:

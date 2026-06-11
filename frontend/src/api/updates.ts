@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端收藏更新事件接口的类型和请求函数。
+
 import { get, patch } from "./client";
 import { nonNegativeInteger, normalizeListResponse } from "./listResponse";
 import { fallbackModItem, mergeTranslatedSummary } from "./modHydration";

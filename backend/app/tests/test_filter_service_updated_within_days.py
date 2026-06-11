@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_filter_service_updated_within_days.py 的模块职责，便于后续维护定位。
+
 from __future__ import annotations
 
 import json

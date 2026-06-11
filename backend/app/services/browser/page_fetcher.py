@@ -45,7 +45,7 @@ class BrowserPageFetcher:
     """Fetch pages through a persistent browser profile managed by Playwright."""
 
     def __init__(self) -> None:
-        """初始化实例并保存运行所需的依赖。"""
+        """保存可复用的登录浏览器上下文，供手动登录和后续抓取共享 profile。"""
         self._login_playwright = None
         self._login_context = None
         self._login_profile_name: str | None = None
@@ -59,7 +59,7 @@ class BrowserPageFetcher:
         timeout_ms: int = 60000,
         headless: bool = False,
     ) -> BrowserFetchResult:
-        """请求外部数据并返回标准化结果。"""
+        """用持久化浏览器 profile 获取页面 HTML，并把失败原因规范化为状态码。"""
         async with LOVERSLAB_BROWSER_LOCK:
             try:
                 playwright_api = self._load_playwright_api()
@@ -69,6 +69,7 @@ class BrowserPageFetcher:
             profile_dir = self._profile_dir(profile_name)
             try:
                 if self._login_context is not None and self._login_profile_name == profile_name:
+                    # 用户手动登录窗口还开着时复用同一个 context，避免登录态尚未落盘就丢失。
                     context = self._login_context
                     page = await context.new_page()
                     try:
@@ -80,6 +81,7 @@ class BrowserPageFetcher:
                         await page.close()
                 else:
                     async with playwright_api["async_playwright"]() as playwright:
+                        # 无手动登录窗口时短暂启动持久化 context，抓完立即关闭释放浏览器进程。
                         context = await self._launch_persistent_context(
                             playwright,
                             profile_dir=profile_dir,
@@ -119,12 +121,12 @@ class BrowserPageFetcher:
         profile_name: str = "loverslab",
         url: str = "https://www.loverslab.com/",
     ) -> BrowserFetchResult:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """打开可见浏览器让用户完成登录，并保留 context 供后续请求复用。"""
         async with LOVERSLAB_BROWSER_LOCK:
             return await self._open_login_unlocked(profile_name=profile_name, url=url)
 
     async def _open_login_unlocked(self, *, profile_name: str, url: str) -> BrowserFetchResult:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """在已持有锁的前提下启动登录窗口，避免多个登录 profile 并发写入。"""
         try:
             playwright_api = self._load_playwright_api()
         except RuntimeError as exc:
@@ -159,12 +161,12 @@ class BrowserPageFetcher:
         return BrowserFetchResult(url, final_url, title, html, self.detect_status(html))
 
     async def close_login(self) -> None:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """关闭当前保留的登录窗口和 Playwright 运行时。"""
         async with LOVERSLAB_BROWSER_LOCK:
             await self._close_login_unlocked()
 
     async def _close_login_unlocked(self) -> None:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """在已持有锁的前提下清理登录 context，调用方负责串行化。"""
         if self._login_context is not None:
             await self._login_context.close()
             self._login_context = None
@@ -175,7 +177,7 @@ class BrowserPageFetcher:
 
     @classmethod
     def detect_status(cls, html: str) -> BrowserFetchStatus:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """根据页面内容识别登录、Cloudflare、403 等可恢复/不可恢复状态。"""
         lowered = (html or "").lower()
         if not lowered:
             return "unknown_error"
@@ -191,7 +193,7 @@ class BrowserPageFetcher:
 
     @classmethod
     def profile_exists(cls, profile_name: str = "loverslab") -> bool:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """检查默认 profile 以及按浏览器 channel 分裂出的 profile 是否存在。"""
         profile_dir = cls._profile_dir(profile_name)
         return profile_dir.exists() or any(
             profile_dir.with_name(f"{profile_dir.name}-{channel}").exists()
@@ -200,7 +202,7 @@ class BrowserPageFetcher:
 
     @classmethod
     def status_payload(cls, profile_name: str = "loverslab") -> dict:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """返回前端设置页展示浏览器能力所需的安装/profile 状态。"""
         playwright_installed = True
         browser_installed = False
         browser_name = ""
@@ -235,7 +237,7 @@ class BrowserPageFetcher:
 
     @classmethod
     def install_chromium(cls, timeout_seconds: int = 600) -> dict:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """通过 Playwright CLI 安装 Chromium，并裁剪过长输出给 API 返回。"""
         try:
             completed = subprocess.run(
                 [sys.executable, "-m", "playwright", "install", "chromium"],
@@ -272,12 +274,12 @@ class BrowserPageFetcher:
 
     @staticmethod
     def now_iso() -> str:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """返回 UTC ISO 时间，供浏览器状态检查落库/回显使用。"""
         return datetime.now(UTC).isoformat()
 
     @staticmethod
     def _load_playwright_api():
-        """加载内部流程需要的配置或数据。"""
+        """延迟导入 Playwright，使未安装依赖时能返回明确的能力状态。"""
         try:
             from playwright.async_api import TimeoutError as PlaywrightTimeoutError
             from playwright.async_api import async_playwright
@@ -292,7 +294,7 @@ class BrowserPageFetcher:
         }
 
     async def _launch_persistent_context(self, playwright, *, profile_dir: Path, headless: bool):
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """按系统浏览器优先、Playwright Chromium 兜底的顺序启动持久化 context。"""
         errors: list[str] = []
         for choice in self._browser_launch_choices(playwright):
             candidate_profile_dir = self._profile_dir_for_choice(profile_dir, choice)
@@ -319,13 +321,13 @@ class BrowserPageFetcher:
 
     @classmethod
     def _browser_launch_choice(cls, playwright) -> BrowserLaunchChoice | None:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """返回当前机器优先使用的浏览器候选。"""
         choices = cls._browser_launch_choices(playwright)
         return choices[0] if choices else None
 
     @classmethod
     def _browser_launch_choices(cls, playwright) -> list[BrowserLaunchChoice]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """枚举可用浏览器：优先系统 Edge/Chrome，最后才使用 Playwright Chromium。"""
         choices: list[BrowserLaunchChoice] = []
         system_choices = cls._system_browser_choices()
         choices.extend(system_choices)
@@ -344,7 +346,7 @@ class BrowserPageFetcher:
 
     @staticmethod
     def _is_missing_browser_error(message: str) -> bool:
-        """判断内部条件是否成立。"""
+        """识别“浏览器缺失”错误，和普通启动失败分开展示。"""
         lowered = message.lower()
         return (
             "executable doesn't exist" in lowered
@@ -356,7 +358,7 @@ class BrowserPageFetcher:
 
     @classmethod
     def _system_browser_choices(cls) -> list[BrowserLaunchChoice]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """按常见 Windows/macOS/Linux 安装路径探测系统 Edge/Chrome。"""
         choices: list[BrowserLaunchChoice] = []
         edge_paths = cls._candidate_paths(
             [
@@ -394,7 +396,7 @@ class BrowserPageFetcher:
 
     @staticmethod
     def _candidate_paths(entries: list[tuple[str, str]]) -> list[Path]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """根据环境变量根目录拼出系统浏览器候选路径。"""
         paths = []
         for env_name, suffix in entries:
             root = os.environ.get(env_name)
@@ -404,13 +406,13 @@ class BrowserPageFetcher:
 
     @staticmethod
     def _profile_dir(profile_name: str) -> Path:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """清理 profile 名称，防止用户输入逃逸到 profile 根目录外。"""
         safe_name = "".join(ch for ch in profile_name if ch.isalnum() or ch in {"-", "_"})
         return PROFILE_ROOT / (safe_name or "default")
 
     @staticmethod
     def _profile_dir_for_choice(profile_dir: Path, choice: BrowserLaunchChoice) -> Path:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """不同浏览器使用独立 profile，避免同一用户数据目录被多个 channel 锁住。"""
         if choice.source == "system" and choice.channel:
             return profile_dir.with_name(f"{profile_dir.name}-{choice.channel}")
         if choice.source == "playwright":

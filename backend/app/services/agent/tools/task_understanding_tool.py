@@ -12,8 +12,12 @@ from app.services.agent.context.memory_context_builder import load_agent_memory_
 from app.services.agent.planning.context_pipeline import prepare_contextual_query_plan
 from app.services.agent.planning.llm_context_selection import select_last_query_context_with_llm
 from app.services.agent.planning.query_diagnosis import QueryDiagnosis, diagnosis_log_fields
+from app.services.agent.planning.query_plan_hygiene import sanitize_query_plan_fields
 from app.services.agent.query_planner import load_slot_options, normalize_query_plan
 from app.services.agent.schemas import AgentHistoryItem
+from app.services.agent.self_correction.self_correction_schema import (
+    with_default_self_correction_config,
+)
 from app.services.agent.semantic_brain.semantic_strategy_adapter import (
     attach_semantic_strategy_to_query_plan,
 )
@@ -149,7 +153,10 @@ class TaskUnderstandingTool:
         query_plan = attach_semantic_strategy_to_query_plan(query_plan, semantic_strategy)
         if self.session is not None and hasattr(self.session, "exec"):
             normalized_plan = normalize_query_plan(query_plan, tool_input.query, load_slot_options(self.session))
-            query_plan = {**query_plan, **normalized_plan}
+            query_plan = _finalize_query_plan_for_diagnosis(query_plan, normalized_plan, query=tool_input.query)
+        else:
+            query_plan = sanitize_query_plan_fields(query_plan, query=tool_input.query)
+        query_plan = with_default_self_correction_config(query_plan)
         _log_memory_context(memory_context, preferences)
         # 诊断层把 query_plan 转成可审计的 intent、slots 和语义信号，供工具规划使用。
         diagnosis = QueryDiagnosisTool().run(
@@ -182,6 +189,27 @@ class TaskUnderstandingTool:
             semantic_strategy=semantic_strategy.strategy.model_dump(mode="python"),
             evidence_id=evidence_id,
         )
+
+
+def _finalize_query_plan_for_diagnosis(
+    raw_plan: dict[str, Any], normalized_plan: dict[str, Any], *, query: str
+) -> dict[str, Any]:
+    merged = _merge_normalized_query_plan(raw_plan, normalized_plan)
+    return sanitize_query_plan_fields(merged, query=query)
+
+
+def _merge_normalized_query_plan(raw_plan: dict[str, Any], normalized_plan: dict[str, Any]) -> dict[str, Any]:
+    """Treat normalized planner fields as authoritative while preserving agent metadata."""
+    merged = dict(normalized_plan or {})
+    for key, value in (raw_plan or {}).items():
+        # Non-agent planner fields must be explicitly preserved by normalize_query_plan.
+        # Otherwise deleted unsafe constraints such as generic exact_title can re-enter diagnosis.
+        if str(key).startswith("_agent_"):
+            merged[key] = value
+    evidence_id = (raw_plan or {}).get("evidence_id")
+    if evidence_id and not merged.get("evidence_id"):
+        merged["evidence_id"] = evidence_id
+    return merged
 
 
 def _log_memory_context(memory_context: dict[str, Any], preferences: dict[str, Any]) -> None:

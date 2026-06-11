@@ -6,7 +6,7 @@ def compress_history(
     max_items: int = 12,
     max_chars: int = 2200,
 ) -> tuple[str, list[AgentHistoryItem]]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """压缩对话历史：较早内容转摘要，近期消息按条保留给 LLM。"""
     cleaned = []
     for item in history:
         role = (item.role or "").strip().lower()

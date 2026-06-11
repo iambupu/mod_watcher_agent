@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { lazy, Suspense, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useUIStore } from "@/stores/uiStore";
-import { NotificationCenter } from "@/components/NotificationCenter";
 import { fetchUnreadCount } from "@/api/notifications";
 import { ModalHeader, ModalShell } from "@/components/ui/Modal";
 
@@ -28,6 +27,9 @@ interface AppSidebarProps {
 }
 
 const navIconSize = 22;
+const NotificationCenter = lazy(() =>
+  import("@/components/NotificationCenter").then((module) => ({ default: module.NotificationCenter })),
+);
 
 const NAV_ITEMS: Array<{ key: NavKey; href: string; icon: React.ReactNode; labelKey: string }> = [
   { key: "agent", href: "/agent", icon: <Bot size={navIconSize} strokeWidth={2.15} />, labelKey: "nav.agent" },
@@ -147,7 +149,11 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
           {sidebarOpen && <span className="truncate leading-6">{t("about.title")}</span>}
         </button>
       </div>
-      <NotificationCenter open={notifyOpen} onClose={() => setNotifyOpen(false)} />
+      {notifyOpen && (
+        <Suspense fallback={null}>
+          <NotificationCenter open={notifyOpen} onClose={() => setNotifyOpen(false)} />
+        </Suspense>
+      )}
       {aboutOpen && (
         <ModalShell
           open={aboutOpen}

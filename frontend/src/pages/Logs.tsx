@@ -1,3 +1,5 @@
+// 中文注释：实现 Logs 页面级交互和数据装配。
+
 import React, { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";

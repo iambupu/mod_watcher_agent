@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端Mod 列表和详情接口的类型和请求函数。
+
 import { get, post } from "./client";
 import { normalizeListResponse } from "./listResponse";
 import { boundedIntegerParam } from "./params";

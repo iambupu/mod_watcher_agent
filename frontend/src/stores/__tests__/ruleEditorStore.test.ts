@@ -1,3 +1,5 @@
+// 中文注释：定义 ruleEditorStore.test 的 Zustand 状态边界。
+
 import { act } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 

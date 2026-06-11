@@ -92,6 +92,7 @@ class WebSearchTool:
                 count=len(nexus_results),
                 reason=reason,
                 fields=active_query_plan_fields(query_plan),
+                query_plan=query_plan,
                 evidence_id=evidence_id,
                 fragment_prefix="r_web",
             )
@@ -109,6 +110,7 @@ class WebSearchTool:
                 count=0,
                 reason="source_filter",
                 fields=["sources"],
+                query_plan=query_plan,
                 evidence_id=evidence_id,
                 fragment_prefix="r_web",
             )
@@ -149,6 +151,7 @@ class WebSearchTool:
                 count=len(loverslab_results),
                 reason=reason,
                 fields=active_query_plan_fields(query_plan),
+                query_plan=query_plan,
                 evidence_id=evidence_id,
                 fragment_prefix="r_web",
             )
@@ -174,6 +177,7 @@ class WebSearchTool:
                         count=len(scrape_results),
                         reason=reason,
                         fields=active_query_plan_fields(query_plan),
+                        query_plan=query_plan,
                         evidence_id=evidence_id,
                         fragment_prefix="r_web",
                     )
@@ -191,6 +195,7 @@ class WebSearchTool:
                         count=0,
                         reason="source_filter",
                         fields=["sources"],
+                        query_plan=query_plan,
                         evidence_id=evidence_id,
                         fragment_prefix="r_web",
                     )
@@ -207,6 +212,7 @@ class WebSearchTool:
                 count=0,
                 reason="source_filter",
                 fields=["sources"],
+                query_plan=query_plan,
                 evidence_id=evidence_id,
                 fragment_prefix="r_web",
             )
@@ -220,6 +226,7 @@ class WebSearchTool:
                 count=0,
                 reason="narrow_online_zero_result_expand_sources",
                 fields=["sources", "adult_content", "keywords"],
+                query_plan=query_plan,
                 evidence_id=evidence_id,
                 fragment_prefix="r_web",
             )

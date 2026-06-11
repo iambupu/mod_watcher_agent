@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端分页列表响应接口的类型和请求函数。
+
 import { arrayOrEmpty } from "@/utils/array";
 import { nonNegativeNumberValue } from "@/utils/numberInput";
 

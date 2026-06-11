@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_refresh_agent_preferences_job.py 的模块职责，便于后续维护定位。
+
 from app.jobs.refresh_agent_preferences import _profile_refresh_job_result
 
 

@@ -13,6 +13,7 @@ from app.models.mod_item import ModItem
 from app.models.summary import ModSummary
 from app.models.update_event import ModUpdateEvent
 from app.schemas.favorite import FavoriteImportCreate
+from app.services.adapter_utils import call_with_adapter
 from app.services.agent.memory.preference_service import AgentPreferenceService
 from app.services.settings_service import SettingsService
 from app.services.source_identity import canonical_external_id, find_existing_mod_by_identity
@@ -29,11 +30,11 @@ class FavoriteService:
     _adapter_class = NexusModsAdapter
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于管理收藏和更新检查状态。"""
         self.session = session
 
-    async def add_favorite(self, mod_id: int, user_note: str | None = None) -> Favorite:
-        """处理当前模块的业务逻辑并返回结果。"""
+    async def add_favorite(self, mod_id: int, user_note: str | None = None, *, commit: bool = True) -> Favorite:
+        """把已有 Mod 加入收藏，并初始化版本跟踪基线。"""
         mod = self.session.get(Mod, mod_id)
         if mod is None:
             raise ValueError(f"Mod id={mod_id} not found")
@@ -52,9 +53,13 @@ class FavoriteService:
             updated_at=now,
         )
         self.session.add(fav)
-        self.session.commit()
-        self.session.refresh(fav)
-        AgentPreferenceService(self.session).mark_dirty()
+        if commit:
+            self.session.commit()
+            self.session.refresh(fav)
+            AgentPreferenceService(self.session).mark_dirty()
+        else:
+            self.session.flush()
+            AgentPreferenceService(self.session).mark_dirty(commit=False)
         return fav
 
     async def import_and_favorite(self, data: FavoriteImportCreate) -> Favorite:
@@ -139,23 +144,28 @@ class FavoriteService:
             for key, value in mod_fields.items():
                 if value is not None:
                     setattr(mod, key, value)
-        self.session.add(mod)
-        self.session.commit()
-        self.session.refresh(mod)
+        try:
+            self.session.add(mod)
+            self.session.flush()
 
-        fav = await self.add_favorite(mod.id, data.user_note)
-        update_fields = {}
-        if data.tracking_enabled is not None:
-            update_fields["tracking_enabled"] = data.tracking_enabled
-        if data.notify_on_update is not None:
-            update_fields["notify_on_update"] = data.notify_on_update
-        if data.user_tags_json is not None:
-            update_fields["user_tags_json"] = data.user_tags_json
-        if data.user_note is not None:
-            update_fields["user_note"] = data.user_note
-        if update_fields:
-            fav = await self.update_favorite(fav.id, **update_fields)
-        return fav
+            fav = await self.add_favorite(mod.id, data.user_note, commit=False)
+            update_fields = {}
+            if data.tracking_enabled is not None:
+                update_fields["tracking_enabled"] = data.tracking_enabled
+            if data.notify_on_update is not None:
+                update_fields["notify_on_update"] = data.notify_on_update
+            if data.user_tags_json is not None:
+                update_fields["user_tags_json"] = data.user_tags_json
+            if data.user_note is not None:
+                update_fields["user_note"] = data.user_note
+            if update_fields:
+                fav = await self.update_favorite(fav.id, commit=False, **update_fields)
+            self.session.commit()
+            self.session.refresh(fav)
+            return fav
+        except Exception:
+            self.session.rollback()
+            raise
 
     def _find_imported_mod(
         self,
@@ -177,7 +187,7 @@ class FavoriteService:
         )
 
     async def remove_favorite(self, favorite_id: int) -> None:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """删除收藏记录，并标记偏好缓存需要刷新。"""
         fav = self.session.get(Favorite, favorite_id)
         if fav is None:
             raise ValueError(f"Favorite id={favorite_id} not found")
@@ -185,8 +195,8 @@ class FavoriteService:
         self.session.commit()
         AgentPreferenceService(self.session).mark_dirty()
 
-    async def update_favorite(self, favorite_id: int, **fields) -> Favorite:
-        """更新已有数据并返回结果。"""
+    async def update_favorite(self, favorite_id: int, *, commit: bool = True, **fields) -> Favorite:
+        """更新收藏设置、备注或用户标签。"""
         fav = self.session.get(Favorite, favorite_id)
         if fav is None:
             raise ValueError(f"Favorite id={favorite_id} not found")
@@ -195,25 +205,28 @@ class FavoriteService:
                 setattr(fav, key, value)
         fav.updated_at = datetime.now(UTC).isoformat()
         self.session.add(fav)
-        self.session.commit()
-        self.session.refresh(fav)
+        if commit:
+            self.session.commit()
+            self.session.refresh(fav)
+        else:
+            self.session.flush()
         return fav
 
     def reconcile_local_metadata_updates(self) -> int:
         """Backfill update events when local mod metadata advanced outside the tracker."""
         now = datetime.now(UTC).isoformat()
-        favorites = self.session.exec(select(Favorite)).all()
+        rows = self.session.exec(
+            select(Favorite, Mod).join(Mod, Favorite.mod_id == Mod.id)
+        ).all()
         created = 0
-        for favorite in favorites:
-            mod = self.session.get(Mod, favorite.mod_id)
-            if mod is None:
-                continue
+        for favorite, mod in rows:
             event = record_favorite_metadata_update(
                 self.session,
                 mod,
                 new_version=mod.version,
                 new_updated_at=mod.updated_at_remote,
                 detected_at=now,
+                favorite=favorite,
             )
             if event is not None:
                 created += 1
@@ -222,7 +235,7 @@ class FavoriteService:
         return created
 
     async def check_update(self, favorite_id: int) -> ModUpdateEvent | None:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """拉取收藏 Mod 详情并在版本或远端更新时间变化时创建更新事件。"""
         fav = self.session.get(Favorite, favorite_id)
         if fav is None:
             raise ValueError(f"Favorite id={favorite_id} not found")
@@ -235,8 +248,18 @@ class FavoriteService:
         adapter_class = self._adapter_class if mod.source == "nexusmods" else BaseAdapter.adapters.get(mod.source)
         if adapter_class is None:
             raise ValueError(f"Unknown source '{mod.source}' for favorite id={favorite_id}")
+        latest: ModItem | dict | None = None
         adapter = adapter_class(api_key=nexus_api_key)
-        latest = await adapter.fetch_mod_detail(str(mod.external_id), mod.game_domain)
+
+        async def _run(a: BaseAdapter) -> ModItem | dict | None:
+            return await a.fetch_mod_detail(str(mod.external_id), mod.game_domain)
+
+        latest = await call_with_adapter(
+            adapter=adapter,
+            callback=_run,
+            logger=logger,
+            context=f"favorite.update_check favorite_id={favorite_id} source={mod.source}",
+        )
         if latest is None:
             fav.last_checked_at = datetime.now(UTC).isoformat()
             self.session.add(fav)
@@ -297,7 +320,7 @@ class FavoriteService:
         return event
 
     async def check_all_favorites(self) -> list[ModUpdateEvent]:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """遍历所有启用跟踪的收藏并收集新增更新事件。"""
         favs = self.session.exec(
             select(Favorite).where(Favorite.tracking_enabled.is_(True))
         ).all()
@@ -351,7 +374,7 @@ class FavoriteService:
 
 
 def _extract_version_and_updated_at(detail: ModItem | dict) -> tuple[str | None, str | None]:
-    """从原始内容中提取目标字段。"""
+    """从适配器详情结果中提取版本号和远端更新时间。"""
     if isinstance(detail, ModItem):
         raw = detail.raw if isinstance(detail.raw, dict) else {}
         updated_at = detail.updated_at.isoformat() if detail.updated_at is not None else None

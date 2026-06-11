@@ -13,8 +13,10 @@ def merge_context_query_plan(raw_plan: dict | None, context_plan: dict | None) -
     for key, value in context_plan.items():
         if str(key).startswith("_agent_"):
             merged[key] = value
+    inherited_context_keywords = False
     if _should_replace_keywords_with_context(merged.get("keywords"), context_plan.get("keywords")):
         merged["keywords"] = context_plan["keywords"]
+        inherited_context_keywords = True
     for key in [
         "games",
         "game_domains",
@@ -47,7 +49,11 @@ def merge_context_query_plan(raw_plan: dict | None, context_plan: dict | None) -
         merged["sort_order"] = context_plan["sort_order"]
     if not merged.get("exclude_titles") and context_plan.get("exclude_titles"):
         merged["exclude_titles"] = context_plan["exclude_titles"]
-    if not merged.get("keyword_match_mode") and context_plan.get("keyword_match_mode"):
+    if (
+        inherited_context_keywords
+        and not merged.get("keyword_match_mode")
+        and context_plan.get("keyword_match_mode")
+    ):
         merged["keyword_match_mode"] = context_plan["keyword_match_mode"]
     if not merged.get("excluded_sources") and context_plan.get("excluded_sources"):
         merged["excluded_sources"] = context_plan["excluded_sources"]

@@ -1,3 +1,5 @@
+// 中文注释：实现 Dashboard 页面级交互和数据装配。
+
 import React from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -29,7 +31,7 @@ import { Panel } from "@/components/ui/Panel";
 import { fetchStats } from "@/api/stats";
 import type { Stats } from "@/api/stats";
 import { fetchRecommendedMods } from "@/api/mods";
-import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavorites, removeFavorite } from "@/api/favorites";
+import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavoriteRefs, removeFavorite } from "@/api/favorites";
 import { fetchJobRuns, fetchSchedulerStatus, pauseScheduler, resumeScheduler, runSummaryReport } from "@/api/jobs";
 import type { JobRun } from "@/api/jobs";
 import { fetchSettings } from "@/api/settings";
@@ -260,8 +262,8 @@ const Dashboard: React.FC = () => {
   const recommendedScrollRef = React.useRef<HTMLDivElement | null>(null);
 
   const { data: favorites = [] } = useQuery({
-    queryKey: ["favorites"],
-    queryFn: fetchFavorites,
+    queryKey: ["favorites", "refs"],
+    queryFn: fetchFavoriteRefs,
   });
 
   const favoriteByModId = React.useMemo(() => mapFavoritesByModId(favorites), [favorites]);
@@ -310,7 +312,7 @@ const Dashboard: React.FC = () => {
   });
   const { data: recentJobsData, isError: recentJobsError } = useQuery({
     queryKey: ["dashboard-job-runs"],
-    queryFn: () => fetchJobRuns(200),
+    queryFn: () => fetchJobRuns(200, { metadata: "dashboard" }),
     refetchInterval: 15000,
   });
   const { data: schedulerStatus, isError: schedulerError } = useQuery({

@@ -22,13 +22,12 @@ class FilterService:
     """
 
     def __init__(self, llm_client: Callable[..., Any] | None = None):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存可选 LLM 筛选回调，用于确定性过滤后的语义复核。"""
         self.llm_client = llm_client
 
     def apply_filters(
         self, rule: Any, mods: list[dict], db_session: Session
     ) -> list[dict]:
-        """处理当前模块的业务逻辑并返回结果。"""
         filters = self._parse_filters(rule)
         self.rejected_reasons: dict[str, int] = {}
         self.rejected_items: list[dict] = []
@@ -76,7 +75,7 @@ class FilterService:
         return deduplicated
 
     def _parse_filters(self, rule: Any) -> CommonRuleFilters:
-        """解析原始内容并返回结构化结果。"""
+        """从规则对象或持久化 JSON 中解析通用过滤配置。"""
         if isinstance(rule, CommonRuleFilters):
             return rule
         if hasattr(rule, "filters_json"):
@@ -89,7 +88,7 @@ class FilterService:
     def _get_deterministic_reject_reason(
         self, mod: dict, filters: CommonRuleFilters
     ) -> str | None:
-        """读取内部状态或派生结果。"""
+        """按关键词、指标、更新时间和成人内容策略给出确定性拒绝原因。"""
         text = ((mod.get("title") or "") + " " + (mod.get("original_summary") or "")).lower()
         include_keywords = filters.includeKeywords or []
         exclude_keywords = filters.excludeKeywords or []
@@ -140,7 +139,6 @@ class FilterService:
     def _apply_llm_filter(
         self, mods: list[dict], filters: CommonRuleFilters
     ) -> list[dict]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         if not mods:
             return []
         llm_result: Any = None
@@ -177,7 +175,6 @@ class FilterService:
     def _deduplicate(
         self, mods: list[dict], db_session: Session
     ) -> list[dict]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         if not mods:
             return []
 
@@ -233,7 +230,6 @@ class FilterService:
         stage: str,
         llm_feedback: str = "",
     ) -> None:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
         self.rejected_reasons[reason] = self.rejected_reasons.get(reason, 0) + 1
         self.rejected_items.append(
             {

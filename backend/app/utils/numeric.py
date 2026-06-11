@@ -1,3 +1,5 @@
+# 中文注释：提供数字安全转换相关的纯函数工具。
+
 from typing import Any
 
 

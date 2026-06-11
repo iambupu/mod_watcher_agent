@@ -11,7 +11,7 @@ from app.jobs.tracked_jobs import run_tracked_job, safe_job_count
 from app.models.job_run import JobRun
 from app.services.llm_provider_config import get_provider_chain, resolve_provider_config
 from app.services.settings_service import SettingsService
-from app.services.summary_service import SUMMARY_GENERATION_LOCK, SummaryService
+from app.services.summary_service import SUMMARY_BATCH_LOCK, SUMMARY_GENERATION_LOCK, SummaryService
 
 logger = logging.getLogger(__name__)
 SUMMARY_BATCH_SIZE = 5
@@ -25,7 +25,7 @@ class SummaryGenerationError(RuntimeError):
 
 
 def _primary_llm_for_display(session: Session) -> tuple[str, str]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """读取当前优先 LLM 供应商和模型，仅用于任务 metadata 展示。"""
     settings = SettingsService(session)
     chain = get_provider_chain(settings)
     if chain:
@@ -58,7 +58,7 @@ async def generate_summaries(
     Returns:
         A dict with the count of summaries generated.
     """
-    if SUMMARY_GENERATION_LOCK.locked():
+    if SUMMARY_BATCH_LOCK.locked():
         logger.info("Summary generation already running; recording skipped duplicate request")
 
         async def skipped_handler(session: Session) -> dict:  # noqa: ARG001
@@ -75,9 +75,9 @@ async def generate_summaries(
             return await run_tracked_job("llm_generate_summaries", skipped_handler)
         return await skipped_handler(None)  # type: ignore[arg-type]
 
-    async with SUMMARY_GENERATION_LOCK:
+    async with SUMMARY_BATCH_LOCK:
         async def handler(session: Session) -> dict:
-            """处理当前模块的业务逻辑并返回结果。"""
+            """生成一批缺失摘要，并返回 tracked job 需要的统计字段。"""
             service = SummaryService(session)
             report = await service.generate_missing_summaries_report(
                 max_items=max_items,
@@ -107,8 +107,8 @@ async def generate_summaries(
 
 
 async def run_missing_summaries_job(mod_ids: list[int], language: str) -> None:
-    """执行任务流程并返回结果。"""
-    if SUMMARY_GENERATION_LOCK.locked():
+    """为指定 Mod 批量补目标语言摘要，并记录为手动翻译任务。"""
+    if SUMMARY_BATCH_LOCK.locked():
         async def skipped_handler(session: Session) -> dict:  # noqa: ARG001
             return {
                 "items_scanned": 0,
@@ -128,9 +128,9 @@ async def run_missing_summaries_job(mod_ids: list[int], language: str) -> None:
             metadata={"language": language, "mod_ids": mod_ids, "skipped": True},
         )
         return
-    async with SUMMARY_GENERATION_LOCK:
+    async with SUMMARY_BATCH_LOCK:
         async def handler(session: Session) -> dict:
-            """处理当前模块的业务逻辑并返回结果。"""
+            """执行指定 Mod 摘要生成，并返回任务计数和失败详情。"""
             service = SummaryService(session)
             report = await service.generate_missing_summaries_report(
                 mod_ids=mod_ids,
@@ -161,10 +161,10 @@ async def run_single_summary_job(
     language: str,
     summary_type: str,
 ) -> None:
-    """执行任务流程并返回结果。"""
+    """为单个 Mod 生成或重新生成摘要，并串行化单条生成请求。"""
     async with SUMMARY_GENERATION_LOCK:
         async def handler(session: Session) -> dict:
-            """处理当前模块的业务逻辑并返回结果。"""
+            """调用单条摘要生成服务并包装 tracked job metadata。"""
             return await generate_single_summary_payload(
                 session,
                 mod_id=mod_id,

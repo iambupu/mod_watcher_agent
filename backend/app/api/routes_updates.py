@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/updates", tags=["updates"])
 
 
 def _build_mod_map(session: Session, mod_ids: list[int], summary_by_mod: dict[int, str]) -> dict[int, dict]:
-    """构建内部流程需要的数据结构。"""
+    """批量加载更新事件关联的 Mod，并补入首选中文摘要。"""
     if not mod_ids:
         return {}
     mods = session.exec(select(Mod).where(Mod.id.in_(mod_ids))).all()
@@ -28,7 +28,7 @@ def _build_mod_map(session: Session, mod_ids: list[int], summary_by_mod: dict[in
 
 
 def _event_to_dict(item: ModUpdateEvent, mod_by_id: dict[int, dict], summary_by_mod: dict[int, str]) -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """把更新事件和关联 Mod 组装成前端列表项。"""
     data = UpdateEventRead.model_validate(item).model_dump()
     data["translated_summary"] = summary_by_mod.get(item.mod_id)
     data["mod"] = mod_by_id.get(item.mod_id)
@@ -43,7 +43,7 @@ def list_updates(
     limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),
 ):
-    """查询并返回列表数据。"""
+    """分页查询更新事件，并附带关联 Mod 信息。"""
     service = UpdateTrackingService(session)
     items, total = service.get_events(
         favorite_id=favorite_id, seen=seen, offset=offset, limit=limit
@@ -57,14 +57,14 @@ def list_updates(
 
 @router.patch("/seen")
 def mark_all_events_seen(session: Session = Depends(get_session)):
-    """标记状态变更并返回结果。"""
+    """把所有更新事件标记为已读。"""
     service = UpdateTrackingService(session)
     return {"updated": service.mark_all_seen()}
 
 
 @router.patch("/{event_id}/seen", response_model=UpdateEventRead)
 def mark_event_seen(event_id: int, session: Session = Depends(get_session)):
-    """标记状态变更并返回结果。"""
+    """把单条更新事件标记为已读，并返回带摘要的事件视图。"""
     service = UpdateTrackingService(session)
     try:
         event = service.mark_seen(event_id)

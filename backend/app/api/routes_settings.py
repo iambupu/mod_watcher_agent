@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.db import get_session
-from app.jobs.scheduler import register_jobs
 from app.schemas.settings import SettingsRead, SettingsUpdate
 from app.services.llm_client import create_llm_client
 from app.services.llm_provider_test_service import test_llm_providers as run_llm_provider_tests
@@ -17,12 +16,11 @@ from app.services.notification_service import NotificationService
 from app.services.settings_payload_service import (
     EXPORT_EXCLUDED_PREFIXES,
     SettingsPayloadError,
-    prepare_settings_update,
     redact_settings_for_response,
     sanitize_export_settings,
-    settings_import_items,
 )
 from app.services.settings_service import SettingsService
+from app.services.settings_update_service import apply_settings_update, import_settings_payload
 from app.services.windows_autostart_service import AutoStartUnsupportedError, set_windows_auto_start
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -36,7 +34,7 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 
 def _raise_settings_error(exc: SettingsPayloadError | AutoStartUnsupportedError) -> None:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """把设置服务层异常转换为 FastAPI HTTPException。"""
     raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
@@ -44,7 +42,7 @@ def _raise_settings_error(exc: SettingsPayloadError | AutoStartUnsupportedError)
 def get_settings(
     session: SessionDep,
 ):
-    """读取并返回对应的数据。"""
+    """读取设置，并对敏感字段做响应脱敏。"""
     service = SettingsService(session)
     db_settings = service.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
     merged = dict(service.DEFAULTS)
@@ -57,15 +55,14 @@ def update_settings(
     data: SettingsUpdate,
     session: SessionDep,
 ):
-    """更新已有数据并返回结果。"""
+    """更新设置项，返回合并默认值后的脱敏配置。"""
     service = SettingsService(session)
     items = {key: value for key, value in data.settings.items() if value is not None}
     if items:
         try:
-            service.set_batch(prepare_settings_update(service, items))
+            service = apply_settings_update(session, items)
         except SettingsPayloadError as exc:
             _raise_settings_error(exc)
-        register_jobs(session)
 
     db_settings = service.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
     merged = dict(service.DEFAULTS)
@@ -77,7 +74,7 @@ def update_settings(
 async def test_telegram(
     session: SessionDep,
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """向当前 Telegram 配置发送一条测试消息。"""
     notifier = NotificationService(session)
     ok = await notifier.send_telegram_message("Mod Watcher Agent 测试消息")
     return {"success": ok, "message": "Telegram test sent" if ok else "Failed or not configured"}
@@ -87,7 +84,7 @@ async def test_telegram(
 async def test_discord(
     session: SessionDep,
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """向当前 Discord Webhook 配置发送一条测试消息。"""
     notifier = NotificationService(session)
     ok = await notifier.send_discord_webhook("Mod Watcher Agent 测试消息")
     return {"success": ok, "message": "Discord test sent" if ok else "Failed or not configured"}
@@ -98,7 +95,7 @@ async def test_llm_providers(
     session: SessionDep,
     body: Annotated[dict[str, Any] | None, Body()] = None,
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """测试 LLM 供应商链或请求体里的临时供应商配置。"""
     return await run_llm_provider_tests(SettingsService(session), body, create_client=create_llm_client)
 
 
@@ -106,7 +103,7 @@ async def test_llm_providers(
 def export_settings(
     session: SessionDep,
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """导出可迁移设置，并排除密钥、运行态等敏感前缀。"""
     svc = SettingsService(session)
     raw = svc.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
     data = sanitize_export_settings(raw)
@@ -123,16 +120,12 @@ def import_settings(
     data: dict[str, Any],
     session: SessionDep,
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
-    svc = SettingsService(session)
-    items = settings_import_items(data)
-    if items:
-        try:
-            svc.set_batch(prepare_settings_update(svc, items))
-        except SettingsPayloadError as exc:
-            _raise_settings_error(exc)
-        register_jobs(session)
-    return {"imported": len(items)}
+    """导入设置负载，服务层负责校验和归一化。"""
+    try:
+        imported = import_settings_payload(session, data)
+    except SettingsPayloadError as exc:
+        _raise_settings_error(exc)
+    return {"imported": imported}
 
 
 @router.post("/auto-start")
@@ -140,7 +133,7 @@ def set_auto_start(
     data: Annotated[AutoStartRequest, Body()],
     session: SessionDep,
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """切换 Windows 开机自启，并把成功状态写回设置。"""
     try:
         result = set_windows_auto_start(data.enabled, platform_module=platform)
     except AutoStartUnsupportedError as exc:

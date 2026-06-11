@@ -1,4 +1,8 @@
+# 中文注释：说明 backend/app/tests/test_routes_jobs_stats.py 的模块职责，便于后续维护定位。
+
 """Tests for /api/jobs/stats week-boundary behavior."""
+
+import json
 
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 from fastapi.testclient import TestClient
@@ -13,6 +17,7 @@ from app.models.job_run import JobRun
 from app.models.mod import Mod
 from app.models.update_event import ModUpdateEvent
 from app.models.watch_rule import WatchRule
+from app.services import job_queue_service
 
 
 def _make_engine():
@@ -171,6 +176,70 @@ def test_recent_job_runs_accepts_max_dashboard_limit(monkeypatch):
         fastapi_app.dependency_overrides.clear()
 
 
+def test_recent_job_runs_dashboard_metadata_is_compact():
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+
+    def override_get_session():
+        with Session(engine) as session:
+            yield session
+
+    fastapi_app.dependency_overrides[get_session] = override_get_session
+    client = TestClient(fastapi_app)
+
+    try:
+        with Session(engine) as session:
+            session.add_all(
+                [
+                    JobRun(
+                        job_name="llm_generate_summaries",
+                        status="succeeded",
+                        started_at="2026-05-18T00:00:03+00:00",
+                        metadata_json=json.dumps({"large": "x" * 1000}, ensure_ascii=False),
+                    ),
+                    JobRun(
+                        job_name="run_rule_discovery",
+                        status="succeeded",
+                        started_at="2026-05-18T00:00:02+00:00",
+                        metadata_json=json.dumps(
+                            {"rule_id": 7, "rule_name": "Daily Scan", "large": "x" * 1000},
+                            ensure_ascii=False,
+                        ),
+                    ),
+                    JobRun(
+                        job_name="llm_summary_report",
+                        status="succeeded",
+                        started_at="2026-05-18T00:00:01+00:00",
+                        metadata_json=json.dumps(
+                            {
+                                "generated": True,
+                                "report": "latest report",
+                                "provider": "hidden-from-dashboard-list",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ),
+                ]
+            )
+            session.commit()
+
+        response = client.get("/api/jobs/runs/recent?limit=200&metadata=dashboard")
+
+        assert response.status_code == 200
+        items = {item["job_name"]: item for item in response.json()["items"]}
+        assert items["llm_generate_summaries"]["metadata_json"] is None
+        assert json.loads(items["run_rule_discovery"]["metadata_json"]) == {
+            "rule_id": 7,
+            "rule_name": "Daily Scan",
+        }
+        assert json.loads(items["llm_summary_report"]["metadata_json"]) == {
+            "generated": True,
+            "report": "latest report",
+        }
+    finally:
+        fastapi_app.dependency_overrides.clear()
+
+
 def test_scheduler_pause_and_resume_return_actual_state(monkeypatch):
     class FakeScheduler:
         state = STATE_RUNNING
@@ -197,7 +266,7 @@ def test_scheduler_pause_and_resume_return_actual_state(monkeypatch):
 
 
 def test_discovery_result_counter_ignores_bool_and_normalizes_dirty_counts():
-    scanned, matched = routes_jobs._count_numeric_values({
+    scanned, matched = job_queue_service._count_numeric_values({
         "rule-a": "3",
         "rule-b": True,
         "rule-c": -1,
@@ -209,7 +278,7 @@ def test_discovery_result_counter_ignores_bool_and_normalizes_dirty_counts():
 
 
 def test_favorite_check_result_counter_parses_dirty_boolean_flags():
-    scanned, matched = routes_jobs._count_favorite_check_result({
+    scanned, matched = job_queue_service._count_favorite_check_result({
         "fav-a": {"update_detected": "true"},
         "fav-b": {"update_detected": "false"},
         "fav-c": {"update_detected": 1},

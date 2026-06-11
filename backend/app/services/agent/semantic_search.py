@@ -11,6 +11,15 @@ from app.services.agent.semantic_inference import (
 from app.services.agent.semantic_taxonomy import CHINESE_QUERY_FILLERS, STOP_WORDS
 
 SCOPE_MARKER = "[scope]"
+_CHINESE_QUERY_SUFFIXES = (
+    "主题的",
+    "类型的",
+    "相关的",
+    "主题",
+    "类型",
+    "相关",
+    "的",
+)
 
 __all__ = [
     "SemanticQuery",
@@ -43,27 +52,27 @@ class SemanticQuery:
 
     @property
     def all_terms(self) -> list[str]:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """返回去重后的语义扩展词和基础关键词，供文本打分使用。"""
         return unique_terms([*self.expanded_terms, *self.base_keywords])
 
     @property
     def has_semantic_terms(self) -> bool:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """判断当前查询是否已经命中语义词库，而不只是普通分词。"""
         return bool(self.expanded_terms or self.category_aliases)
 
     def search_text(self, max_terms: int = 8) -> str:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """拼出可交给外部搜索的短查询，避免一次塞入过多扩展词。"""
         parts = [self.clean_query, *self.expanded_terms[:max_terms]]
         return " ".join(part for part in unique_terms(parts) if part).strip()
 
 
 def strip_scope(query: object) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """移除前端附加的 [scope] 约束块，只保留用户自然语言查询。"""
     return str(query or "").split(SCOPE_MARKER, 1)[0].strip()
 
 
 def semantic_query(query: str, categories: list[str] | None = None) -> SemanticQuery:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """把用户查询拆成基础关键词、语义扩展词和分类别名。"""
     clean_query = strip_scope(query)
     category_text = " ".join(categories or []).lower()
     signals = extract_semantic_signals(clean_query, category_text)
@@ -103,7 +112,7 @@ def canonical_semantic_terms(values: list[str]) -> list[str]:
 
 
 def base_keywords(query: str) -> list[str]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """提取基础关键词；中英混写词会拆开，避免只命中半个语义。"""
     clean_query = strip_scope(query).lower()
     tokens = []
     for raw_token in re.split(r"[^\w\u4e00-\u9fff]+", clean_query):
@@ -117,17 +126,29 @@ def base_keywords(query: str) -> list[str]:
 
 
 def _clean_keyword_token(token: str) -> str:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """去掉中文查询填充词，留下可参与检索的核心 token。"""
     cleaned = str(token or "").strip().lower()
     if not cleaned:
         return ""
     for filler in CHINESE_QUERY_FILLERS:
         cleaned = cleaned.replace(filler, "")
-    return cleaned.strip()
+    return _strip_chinese_query_suffixes(cleaned).strip()
+
+
+def _strip_chinese_query_suffixes(token: str) -> str:
+    cleaned = token.strip()
+    previous = ""
+    while cleaned and cleaned != previous:
+        previous = cleaned
+        for suffix in _CHINESE_QUERY_SUFFIXES:
+            if cleaned.endswith(suffix) and len(cleaned) > len(suffix) + 1:
+                cleaned = cleaned[: -len(suffix)].strip()
+                break
+    return cleaned
 
 
 def _mixed_keyword_parts(token: str) -> list[str]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """拆分中英混写 token，例如“skyrim服装”要同时保留两类线索。"""
     parts: list[str] = []
     parts.extend(re.findall(r"[a-z0-9][a-z0-9_-]*", token))
     parts.extend(re.findall(r"[\u4e00-\u9fff]+", token))
@@ -135,7 +156,7 @@ def _mixed_keyword_parts(token: str) -> list[str]:
 
 
 def distinctive_query_terms(query: str) -> list[str]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """返回适合判断“是否值得在线检索”的英文/数字特征词。"""
     return [
         token
         for token in base_keywords(query)
@@ -149,7 +170,7 @@ def infer_categories(
     existing: list[str] | None = None,
     semantic: SemanticQuery | None = None,
 ) -> list[str]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """根据语义别名为查询补充可能的数据库分类。"""
     selected = list(existing or [])
     semantic = semantic or semantic_query(query, selected)
     if not semantic.category_aliases and not semantic.expanded_terms and not semantic.base_keywords:
@@ -170,12 +191,12 @@ def infer_categories(
 
 
 def category_key(value: str) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """生成分类匹配 key，忽略空格、符号和大小写差异。"""
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", value.lower())
 
 
 def category_match_score(category: str, semantic: SemanticQuery) -> int:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """给一个数据库分类和当前语义查询的贴合程度打分。"""
     key = category_key(category)
     spaced = category.lower()
     score = 0
@@ -197,7 +218,7 @@ def category_match_score(category: str, semantic: SemanticQuery) -> int:
 
 
 def text_score(query: str, fields: list[str | None], categories: list[str] | None = None) -> int:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """用语义扩展词和基础关键词给候选文本打轻量相关性分。"""
     semantic = semantic_query(query, categories)
     tokens = semantic.all_terms
     if not tokens:
@@ -214,5 +235,5 @@ def text_score(query: str, fields: list[str | None], categories: list[str] | Non
 
 
 def unique_terms(values: list[str]) -> list[str]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """统一大小写和空白后去重，并保持首次出现顺序。"""
     return unique_text(re.sub(r"\s+", " ", str(value or "").strip().lower()) for value in values)

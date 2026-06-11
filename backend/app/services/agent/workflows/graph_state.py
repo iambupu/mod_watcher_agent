@@ -1,3 +1,5 @@
+# 中文注释：定义 Agent 图工作流状态和阶段编排。
+
 from typing import Literal, NotRequired, TypedDict
 
 from fastapi import Request
@@ -36,6 +38,10 @@ class AgentGraphState(TypedDict):
     active_constraints: NotRequired[dict[str, object]]
     retrieval_summary: NotRequired[dict[str, object]]
     ranking_summary: NotRequired[dict[str, object]]
+    self_correction_summary: NotRequired[dict[str, object]]
+    self_correction_trace: NotRequired[dict[str, object]]
+    react_summary: NotRequired[dict[str, object]]
+    react_trace: NotRequired[list[dict[str, object]]]
     retrieval_evidence: NotRequired[list[dict[str, object]]]
     staged_results: NotRequired[list[SearchResult]]
     online_results: NotRequired[list[SearchResult]]

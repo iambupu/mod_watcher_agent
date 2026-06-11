@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_loverslab_category_parser.py 的模块职责，便于后续维护定位。
+
 from datetime import UTC, datetime
 
 from app.services.loverslab.category_parser import parse_category_items, parse_datetime

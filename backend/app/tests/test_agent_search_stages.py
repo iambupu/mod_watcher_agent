@@ -10,6 +10,19 @@ class _ToolExecutorOutput:
     evidence = [{"tool": "local_db"}]
 
 
+class _ReactOutput:
+    staged_results = ["local", "react_local"]
+    online_results = ["online"]
+    retrieval_evidence = [{"tool": "bounded_react_controller"}]
+    react_summary = {
+        "strategy": "bounded_react_retrieval",
+        "triggered": True,
+        "round_count": 1,
+        "stop_reason": "quality_sufficient",
+    }
+    react_trace = [{"round": 1, "action": "refine_local_query"}]
+
+
 class _RankingOutput:
     matches = ["match"]
     evidence = [{"tool": "ranker"}]
@@ -54,6 +67,41 @@ async def test_execute_retrieval_stage_maps_tool_output(monkeypatch):
     assert update["retrieval_summary"]["staged_count"] == 1
     assert update["retrieval_summary"]["online_count"] == 1
     assert update["retrieval_evidence"] == [{"tool": "local_db"}]
+
+
+@pytest.mark.asyncio
+async def test_bounded_react_retrieval_stage_maps_tool_output(monkeypatch):
+    seen = {}
+
+    class FakeReact:
+        def __init__(self, session):
+            seen["session"] = session
+
+        async def run(self, tool_input):
+            seen["input"] = tool_input
+            return _ReactOutput()
+
+    monkeypatch.setattr(search_stages, "BoundedReactRetrievalTool", FakeReact)
+
+    update = await search_stages.bounded_react_retrieval_stage(
+        "session",
+        query="pregnancy framework",
+        query_plan={"keywords": ["pregnancy"]},
+        tool_plan={"parallel_groups": [{"name": "local", "tools": ["local_db_search"]}]},
+        staged_results=["local"],
+        online_results=["online"],
+        retrieval_evidence=[{"tool": "local_db"}],
+        evidence_id="ev_react",
+    )
+
+    assert seen["session"] == "session"
+    assert seen["input"].query == "pregnancy framework"
+    assert seen["input"].evidence_id == "ev_react"
+    assert update["retrieval_summary"]["stage"] == "bounded_react_retrieval"
+    assert update["retrieval_summary"]["react_triggered"] is True
+    assert update["retrieval_summary"]["staged_count"] == 2
+    assert update["retrieval_evidence"] == [{"tool": "bounded_react_controller"}]
+    assert update["react_trace"] == [{"round": 1, "action": "refine_local_query"}]
 
 
 @pytest.mark.asyncio

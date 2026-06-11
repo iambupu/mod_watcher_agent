@@ -1,3 +1,5 @@
+# 中文注释：提供UTC 时间解析相关的纯函数工具。
+
 from datetime import UTC, datetime
 
 

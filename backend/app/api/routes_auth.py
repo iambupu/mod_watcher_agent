@@ -1,3 +1,5 @@
+# 中文注释：声明访问认证相关的 FastAPI 路由。
+
 """Auth endpoints for token-based session login/logout."""
 
 from fastapi import APIRouter, Body, HTTPException, Request

@@ -40,19 +40,17 @@ MIN_LENGTH_SENSITIVE_KEYS: dict[str, int] = {
 }
 class SettingsPayloadError(Exception):
     def __init__(self, status_code: int, detail: str):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存可直接映射为 HTTP 响应的设置载荷错误信息。"""
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
 
 
 def mask_if_present(value: str) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
     return MASKED_VALUE if value.strip() else ""
 
 
 def redact_settings_for_response(settings_data: dict[str, str]) -> dict[str, str]:
-    """处理当前模块的业务逻辑并返回结果。"""
     redacted = dict(settings_data)
     for key in SENSITIVE_KEYS:
         if key in redacted:
@@ -70,7 +68,6 @@ def redact_settings_for_response(settings_data: dict[str, str]) -> dict[str, str
 
 
 def provider_key_map(existing_json: str | None) -> dict[str, str]:
-    """处理当前模块的业务逻辑并返回结果。"""
     providers = json_array(existing_json)
     keys: dict[str, str] = {}
     for item in providers:
@@ -86,7 +83,6 @@ def replace_masked_provider_keys(
     providers: list[dict],
     existing_json: str | None,
 ) -> tuple[list[dict], bool]:
-    """处理当前模块的业务逻辑并返回结果。"""
     existing_map = provider_key_map(existing_json)
     restored: list[dict] = []
     changed = False
@@ -125,7 +121,6 @@ def restore_masked_provider_api_keys(
     providers: list[dict],
     existing_json: str | None,
 ) -> list[dict]:
-    """处理当前模块的业务逻辑并返回结果。"""
     restored, _ = replace_masked_provider_keys(providers, existing_json)
     return restored
 
@@ -134,7 +129,6 @@ def prepare_settings_update(
     service: SettingsService,
     items: dict[str, str],
 ) -> dict[str, str]:
-    """处理当前模块的业务逻辑并返回结果。"""
     sanitized = dict(items)
     access_profile = sanitized.get("access_profile")
     if access_profile is not None:
@@ -218,7 +212,6 @@ def prepare_settings_update(
 
 
 def sanitize_export_settings(raw: dict[str, str]) -> dict[str, str]:
-    """处理当前模块的业务逻辑并返回结果。"""
     export_data: dict[str, str] = {}
     for key, value in raw.items():
         if key in SENSITIVE_KEYS:
@@ -235,7 +228,6 @@ def sanitize_export_settings(raw: dict[str, str]) -> dict[str, str]:
 
 
 def settings_import_items(data: dict[str, Any]) -> dict[str, str]:
-    """处理当前模块的业务逻辑并返回结果。"""
     items: dict[str, str] = {}
     for key, value in data.items():
         if key in SENSITIVE_KEYS or key.startswith(EXPORT_EXCLUDED_PREFIXES):

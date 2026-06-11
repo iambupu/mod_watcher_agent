@@ -26,8 +26,16 @@ _require_public_host = require_public_host
 
 
 def _raise_http_error(exc: RuleServiceError | RuleImportError | RuleTestServiceError | RuleJobError) -> None:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
     raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+def _commit_rule_change_with_jobs(session: Session) -> None:
+    try:
+        register_jobs(session)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
 
 @router.get("", response_model=list[WatchRuleRead])
@@ -37,13 +45,12 @@ def list_rules(
     q: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
-    """查询并返回列表数据。"""
+    """按来源、启用状态和关键词查询监控规则。"""
     return RuleService(session).list_rules(source=source, enabled=enabled, q=q)
 
 
 @router.get("/export")
 def export_rules(session: Session = Depends(get_session)):
-    """处理当前模块的业务逻辑并返回结果。"""
     return RuleService(session).export_rules()
 
 
@@ -52,7 +59,6 @@ def import_rules(
     body: dict,
     session: Session = Depends(get_session),
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
     raw_rules = body.get("rules")
     if not isinstance(raw_rules, list):
         url = str(body.get("url") or "").strip()
@@ -67,14 +73,13 @@ def import_rules(
         except RuleImportError as exc:
             _raise_http_error(exc)
 
-    result = RuleService(session).import_rules(raw_rules)
-    register_jobs(session)
+    result = RuleService(session).import_rules(raw_rules, commit=False)
+    _commit_rule_change_with_jobs(session)
     return result
 
 
 @router.get("/{rule_id}", response_model=WatchRuleRead)
 def get_rule(rule_id: int, session: Session = Depends(get_session)):
-    """读取并返回对应的数据。"""
     try:
         return RuleService(session).get_rule_read(rule_id)
     except RuleServiceError as exc:
@@ -86,9 +91,9 @@ def create_rule(
     data: WatchRuleCreate,
     session: Session = Depends(get_session),
 ):
-    """创建并持久化对应的数据。"""
-    result = RuleService(session).create_rule(data)
-    register_jobs(session)
+    """创建规则并重新注册调度任务。"""
+    result = RuleService(session).create_rule(data, commit=False)
+    _commit_rule_change_with_jobs(session)
     return result
 
 
@@ -98,23 +103,23 @@ def update_rule(
     data: WatchRuleUpdate,
     session: Session = Depends(get_session),
 ):
-    """更新已有数据并返回结果。"""
+    """更新规则并刷新调度任务。"""
     try:
-        result = RuleService(session).update_rule(rule_id, data)
+        result = RuleService(session).update_rule(rule_id, data, commit=False)
     except RuleServiceError as exc:
         _raise_http_error(exc)
-    register_jobs(session)
+    _commit_rule_change_with_jobs(session)
     return result
 
 
 @router.delete("/{rule_id}", status_code=204)
 def delete_rule(rule_id: int, session: Session = Depends(get_session)):
-    """删除对应数据并返回处理结果。"""
+    """删除规则并刷新调度任务注册。"""
     try:
-        RuleService(session).delete_rule(rule_id)
+        RuleService(session).delete_rule(rule_id, commit=False)
     except RuleServiceError as exc:
         _raise_http_error(exc)
-    register_jobs(session)
+    _commit_rule_change_with_jobs(session)
     return Response(status_code=204)
 
 
@@ -123,7 +128,6 @@ async def test_rule(
     body: RuleTestRequest,
     session: Session = Depends(get_session),
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
     try:
         return await RuleTestService(session).test_rule(body)
     except RuleTestServiceError as exc:
@@ -135,7 +139,7 @@ async def run_rule_discovery(
     rule_id: int,
     session: Session = Depends(get_session),
 ):
-    """执行任务流程并返回结果。"""
+    """把指定规则的一次发现任务加入队列。"""
     try:
         return enqueue_rule_discovery(session, rule_id)
     except RuleJobError as exc:

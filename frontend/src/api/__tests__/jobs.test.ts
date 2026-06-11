@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端jobs.test接口的类型和请求函数。
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { get } from "@/api/client";
@@ -42,6 +44,15 @@ describe("pollJobRun", () => {
     expect(get).toHaveBeenCalledTimes(2);
   });
 
+  it("can poll immediately when initialDelayMs is zero", async () => {
+    vi.mocked(get).mockResolvedValue(job("succeeded"));
+
+    const promise = pollJobRun(7, { attempts: 1, initialDelayMs: 0, intervalMs: 1000 });
+
+    await expect(promise).resolves.toEqual({ status: "completed", job: job("succeeded") });
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
   it("stops without fetching when the run is no longer active", async () => {
     const promise = pollJobRun(7, { attempts: 1, intervalMs: 1000, isActive: () => false });
     await vi.advanceTimersByTimeAsync(1000);
@@ -74,6 +85,14 @@ describe("fetchJobRuns", () => {
 
     expect(get).toHaveBeenNthCalledWith(1, "/jobs/runs/recent", { limit: "200" });
     expect(get).toHaveBeenNthCalledWith(2, "/jobs/runs/recent", { limit: "1" });
+  });
+
+  it("passes dashboard metadata mode when requested", async () => {
+    vi.mocked(get).mockResolvedValue({ items: [] });
+
+    await fetchJobRuns(200, { metadata: "dashboard" });
+
+    expect(get).toHaveBeenCalledWith("/jobs/runs/recent", { limit: "200", metadata: "dashboard" });
   });
 
   it("treats malformed job run lists as empty", async () => {

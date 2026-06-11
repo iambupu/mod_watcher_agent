@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端仪表盘统计接口的类型和请求函数。
+
 import { get } from "./client";
 import { nonNegativeInteger } from "./listResponse";
 

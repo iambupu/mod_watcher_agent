@@ -16,7 +16,7 @@ from app.utils.json import json_array
 
 
 async def test_llm_provider(provider_config: dict, *, create_client=create_llm_client) -> dict:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """向单个 LLM provider 发送最小探活请求并返回延迟和错误信息。"""
     provider, api_key, raw_base_url, model = resolve_provider_config(provider_config)
     base_url = validate_outbound_url(provider, raw_base_url)
     if not provider_config_has_credentials(provider_config):
@@ -56,7 +56,7 @@ async def test_llm_providers(
     *,
     create_client=create_llm_client,
 ) -> dict:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """按优先级测试所有启用的 LLM provider。"""
     body = body or {}
     providers = body.get("providers")
     if not isinstance(providers, list):

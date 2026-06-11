@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_routes_loverslab_browser.py 的模块职责，便于后续维护定位。
+
 from fastapi.testclient import TestClient
 
 from app.api import routes_loverslab_browser

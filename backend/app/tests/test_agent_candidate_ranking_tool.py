@@ -136,18 +136,22 @@ async def test_candidate_ranking_uses_semantic_judge_for_open_discovery(monkeypa
                 {
                     "candidate_id": roleplay.id,
                     "relevance": "high",
+                    "fit_type": "direct_match",
                     "group": "core_gameplay",
                     "reason": "direct roleplay mechanics",
                 },
                 {
                     "candidate_id": outfit.id,
                     "relevance": "medium",
+                    "fit_type": "support_context",
                     "group": "visual_support",
                     "reason": "supporting visual style",
+                    "violations": ["support_only"],
                 },
                 {
                     "candidate_id": off_topic.id,
                     "relevance": "reject",
+                    "fit_type": "off_scope",
                     "group": "off_topic",
                     "reason": "not bimbo roleplay",
                 },
@@ -203,7 +207,10 @@ async def test_candidate_ranking_uses_semantic_judge_for_open_discovery(monkeypa
     assert captured["materializer_limit"] == 30
     assert captured["judge_titles"] == ["Unrelated Armor", "Bimbo Outfit Preset", "Bimbo Roleplay Framework"]
     assert output.query_plan["_agent_candidate_semantic_judge"]["groups"][0]["label"] == "核心玩法"
-    assert "语义裁判：high / 核心玩法" in output.matches[0].rank_reason
+    assert output.query_plan["_agent_candidate_semantic_judge"]["fit_counts"]["direct_match"] == 1
+    assert output.query_plan["_agent_candidate_semantic_judge"]["fit_counts"]["support_context"] == 1
+    assert "语义裁判：high / 直接命中 / 核心玩法" in output.matches[0].rank_reason
+    assert "违例：support_only" in output.matches[1].rank_reason
     assert [item["fragment_id"] for item in output.evidence] == [
         "r_exec_1",
         "r_fusion_1",
@@ -236,7 +243,7 @@ async def test_candidate_ranking_judges_pool_then_trims_to_display_limit(monkeyp
         captured["judge_count"] = len(tool_input.candidates)
         return {
             "judgements": [
-                {"candidate_id": item.id, "relevance": "high", "group": "core_gameplay", "reason": f"rank {index}"}
+                {"candidate_id": item.id, "relevance": "high", "fit_type": "direct_match", "group": "core_gameplay", "reason": f"rank {index}"}
                 for index, item in enumerate(reversed(candidates), start=1)
             ],
             "groups": [{"name": "core_gameplay", "label": "核心玩法", "candidate_ids": [item.id for item in candidates], "reason": "pool"}],
@@ -274,6 +281,252 @@ async def test_candidate_ranking_judges_pool_then_trims_to_display_limit(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_candidate_ranking_orders_by_fit_type_and_removes_off_scope(monkeypatch):
+    direct = _match("Direct Match")
+    support = _match("Support Context")
+    uncertain = _match("Uncertain Match")
+    off_scope = _match("Off Scope")
+
+    def fake_fusion_run(self, tool_input):
+        return ResultFusionRankerOutput(results=["ranked"], evidence=[])
+
+    def fake_materializer_run(self, tool_input):
+        return MatchMaterializerOutput(matches=[support, off_scope, uncertain, direct])
+
+    async def fake_validator(**kwargs):
+        raise AssertionError("semantic judge should own open discovery filtering")
+
+    async def fake_judge(tool_input):
+        return {
+            "judgements": [
+                {"candidate_id": support.id, "relevance": "high", "fit_type": "support_context", "group": "related_addon", "reason": "support"},
+                {"candidate_id": off_scope.id, "relevance": "medium", "fit_type": "off_scope", "group": "off_topic", "reason": "off"},
+                {"candidate_id": uncertain.id, "relevance": "high", "fit_type": "uncertain", "group": "other_related", "reason": "uncertain"},
+                {"candidate_id": direct.id, "relevance": "low", "fit_type": "direct_match", "group": "other_related", "reason": "direct"},
+            ],
+            "groups": [],
+            "gaps": [],
+            "rejected": [],
+        }
+
+    monkeypatch.setattr(ResultFusionRankerTool, "run", fake_fusion_run)
+    monkeypatch.setattr(MatchMaterializerTool, "run", fake_materializer_run)
+
+    output = await CandidateRankingTool(
+        session=object(),
+        validator=fake_validator,
+        semantic_judge=fake_judge,
+    ).run(
+        CandidateRankingInput(
+            query="只看某类主结果",
+            query_plan={"open_discovery": True, "retrieval_mode": "fuzzy", "limit": 8},
+            llm_available=True,
+        )
+    )
+
+    assert [match.title for match in output.matches] == ["Direct Match", "Support Context", "Uncertain Match"]
+    assert output.query_plan["_agent_candidate_semantic_judge"]["fit_counts"]["off_scope"] == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_ranking_preserves_category_semantic_compatibility(monkeypatch):
+    bikini = _match("A sexy straps bikini for UNP")
+    bikini = bikini.model_copy(update={"category": "Armour", "adult_content": True})
+
+    def fake_fusion_run(self, tool_input):
+        return ResultFusionRankerOutput(results=["ranked"], evidence=[])
+
+    def fake_materializer_run(self, tool_input):
+        return MatchMaterializerOutput(matches=[bikini])
+
+    async def fake_validator(**kwargs):
+        raise AssertionError("semantic judge should own open discovery filtering")
+
+    async def fake_judge(tool_input):
+        return {
+            "judgements": [
+                {
+                    "candidate_id": bikini.id,
+                    "relevance": "high",
+                    "fit_type": "direct_match",
+                    "group": "visual_support",
+                    "category_semantic_compatibility": "compatible",
+                    "category_compatibility_reason": "Armour category contains bikini wearable clothing evidence.",
+                    "reason": "adult bikini wearable",
+                    "evidence": ["title contains bikini"],
+                    "violations": [],
+                }
+            ],
+            "groups": [],
+            "gaps": [],
+            "rejected": [],
+        }
+
+    monkeypatch.setattr(ResultFusionRankerTool, "run", fake_fusion_run)
+    monkeypatch.setattr(MatchMaterializerTool, "run", fake_materializer_run)
+
+    output = await CandidateRankingTool(
+        session=object(),
+        validator=fake_validator,
+        semantic_judge=fake_judge,
+    ).run(
+        CandidateRankingInput(
+            query="只看天际的R18女性服装",
+            query_plan={"open_discovery": True, "retrieval_mode": "fuzzy", "limit": 8},
+            llm_available=True,
+        )
+    )
+
+    assert [match.title for match in output.matches] == ["A sexy straps bikini for UNP"]
+    assert "分类语义：兼容" in output.matches[0].rank_reason
+    assert "分类依据：Armour category contains bikini wearable clothing evidence." in output.matches[0].rank_reason
+    summary = output.query_plan["_agent_candidate_semantic_judge"]
+    assert summary["category_compatibility_counts"]["compatible"] == 1
+    assert summary["judgements"][0]["category_semantic_compatibility"] == "compatible"
+    assert output.evidence[-1]["category_compatibility_counts"]["compatible"] == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_ranking_uses_semantic_judge_for_filtered_contract(monkeypatch):
+    bikini = _match("Obi's Battle Bikini 4K 3BA BHUNP UBE")
+    bikini = bikini.model_copy(update={"category": "Armour", "adult_content": True})
+    captured = {}
+
+    def fake_fusion_run(self, tool_input):
+        return ResultFusionRankerOutput(results=["ranked"], evidence=[])
+
+    def fake_materializer_run(self, tool_input):
+        captured["materializer_limit"] = tool_input.limit
+        return MatchMaterializerOutput(matches=[bikini])
+
+    async def fake_validator(**kwargs):
+        return kwargs["matches"]
+
+    async def fake_judge(tool_input):
+        captured["judge_query"] = tool_input.query
+        captured["judge_strategy"] = tool_input.semantic_strategy
+        return {
+            "judgements": [
+                {
+                    "candidate_id": bikini.id,
+                    "relevance": "high",
+                    "fit_type": "direct_match",
+                    "group": "visual_support",
+                    "category_semantic_compatibility": "compatible",
+                    "category_compatibility_reason": "Armour source category is compatible with bikini clothing intent.",
+                    "reason": "R18 bikini outfit is wearable female clothing",
+                }
+            ],
+            "groups": [],
+            "gaps": [],
+            "rejected": [],
+        }
+
+    monkeypatch.setattr(ResultFusionRankerTool, "run", fake_fusion_run)
+    monkeypatch.setattr(MatchMaterializerTool, "run", fake_materializer_run)
+
+    output = await CandidateRankingTool(
+        session=object(),
+        validator=fake_validator,
+        semantic_judge=fake_judge,
+    ).run(
+        CandidateRankingInput(
+            query="只看天际的R18女性服装",
+            query_plan={
+                "open_discovery": False,
+                "retrieval_mode": "filtered",
+                "limit": 8,
+                "_agent_semantic_strategy": {
+                    "direct_match_definition": ["R18 Skyrim female clothing or outfit wearable items"],
+                    "answer_policy": {"main_results": "ranked_by_fit_type"},
+                },
+            },
+            llm_available=True,
+        )
+    )
+
+    assert captured["materializer_limit"] == 8
+    assert captured["judge_query"] == "只看天际的R18女性服装"
+    assert captured["judge_strategy"]["direct_match_definition"] == ["R18 Skyrim female clothing or outfit wearable items"]
+    assert [match.title for match in output.matches] == ["Obi's Battle Bikini 4K 3BA BHUNP UBE"]
+    assert output.semantic_judge_status == "succeeded"
+    assert output.query_plan["_agent_candidate_semantic_judge"]["category_compatibility_counts"]["compatible"] == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_ranking_hides_non_direct_matches_for_direct_only_contract(monkeypatch):
+    support = _match("Support Context")
+    uncertain = _match("Uncertain Match")
+
+    def fake_fusion_run(self, tool_input):
+        return ResultFusionRankerOutput(results=["ranked"], evidence=[])
+
+    def fake_materializer_run(self, tool_input):
+        return MatchMaterializerOutput(matches=[support, uncertain])
+
+    async def fake_validator(**kwargs):
+        raise AssertionError("semantic judge should own open discovery filtering")
+
+    async def fake_judge(tool_input):
+        return {
+            "judgements": [
+                {
+                    "candidate_id": support.id,
+                    "relevance": "medium",
+                    "fit_type": "support_context",
+                    "group": "related_addon",
+                    "reason": "support only",
+                },
+                {
+                    "candidate_id": uncertain.id,
+                    "relevance": "low",
+                    "fit_type": "uncertain",
+                    "group": "other_related",
+                    "reason": "not enough evidence",
+                },
+            ],
+            "groups": [],
+            "gaps": ["没有直接命中项"],
+            "rejected": [],
+        }
+
+    async def fake_recovery_run(self, tool_input):  # pragma: no cover - must not be called
+        raise AssertionError("direct-only semantic empty result should not recover weak candidates")
+
+    monkeypatch.setattr(ResultFusionRankerTool, "run", fake_fusion_run)
+    monkeypatch.setattr(MatchMaterializerTool, "run", fake_materializer_run)
+    monkeypatch.setattr(CandidateRecoveryTool, "run", fake_recovery_run)
+
+    output = await CandidateRankingTool(
+        session=object(),
+        validator=fake_validator,
+        semantic_judge=fake_judge,
+    ).run(
+        CandidateRankingInput(
+            query="只看某类主结果",
+            query_plan={
+                "open_discovery": True,
+                "retrieval_mode": "fuzzy",
+                "limit": 8,
+                "_agent_semantic_strategy": {
+                    "answer_policy": {
+                        "main_results": "only_direct_match",
+                    }
+                },
+            },
+            llm_available=True,
+        )
+    )
+
+    assert output.matches == []
+    assert output.match_count == 0
+    assert output.evidence[-1]["output_count"] == 0
+    assert output.query_plan["_agent_candidate_semantic_judge"]["fit_counts"]["direct_match"] == 0
+    assert output.query_plan["_agent_candidate_semantic_judge"]["fit_counts"]["support_context"] == 1
+    assert output.query_plan["_agent_candidate_semantic_judge"]["fit_counts"]["uncertain"] == 1
+
+
+@pytest.mark.asyncio
 async def test_candidate_ranking_keeps_existing_path_when_llm_unavailable(monkeypatch):
     def fake_fusion_run(self, tool_input):
         return ResultFusionRankerOutput(results=["ranked"], evidence=[])
@@ -303,5 +556,53 @@ async def test_candidate_ranking_keeps_existing_path_when_llm_unavailable(monkey
     )
 
     assert [match.title for match in output.matches] == ["Original Match"]
+    assert output.semantic_judge_status == "skipped"
+    assert "_agent_candidate_semantic_judge" not in output.query_plan
+
+
+@pytest.mark.asyncio
+async def test_candidate_ranking_skips_semantic_judge_when_validator_drops_filtered_candidates(monkeypatch):
+    bikini = _match("A sexy straps bikini for UNP")
+
+    def fake_fusion_run(self, tool_input):
+        return ResultFusionRankerOutput(results=["ranked"], evidence=[])
+
+    def fake_materializer_run(self, tool_input):
+        return MatchMaterializerOutput(matches=[bikini])
+
+    async def fake_validator(**kwargs):
+        return []
+
+    async def fake_judge(tool_input):  # pragma: no cover - must not be called
+        raise AssertionError("semantic judge should not run after validator removes all candidates")
+
+    async def fake_recovery_run(self, tool_input):  # pragma: no cover - must not be called
+        raise AssertionError("direct-only empty result should not recover weak candidates")
+
+    monkeypatch.setattr(ResultFusionRankerTool, "run", fake_fusion_run)
+    monkeypatch.setattr(MatchMaterializerTool, "run", fake_materializer_run)
+    monkeypatch.setattr(CandidateRecoveryTool, "run", fake_recovery_run)
+
+    output = await CandidateRankingTool(
+        session=object(),
+        validator=fake_validator,
+        semantic_judge=fake_judge,
+    ).run(
+        CandidateRankingInput(
+            query="只看天际的R18女性服装",
+            query_plan={
+                "open_discovery": False,
+                "retrieval_mode": "filtered",
+                "limit": 8,
+                "_agent_semantic_strategy": {
+                    "direct_match_definition": ["R18 Skyrim female clothing"],
+                    "answer_policy": {"main_results": "only_direct_match"},
+                },
+            },
+            llm_available=True,
+        )
+    )
+
+    assert output.matches == []
     assert output.semantic_judge_status == "skipped"
     assert "_agent_candidate_semantic_judge" not in output.query_plan

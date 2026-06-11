@@ -1,3 +1,5 @@
+// 中文注释：提供 HelpButton 业务组件。
+
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";

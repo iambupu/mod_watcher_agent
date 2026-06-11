@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_numeric_utils.py 的模块职责，便于后续维护定位。
+
 from app.utils.numeric import (
     bounded_int,
     is_plain_int,

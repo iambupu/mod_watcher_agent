@@ -1,3 +1,5 @@
+// 中文注释：提供 modSummary 相关的前端纯函数工具。
+
 import type { SummaryMode } from "@/types";
 
 function truncate(text: string, maxLen?: number): string {

@@ -1,3 +1,5 @@
+# 中文注释：记录数据库结构迁移步骤，供 Alembic 按版本顺序执行。
+
 """add translated Chinese mod title
 
 Revision ID: c1a7e9d2f4b6

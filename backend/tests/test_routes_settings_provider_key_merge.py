@@ -1,3 +1,5 @@
+# 中文注释：覆盖对应后端行为的回归测试，防止后续改动破坏既有契约。
+
 import json
 
 from app.services.settings_payload_service import MASKED_VALUE, restore_masked_provider_api_keys

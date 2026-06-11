@@ -1,3 +1,5 @@
+# 中文注释：标记 memory 包，保证后端模块可以按包路径导入。
+
 from app.services.agent.memory.evidence_service import (
     build_memory_evidence,
     build_memory_writeback_evidence,

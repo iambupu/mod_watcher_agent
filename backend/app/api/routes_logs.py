@@ -1,12 +1,7 @@
-import os
-import platform
-import subprocess
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException, Query
 
-from app.config import settings
 from app.logger import get_log_entries
+from app.services.log_directory_service import LogDirectoryOpenError, open_log_directory_in_system
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 
@@ -17,26 +12,17 @@ def list_logs(
     search: str | None = Query(None, description="Search in module name and message"),
     limit: int = Query(200, ge=1, le=1000, description="Maximum entries to return"),
 ):
-    """查询并返回列表数据。"""
+    """按级别/关键词读取最近日志条目。"""
     entries = get_log_entries(level=level, search=search, limit=limit)
     return {"entries": entries}
 
 
 @router.post("/open-dir")
 def open_log_directory():
-    """处理当前模块的业务逻辑并返回结果。"""
-    log_dir = Path(settings.LOG_DIR).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
-    system = platform.system().lower()
+    """调用系统文件管理器打开当前日志目录。"""
     try:
-        if system == "windows":
-            os.startfile(str(log_dir))  # type: ignore[attr-defined]
-        elif system == "darwin":
-            subprocess.Popen(["open", str(log_dir)])
-        elif system == "linux":
-            subprocess.Popen(["xdg-open", str(log_dir)])
-        else:
-            raise HTTPException(status_code=501, detail=f"Unsupported platform: {system}")
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=501, detail=f"Open directory command unavailable: {exc}") from exc
+        log_dir = open_log_directory_in_system()
+    except LogDirectoryOpenError as exc:
+        status_code = 501 if exc.unsupported else 500
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     return {"opened": True, "path": str(log_dir)}

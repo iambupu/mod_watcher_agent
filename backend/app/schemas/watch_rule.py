@@ -48,7 +48,7 @@ class LoversLabRuleConfig(BaseModel):
     @field_validator("feedUrls", "pageUrls")
     @classmethod
     def validate_loverslab_urls(cls, value: list[str]) -> list[str]:
-        """校验输入是否符合业务约束。"""
+        """校验 LoversLab 规则 URL 只能使用 https 官方域名。"""
         validated: list[str] = []
         for raw_url in value:
             url = (raw_url or "").strip()
@@ -71,7 +71,7 @@ class LoversLabRuleConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_access_mode_requirements(self):
-        """校验输入是否符合业务约束。"""
+        """根据 accessMode 要求对应 RSS 或页面 URL 列表存在。"""
         if self.accessMode == "rss" and not self.feedUrls:
             raise ValueError("feedUrls is required when accessMode is rss")
         if self.accessMode == "page" and not self.pageUrls:
@@ -130,7 +130,7 @@ class WatchRuleCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_config_matches_source(self):
-        """校验输入是否符合业务约束。"""
+        """创建规则时校验 source 和 sourceConfig 类型一致。"""
         _validate_source_config_pair(self.source, self.sourceConfig)
         return self
 
@@ -151,7 +151,7 @@ class WatchRuleUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_config_matches_source(self):
-        """校验输入是否符合业务约束。"""
+        """更新规则时仅在二者同时出现时校验类型一致。"""
         if self.source is not None and self.sourceConfig is not None:
             _validate_source_config_pair(self.source, self.sourceConfig)
         return self
@@ -161,7 +161,7 @@ def _validate_source_config_pair(
     source: Literal["nexusmods", "loverslab"],
     source_config: NexusModsRuleConfig | LoversLabRuleConfig,
 ) -> None:
-    """校验内部输入是否符合业务约束。"""
+    """防止 Nexus/LoversLab 规则配置被错配到另一个来源。"""
     if source == "nexusmods" and not isinstance(source_config, NexusModsRuleConfig):
         raise ValueError("sourceConfig must be NexusModsRuleConfig when source is nexusmods")
     if source == "loverslab" and not isinstance(source_config, LoversLabRuleConfig):

@@ -1,10 +1,11 @@
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from sqlmodel import Session
 
 from app.services.agent.planning.open_discovery_policy import is_open_discovery_plan
+from app.services.agent.planning.query_plan_hygiene import sanitize_query_plan_fields
 from app.services.agent.retrieval_evidence import (
     active_query_plan_fields,
     append_retrieval_evidence,
@@ -45,7 +46,7 @@ class ToolExecutorTool:
         self.session = session
 
     async def run(self, tool_input: ToolExecutorInput) -> ToolExecutorOutput:
-        query_plan = dict(tool_input.query_plan or {})
+        query_plan = sanitize_query_plan_fields(dict(tool_input.query_plan or {}), query=tool_input.query)
         evidence_id = tool_input.evidence_id or str(query_plan.get("evidence_id") or "").strip()
         plan = SearchPlan.from_query_plan(query_plan)
         plan_query = {**plan.to_query_plan(), "evidence_id": evidence_id}
@@ -56,58 +57,98 @@ class ToolExecutorTool:
         staged_results: list[SearchResult] = []
         if allowed_tools & {"structured_sql", "sqlite_fts", "local_db_search"}:
             # 本地检索承担硬过滤和本地缓存召回，是普通用户离线优先路径。
-            local_results = await LocalDbSearchTool(self.session).run(local_db_input_from_plan(effective_query, plan_query))
-            staged_results.extend(local_results)
-            logger.info(
-                "agent.search.local count=%s evidence_id=%s open_discovery=%s retrieval_mode=%s keywords=%s excluded_keywords=%s excluded_sources=%s keyword_match_mode=%s exclude_titles=%s exact_title=%s version=%s external_id=%s source_url=%s games=%s game_domains=%s sources=%s categories=%s tags=%s summary_languages=%s excluded_summary_languages=%s requirement_terms=%s compatibility_terms=%s has_thumbnail=%s author=%s adult_content=%s min_downloads=%s min_endorsements=%s min_views=%s min_likes=%s updated_since_days=%s updated_after=%s updated_before=%s published_after=%s published_before=%s created_after=%s created_before=%s sort=%s/%s",
-                len(local_results),
-                evidence_id,
-                query_plan.get("open_discovery"),
-                query_plan.get("retrieval_mode"),
-                plan.keywords,
-                plan.excluded_keywords,
-                query_plan.get("excluded_sources", []),
-                query_plan.get("keyword_match_mode"),
-                query_plan.get("exclude_titles", []),
-                plan.exact_title,
-                plan.version,
-                plan.external_id,
-                plan.source_url,
-                plan.games,
-                plan.game_domains,
-                plan.sources,
-                plan.categories,
-                plan.tags,
-                plan.summary_languages,
-                plan.excluded_summary_languages,
-                plan.requirement_terms,
-                plan.compatibility_terms,
-                plan.has_thumbnail,
-                plan.author,
-                plan.adult_content,
-                plan.min_downloads,
-                plan.min_endorsements,
-                plan.min_views,
-                plan.min_likes,
-                plan.updated_since_days,
-                plan.updated_after,
-                plan.updated_before,
-                plan.published_after,
-                plan.published_before,
-                plan.created_after,
-                plan.created_before,
-                plan.sort_field,
-                plan.sort_order,
-            )
-            append_retrieval_evidence(
-                evidence,
-                stage="local_retrieval",
-                tool="local_db",
-                status="succeeded",
-                count=len(local_results),
-                fields=active_query_plan_fields(query_plan),
-                evidence_id=evidence_id,
-            )
+            if _dual_retrieval_enabled(query_plan):
+                current_plan_query = _branch_plan_query(query_plan.get("_agent_current_only_plan"), evidence_id)
+                current_results: list[SearchResult] = []
+                if _plan_has_current_signal(current_plan_query):
+                    current_plan = SearchPlan.from_query_plan(current_plan_query)
+                    current_query = _effective_search_query(tool_input.query, current_plan)
+                    current_results = await LocalDbSearchTool(self.session).run(
+                        local_db_input_from_plan(current_query, current_plan_query)
+                    )
+                    current_results = _tag_retrieval_branch(current_results, "current_only")
+                    _log_local_search(
+                        count=len(current_results),
+                        evidence_id=evidence_id,
+                        query_plan=current_plan_query,
+                        plan=current_plan,
+                        retrieval_branch="current_only",
+                    )
+                    _append_branch_evidence(
+                        evidence,
+                        branch="current_only",
+                        status="succeeded",
+                        count=len(current_results),
+                        query_plan=current_plan_query,
+                        evidence_id=evidence_id,
+                    )
+                else:
+                    _append_branch_evidence(
+                        evidence,
+                        branch="current_only",
+                        status="skipped",
+                        count=0,
+                        query_plan=current_plan_query,
+                        evidence_id=evidence_id,
+                        reason="no_current_only_signal",
+                    )
+
+                context_results = await LocalDbSearchTool(self.session).run(
+                    local_db_input_from_plan(effective_query, plan_query)
+                )
+                context_results = _tag_retrieval_branch(context_results, "context_scoped")
+                staged_results.extend(current_results)
+                staged_results.extend(context_results)
+                _log_local_search(
+                    count=len(context_results),
+                    evidence_id=evidence_id,
+                    query_plan=query_plan,
+                    plan=plan,
+                    retrieval_branch="context_scoped",
+                )
+                _append_branch_evidence(
+                    evidence,
+                    branch="context_scoped",
+                    status="succeeded",
+                    count=len(context_results),
+                    query_plan=query_plan,
+                    evidence_id=evidence_id,
+                )
+                evidence.append(
+                    {
+                        "fragment_id": f"r_exec_{len(evidence) + 1}",
+                        "stage": "local_retrieval",
+                        "tool": "local_db",
+                        "status": "succeeded",
+                        "retrieval_branch": "dual_summary",
+                        "current_only_count": len(current_results),
+                        "context_scoped_count": len(context_results),
+                        "current_only_reserved": _current_only_reserved(plan.limit, len(current_results)),
+                        "evidence_id": evidence_id,
+                    }
+                )
+            else:
+                local_results = await LocalDbSearchTool(self.session).run(
+                    local_db_input_from_plan(effective_query, plan_query)
+                )
+                staged_results.extend(local_results)
+                _log_local_search(
+                    count=len(local_results),
+                    evidence_id=evidence_id,
+                    query_plan=query_plan,
+                    plan=plan,
+                    retrieval_branch="",
+                )
+                append_retrieval_evidence(
+                    evidence,
+                    stage="local_retrieval",
+                    tool="local_db",
+                    status="succeeded",
+                    count=len(local_results),
+                    fields=active_query_plan_fields(query_plan),
+                    query_plan=query_plan,
+                    evidence_id=evidence_id,
+                )
         else:
             append_retrieval_evidence(
                 evidence,
@@ -155,6 +196,7 @@ class ToolExecutorTool:
                 count=0,
                 reason=reason,
                 fields=["keywords", "sources", "games", "categories", "category_hints"],
+                query_plan=query_plan,
                 evidence_id=evidence_id,
             )
 
@@ -171,6 +213,149 @@ class ToolExecutorTool:
             evidence=evidence,
             effective_query=effective_query,
         )
+
+
+def _dual_retrieval_enabled(query_plan: dict[str, Any]) -> bool:
+    config = query_plan.get("_agent_dual_retrieval")
+    return isinstance(config, dict) and config.get("enabled") is True and isinstance(
+        query_plan.get("_agent_current_only_plan"),
+        dict,
+    )
+
+
+def _branch_plan_query(raw_plan: object, evidence_id: str) -> dict[str, Any]:
+    plan = sanitize_query_plan_fields(dict(raw_plan or {})) if isinstance(raw_plan, dict) else {}
+    if evidence_id:
+        plan["evidence_id"] = evidence_id
+    return plan
+
+
+def _plan_has_current_signal(plan_query: dict[str, Any]) -> bool:
+    signal_fields = [
+        "keywords",
+        "games",
+        "game_domains",
+        "sources",
+        "categories",
+        "category_hints",
+        "tags",
+        "requirement_terms",
+        "compatibility_terms",
+        "summary_languages",
+        "excluded_summary_languages",
+        "exact_title",
+        "version",
+        "external_id",
+        "source_url",
+        "author",
+    ]
+    if any(plan_query.get(field) not in (None, "", []) for field in signal_fields):
+        return True
+    return any(
+        plan_query.get(field) is not None
+        for field in [
+            "adult_content",
+            "has_thumbnail",
+            "min_downloads",
+            "min_endorsements",
+            "min_views",
+            "min_likes",
+            "updated_since_days",
+            "updated_after",
+            "updated_before",
+            "published_after",
+            "published_before",
+            "created_after",
+            "created_before",
+        ]
+    )
+
+
+def _tag_retrieval_branch(results: list[SearchResult], branch: str) -> list[SearchResult]:
+    return [replace(item, retrieval_branch=branch) for item in results]
+
+
+def _append_branch_evidence(
+    evidence: list[dict[str, object]],
+    *,
+    branch: str,
+    status: str,
+    count: int,
+    query_plan: dict[str, Any],
+    evidence_id: str,
+    reason: str | None = None,
+) -> None:
+    append_retrieval_evidence(
+        evidence,
+        stage="local_retrieval",
+        tool="local_db",
+        status=status,
+        count=count,
+        reason=reason,
+        fields=active_query_plan_fields(query_plan),
+        query_plan=query_plan,
+        evidence_id=evidence_id,
+    )
+    evidence[-1]["retrieval_branch"] = branch
+
+
+def _current_only_reserved(limit: int, current_only_count: int) -> int:
+    if current_only_count <= 0:
+        return 0
+    half_limit = max(1, limit // 2)
+    return min(current_only_count, min(3, half_limit))
+
+
+def _log_local_search(
+    *,
+    count: int,
+    evidence_id: str,
+    query_plan: dict[str, Any],
+    plan: SearchPlan,
+    retrieval_branch: str,
+) -> None:
+    logger.info(
+        "agent.search.local count=%s evidence_id=%s retrieval_branch=%s open_discovery=%s retrieval_mode=%s keywords=%s excluded_keywords=%s excluded_sources=%s keyword_match_mode=%s exclude_titles=%s exact_title=%s version=%s external_id=%s source_url=%s games=%s game_domains=%s sources=%s categories=%s tags=%s summary_languages=%s excluded_summary_languages=%s requirement_terms=%s compatibility_terms=%s has_thumbnail=%s author=%s adult_content=%s min_downloads=%s min_endorsements=%s min_views=%s min_likes=%s updated_since_days=%s updated_after=%s updated_before=%s published_after=%s published_before=%s created_after=%s created_before=%s sort=%s/%s",
+        count,
+        evidence_id,
+        retrieval_branch,
+        query_plan.get("open_discovery"),
+        query_plan.get("retrieval_mode"),
+        plan.keywords,
+        plan.excluded_keywords,
+        query_plan.get("excluded_sources", []),
+        query_plan.get("keyword_match_mode"),
+        query_plan.get("exclude_titles", []),
+        plan.exact_title,
+        plan.version,
+        plan.external_id,
+        plan.source_url,
+        plan.games,
+        plan.game_domains,
+        plan.sources,
+        plan.categories,
+        plan.tags,
+        plan.summary_languages,
+        plan.excluded_summary_languages,
+        plan.requirement_terms,
+        plan.compatibility_terms,
+        plan.has_thumbnail,
+        plan.author,
+        plan.adult_content,
+        plan.min_downloads,
+        plan.min_endorsements,
+        plan.min_views,
+        plan.min_likes,
+        plan.updated_since_days,
+        plan.updated_after,
+        plan.updated_before,
+        plan.published_after,
+        plan.published_before,
+        plan.created_after,
+        plan.created_before,
+        plan.sort_field,
+        plan.sort_order,
+    )
 
 
 def _planned_tools(tool_plan: dict[str, Any]) -> set[str]:

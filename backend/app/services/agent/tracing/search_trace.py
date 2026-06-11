@@ -1,3 +1,5 @@
+# 中文注释：记录 Agent 搜索链路的可审计 trace。
+
 import logging
 from time import perf_counter
 from typing import Literal, NotRequired, TypedDict

@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_jobs.py 的模块职责，便于后续维护定位。
+
 """Tests for APScheduler jobs using WatchRule."""
 
 from unittest.mock import AsyncMock, patch

@@ -38,6 +38,7 @@ def append_retrieval_evidence(
     count: int,
     reason: str | None = None,
     fields: list[str] | None = None,
+    query_plan: dict[str, Any] | None = None,
     evidence_id: str = "",
     fragment_prefix: str = "r_exec",
 ) -> None:
@@ -55,4 +56,29 @@ def append_retrieval_evidence(
         item["reason"] = reason
     if fields:
         item["fields"] = fields
+        constraints = active_query_plan_constraints(query_plan or {}, fields)
+        if constraints:
+            item["constraints"] = constraints
     evidence.append(item)
+
+
+def active_query_plan_constraints(query_plan: dict[str, Any], fields: list[str]) -> dict[str, object]:
+    """返回 evidence 字段对应的生效约束值，便于接口返回体做问题-结果交叉校验。"""
+    constraints: dict[str, object] = {}
+    for field in fields:
+        if field not in QUERY_PLAN_EVIDENCE_FIELDS:
+            continue
+        value = query_plan.get(field)
+        if value in (None, "", []):
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            constraints[field] = value
+        elif isinstance(value, list):
+            normalized = [
+                item
+                for item in value
+                if isinstance(item, (str, int, float, bool)) and item not in (None, "")
+            ]
+            if normalized:
+                constraints[field] = normalized
+    return constraints

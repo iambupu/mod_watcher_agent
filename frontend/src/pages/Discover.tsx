@@ -1,3 +1,5 @@
+// 中文注释：实现 Discover 页面级交互和数据装配。
+
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -42,7 +44,7 @@ import {
   unignoreMod,
 } from "@/api/mods";
 import { importNexusModsGame, pollJobRun, runDiscoveryAll } from "@/api/jobs";
-import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavorites, removeFavorite } from "@/api/favorites";
+import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavoriteRefs, removeFavorite } from "@/api/favorites";
 import { useSummaryRegeneration } from "@/hooks/useSummaryRegeneration";
 import { useUIStore } from "@/stores/uiStore";
 import { formatModSummary } from "@/utils/modSummary";
@@ -157,8 +159,8 @@ const Discover: React.FC = () => {
     queryFn: fetchModGames,
   });
   const { data: favorites = [] } = useQuery({
-    queryKey: ["favorites"],
-    queryFn: fetchFavorites,
+    queryKey: ["favorites", "refs"],
+    queryFn: fetchFavoriteRefs,
   });
 
   const favoriteByModId = useMemo(() => mapFavoritesByModId(favorites), [favorites]);

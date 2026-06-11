@@ -1,3 +1,5 @@
+// 中文注释：提供 Input 通用 UI 组件。
+
 import React from "react";
 import { HelpButton } from "@/components/HelpButton";
 

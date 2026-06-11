@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端HTTP 客户端接口的类型和请求函数。
+
 const BASE_URL = "/api";
 const SECURITY_TOKEN_STORAGE_KEY = "mw_security_token";
 

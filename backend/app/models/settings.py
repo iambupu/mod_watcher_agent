@@ -1,3 +1,4 @@
+# 中文注释：定义设置项相关的数据库持久化模型。
 
 from sqlmodel import Field, SQLModel
 

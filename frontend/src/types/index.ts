@@ -1,3 +1,5 @@
+// 中文注释：集中声明前端共享业务类型。
+
 export type ModSource = "nexusmods" | "loverslab";
 export type AdultPolicy = "include" | "exclude" | "only";
 export type SummaryMode = "original" | "translated" | "bilingual";

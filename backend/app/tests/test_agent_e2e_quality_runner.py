@@ -1,4 +1,9 @@
+# 中文注释：说明 backend/app/tests/test_agent_e2e_quality_runner.py 的模块职责，便于后续维护定位。
+
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -9,6 +14,16 @@ from app.services.agent.quality.e2e_runner import (
     run_e2e_quality_cases,
     supported_expect_fields,
 )
+
+
+@contextmanager
+def _temporary_quality_case_file(filename: str, content: str) -> Iterator[Path]:
+    path = Path(__file__).resolve().parent / f"_tmp_{uuid4().hex}_{filename}"
+    path.write_text(content, encoding="utf-8")
+    try:
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def test_e2e_quality_runner_reports_structured_passes():
@@ -166,11 +181,11 @@ def test_e2e_quality_runner_reports_structured_passes():
     assert "log.contains:context_semantic_anchors=['bimbo']" in source_refine_checks
 
 
-def test_e2e_quality_loader_rejects_non_object_cases(tmp_path):
-    path = tmp_path / "bad-e2e.yaml"
-    path.write_text("- id: ok\n  message: bimbo\n- bad-case\n", encoding="utf-8")
-
-    with pytest.raises(ValueError, match=r"indexes: \[1\]"):
+def test_e2e_quality_loader_rejects_non_object_cases():
+    with (
+        _temporary_quality_case_file("bad-e2e.yaml", "- id: ok\n  message: bimbo\n- bad-case\n") as path,
+        pytest.raises(ValueError, match=r"indexes: \[1\]"),
+    ):
         load_e2e_quality_cases(path)
 
 

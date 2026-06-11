@@ -17,7 +17,7 @@ async def validate_matches_with_llm(
     model: str,
     query_plan: dict[str, Any] | None = None,
 ) -> list[AgentModMatch]:
-    """校验输入是否符合业务约束。"""
+    """调用 LLM 对候选 Mod 做语义相关性重排和过滤。"""
     if not matches:
         return matches
     client = create_llm_client(provider=provider, api_key=api_key, base_url=base_url)

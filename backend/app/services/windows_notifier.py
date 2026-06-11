@@ -4,7 +4,7 @@ import subprocess
 
 
 def _run_powershell_script(script: str, env: dict[str, str], *, sta: bool = False, timeout: int = 8) -> bool:
-    """执行内部任务流程。"""
+    """用 EncodedCommand 执行 PowerShell，避免把消息文本拼进脚本源码。"""
     encoded_script = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     args = ["powershell", "-NoProfile", "-NonInteractive"]
     if sta:
@@ -24,7 +24,7 @@ def _run_powershell_script(script: str, env: dict[str, str], *, sta: bool = Fals
 
 
 def _send_tray_balloon(env: dict[str, str]) -> bool:
-    """发送内部通知或外部请求。"""
+    """使用 WinForms NotifyIcon 发送托盘气泡通知。"""
     script = "\n".join(
         [
             "$ErrorActionPreference='Stop'",
@@ -46,7 +46,7 @@ def _send_tray_balloon(env: dict[str, str]) -> bool:
 
 
 def _send_windows_toast(env: dict[str, str]) -> bool:
-    """发送内部通知或外部请求。"""
+    """使用 Windows Runtime Toast API 作为桌面通知兜底。"""
     script = "\n".join(
         [
             "$ErrorActionPreference='Stop'",

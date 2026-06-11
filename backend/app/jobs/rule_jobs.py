@@ -7,14 +7,14 @@ from app.services.discovery_service import DiscoveryService
 
 class RuleJobError(Exception):
     def __init__(self, status_code: int, detail: str):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存可直接映射为 HTTP 响应的错误信息。"""
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
 
 
 def enqueue_rule_discovery(session: Session, rule_id: int) -> dict:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """校验规则可运行后，创建并排队一次手动发现任务。"""
     rule = session.get(WatchRule, rule_id)
     if rule is None:
         raise RuleJobError(404, "Rule not found")
@@ -30,7 +30,7 @@ def enqueue_rule_discovery(session: Session, rule_id: int) -> dict:
     )
 
     async def handler():
-        """处理当前模块的业务逻辑并返回结果。"""
+        """在独立会话中执行规则发现，避免复用请求事务。"""
         with Session(bind) as job_session:
             discovery = DiscoveryService(job_session)
             new_mods = await discovery.discover_from_rule(rule_id)

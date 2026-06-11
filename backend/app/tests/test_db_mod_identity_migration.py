@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_db_mod_identity_migration.py 的模块职责，便于后续维护定位。
+
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
