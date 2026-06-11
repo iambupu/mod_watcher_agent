@@ -68,7 +68,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="Mod Watcher Agent",
-    version="0.2.1",
+    version="0.2.2",
     lifespan=lifespan,
 )
 
@@ -144,4 +144,4 @@ if FRONTEND_DIST_DIR.exists():
 else:
     @app.get("/")
     async def root():
-        return {"service": "Mod Watcher Agent", "version": "0.2.1"}
+        return {"service": "Mod Watcher Agent", "version": "0.2.2"}
