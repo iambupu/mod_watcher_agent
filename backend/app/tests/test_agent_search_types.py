@@ -135,3 +135,4 @@ def test_search_result_keeps_tool_source_and_score():
     assert result.score == 5
     assert result.mod.title == "XXTB"
     assert result.tool_name == "local_db_search"
+    assert result.retrieval_branch == ""

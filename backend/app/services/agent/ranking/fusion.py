@@ -6,6 +6,7 @@ from app.services.agent.search_types import SearchResult
 def fuse_duplicate_results(results: list[SearchResult]) -> SearchResult:
     best = max(results, key=lambda item: item.score)
     tool_names = sorted({item.tool_name for item in results})
+    retrieval_branch = "current_only" if any(item.retrieval_branch == "current_only" for item in results) else best.retrieval_branch
     max_score = max(item.score for item in results)
     source_bonus = max(0, len(tool_names) - 1) * 2
     score_breakdown = {
@@ -22,6 +23,7 @@ def fuse_duplicate_results(results: list[SearchResult]) -> SearchResult:
         score=final_score,
         score_breakdown=score_breakdown,
         rank_reason=f"命中工具：{', '.join(tool_names)}；基础相关性 {max_score}。",
+        retrieval_branch=retrieval_branch,
     )
 
 

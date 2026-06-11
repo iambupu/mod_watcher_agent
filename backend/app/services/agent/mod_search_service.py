@@ -44,14 +44,8 @@ def score_mod(query: str, mod: Mod, extra_text: str = "") -> int:
 def _build_mod_query_from_plan(plan: dict[str, Any]):
     """把规范化 query_plan 翻译成只读 SQLModel 查询。"""
     conditions = [Mod.ignored == False]  # noqa: E712
-    game_values = plan.get("games") or []
-    game_domain_values = plan.get("game_domains") or []
-    if game_values or game_domain_values:
-        game_conditions = []
-        if game_values:
-            game_conditions.append(Mod.game.in_(game_values))
-        if game_domain_values:
-            game_conditions.append(Mod.game_domain.in_(game_domain_values))
+    game_conditions = _game_scope_conditions(plan)
+    if game_conditions:
         conditions.append(or_(*game_conditions))
 
     categories = plan.get("categories") or []
@@ -198,6 +192,19 @@ def _db_fuzzy_keywords(plan: dict[str, Any], categories: list[str]) -> list[str]
     keywords = [str(value).strip().lower() for value in (plan.get("keywords") or []) if str(value).strip()]
     semantic = semantic_query(" ".join(keywords), categories)
     return unique_terms([*keywords, *semantic.expanded_terms])
+
+
+def _game_scope_conditions(plan: dict[str, Any]) -> list[Any]:
+    game_values = _string_list(plan.get("games"))
+    game_domain_values = _string_list(plan.get("game_domains"))
+    if game_values and game_domain_values:
+        values = list(dict.fromkeys([*game_values, *game_domain_values]))
+        return [Mod.game.in_(values), Mod.game_domain.in_(values)]
+    if game_domain_values:
+        return [Mod.game.in_(game_domain_values), Mod.game_domain.in_(game_domain_values)]
+    if game_values:
+        return [Mod.game.in_(game_values)]
+    return []
 
 
 def _keyword_condition(keyword: str):

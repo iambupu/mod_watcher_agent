@@ -159,6 +159,7 @@ class SearchResult:
     tool_name: str
     score_breakdown: dict[str, int] | None = None
     rank_reason: str | None = None
+    retrieval_branch: str = ""
 
 
 def _optional_string(value: Any) -> str | None:
