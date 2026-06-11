@@ -8,7 +8,7 @@ def get_llm_config(
     provider_override: str | None = None,
     model_override: str | None = None,
 ) -> tuple[str, str, str, str]:
-    """读取并返回对应的数据。"""
+    """解析当前 Agent 可用的 LLM 配置，前端覆盖优先于默认供应商链。"""
     enabled = get_provider_chain(settings)
     override_provider = (provider_override or "").strip().lower()
     override_model = (model_override or "").strip()

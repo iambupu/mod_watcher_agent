@@ -1,3 +1,5 @@
+// 中文注释：配置前端应用级 router 基础设施。
+
 import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter } from "react-router-dom";
 

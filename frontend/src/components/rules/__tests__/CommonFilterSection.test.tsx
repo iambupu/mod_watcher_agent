@@ -1,3 +1,5 @@
+// 中文注释：提供规则编辑器里的 CommonFilterSection.test 表单组件。
+
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { KeywordFilterEditor } from "../KeywordFilterEditor";

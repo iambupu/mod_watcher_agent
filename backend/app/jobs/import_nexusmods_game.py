@@ -1,3 +1,5 @@
+# 中文注释：封装NexusMods 游戏导入后台任务的调度入口和任务处理。
+
 from sqlmodel import Session
 
 from app.adapters.nexusmods import NexusModsAdapter

@@ -52,7 +52,9 @@ export function useAgentConversationPersistence({
   const saveTimerRef = useRef<number | null>(null);
   const saveRetryTimerRef = useRef<number | null>(null);
   const savingRef = useRef(false);
+  // 每个 session 只保留最新待保存快照，避免快速输入时把旧消息覆盖回服务端。
   const pendingSavesRef = useRef<Map<string, PendingConversationSave>>(new Map());
+  // 409 表示服务端已有更新；冲突 session 暂停本地写入，等 refetch 合并后再恢复。
   const conflictedSessionIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -69,6 +71,7 @@ export function useAgentConversationPersistence({
   const applyConversationState = (state: AgentConversationState | undefined) => {
     if (state && state.messages.length > 0) {
       const activeConversationId = state.active_session_id || state.messages[state.messages.length - 1]?.session_id || `sess_${Date.now()}`;
+      // 后端保存所有 session，这里只恢复当前会话，避免旧会话消息穿插到当前屏幕。
       const currentMessages = state.messages
         .map((message) => ({
           id: message.id,
@@ -84,6 +87,7 @@ export function useAgentConversationPersistence({
         }))
         .filter((message) => message.sessionId === activeConversationId && message.role !== "separator");
       const firstWelcomeIndex = currentMessages.findIndex((message) => message.role === "assistant" && message.text === welcomeText);
+      // 欢迎语可能来自本地初始化和服务端恢复，保留第一条即可。
       const dedupedMessages = currentMessages.filter(
         (message, index) => !(message.role === "assistant" && message.text === welcomeText && index !== firstWelcomeIndex),
       );
@@ -104,6 +108,7 @@ export function useAgentConversationPersistence({
 
   const saveConversationMutation = useMutation({
     mutationFn: ({ data, sessionId, clientUpdatedAt }: PendingConversationSave) => {
+      // 对话历史只保留最近 300 条，防止持久化 payload 随长期聊天无限增长。
       const payload: AgentConversationMessage[] = data.slice(-300).map((message) => ({
         id: message.id,
         role: message.role,
@@ -157,6 +162,7 @@ export function useAgentConversationPersistence({
       onError: (error) => {
         savingRef.current = false;
         if (isApiStatus(error, 409)) {
+          // 冲突时以后端状态为准，防止本地过期快照重试后覆盖其他窗口的新消息。
           conflictedSessionIdsRef.current.add(snapshot.sessionId);
           pendingSavesRef.current.delete(snapshot.sessionId);
           void refetchConversationState()
@@ -174,6 +180,7 @@ export function useAgentConversationPersistence({
         if (!pendingSavesRef.current.has(snapshot.sessionId)) {
           pendingSavesRef.current.set(snapshot.sessionId, snapshot);
         }
+        // 非冲突错误通常是短暂网络问题，延迟重试并保留当前 session 的最新快照。
         if (saveRetryTimerRef.current) {
           window.clearTimeout(saveRetryTimerRef.current);
         }
@@ -189,6 +196,7 @@ export function useAgentConversationPersistence({
     if (!loadedRef.current || !activeSessionId) return;
     const activeMessages = messages.filter((message) => message.sessionId === activeSessionId);
     queuePendingSave(activeSessionId, activeMessages);
+    // 输入和答案会连续触发 messages 变化，短暂 debounce 可以减少无意义写入。
     if (saveTimerRef.current) {
       window.clearTimeout(saveTimerRef.current);
     }
@@ -213,6 +221,7 @@ export function useAgentConversationPersistence({
       window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
+    // 清屏是用户显式操作，先丢弃本地排队写入，避免空会话随后又被旧快照恢复。
     pendingSavesRef.current.delete(sessionId);
     conflictedSessionIdsRef.current.delete(sessionId);
     await clearConversationMutation.mutateAsync({

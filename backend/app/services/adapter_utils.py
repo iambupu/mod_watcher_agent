@@ -1,3 +1,5 @@
+# 中文注释：封装后端服务层的适配器生命周期调用逻辑。
+
 """Adapter helper utilities for safe lifecycle management."""
 
 import logging

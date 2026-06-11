@@ -29,7 +29,7 @@ async def chat_with_agent(
     request: Request,
     session: SessionDep,
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """处理 Agent 普通对话请求，并记录接口级耗时与命中数量。"""
     started_at = start_trace()
     logger.info(
         "agent.api path=/api/agent/chat status=started history=%s provider_override=%s model_override=%s",
@@ -61,14 +61,14 @@ async def ask_mod_detail(
     request: Request,
     session: SessionDep,
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """处理针对单个 Mod 的详情追问。"""
     return await AgentService(session).ask_mod_detail(body, request)
 
 @router.get("/conversation-state", response_model=AgentConversationState)
 async def get_conversation_state(
     session: SessionDep,
 ):
-    """读取并返回对应的数据。"""
+    """读取前端 AgentChat 需要恢复的会话状态。"""
     settings = SettingsService(session)
     return conversations.load_conversation_state(session, settings)
 
@@ -78,7 +78,7 @@ async def save_conversation_state(
     body: AgentConversationStateSaveRequest,
     session: SessionDep,
 ):
-    """保存数据并返回最新状态。"""
+    """保存 AgentChat 会话快照，并返回服务端确认后的最新状态。"""
     settings = SettingsService(session)
     return conversations.save_conversation_state(body=body, session=session, settings=settings)
 
@@ -87,7 +87,7 @@ async def save_conversation_state(
 async def start_new_conversation(
     session: SessionDep,
 ):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """创建一个新的 AgentChat 会话并切换为活动会话。"""
     settings = SettingsService(session)
     session_id = conversations.start_new_conversation(settings)
     return AgentConversationNewResponse(session_id=session_id)

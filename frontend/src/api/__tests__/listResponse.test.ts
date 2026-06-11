@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端listResponse.test接口的类型和请求函数。
+
 import { describe, expect, it } from "vitest";
 
 import { nonNegativeInteger, normalizeListResponse } from "@/api/listResponse";

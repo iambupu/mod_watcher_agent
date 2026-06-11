@@ -1,3 +1,5 @@
+// 中文注释：封装 useSystemNotifications 相关的 React 状态同步逻辑。
+
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 

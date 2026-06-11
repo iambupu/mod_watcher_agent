@@ -19,11 +19,11 @@ class LocalDbSearchTool:
     name = "local_db_search"
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，所有本地检索都在调用方事务/会话内执行。"""
         self.session = session
 
     async def run(self, tool_input: LocalDbSearchInput) -> list[SearchResult]:
-        """执行任务流程并返回结果。"""
+        """执行本地查询计划，并把打分结果包装成统一 SearchResult。"""
         plan = tool_input.plan.to_query_plan()
         if tool_input.evidence_id:
             plan["evidence_id"] = tool_input.evidence_id
@@ -32,7 +32,7 @@ class LocalDbSearchTool:
 
 
 def local_db_input_from_plan(query: str, plan: dict) -> LocalDbSearchInput:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """把通用 query_plan 转为本地检索工具输入，保留 evidence_id 串联 trace。"""
     return LocalDbSearchInput(
         query=query,
         plan=SearchPlan.from_query_plan(plan),

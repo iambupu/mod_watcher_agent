@@ -1,3 +1,5 @@
+// 中文注释：提供 ConfirmModal 通用 UI 组件。
+
 import React from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";

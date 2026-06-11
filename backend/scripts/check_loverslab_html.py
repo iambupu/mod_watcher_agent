@@ -1,3 +1,5 @@
+# 中文注释：检查 LoversLab HTML 快照解析效果的排查脚本。
+
 """Quick checker for LoversLab page fetch with user-provided cookies.
 
 Usage (PowerShell):

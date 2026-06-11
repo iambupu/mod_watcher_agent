@@ -25,12 +25,12 @@ MAX_CONVERSATION_CHARS = 120000
 
 
 def new_session_id() -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """生成前端可追踪的会话 ID，时间戳便于人工排查保存顺序。"""
     return f"sess_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
 
 
 def load_conversation_state(session: Session, settings: SettingsService) -> AgentConversationState:
-    """加载配置或持久化数据。"""
+    """按会话首次出现顺序加载全部消息，并恢复当前活动会话。"""
     rows = session.exec(select(AgentMessage).order_by(AgentMessage.id.asc())).all()
     session_order: dict[str, int] = {}
     for row in rows:
@@ -40,6 +40,7 @@ def load_conversation_state(session: Session, settings: SettingsService) -> Agen
     raw_active_session = settings.get(AGENT_CHAT_ACTIVE_SESSION_KEY) or ""
     parsed_messages: list[AgentConversationMessage] = []
     for row in rows:
+        # 持久化 JSON 可能来自旧版本或手工编辑，解析失败时丢弃扩展字段但保留消息正文。
         matches: list[AgentModMatch] | None = None
         response_cards: dict[str, list[str]] | None = None
         audit: AgentAudit | None = None
@@ -93,7 +94,7 @@ def save_conversation_state(
     session: Session,
     settings: SettingsService,
 ) -> AgentConversationState:
-    """保存数据并返回最新状态。"""
+    """保存单个活动会话的快照，并用 client_updated_at 拒绝过期写入。"""
     now = datetime.now(UTC).isoformat()
     active_session = body.active_session_id.strip() or new_session_id()
     last_update_key = f"{AGENT_CHAT_LAST_UPDATE_PREFIX}{active_session}"
@@ -102,6 +103,7 @@ def save_conversation_state(
         raise HTTPException(status_code=422, detail="client_updated_at must be ISO timestamp")
     persisted_updated_at = parse_utc_datetime(settings.get(last_update_key))
     if incoming_updated_at and persisted_updated_at and incoming_updated_at < persisted_updated_at:
+        # 前端可能有多个窗口；过期快照必须 409，让客户端 refetch 后再决定是否重试。
         raise HTTPException(
             status_code=409,
             detail="conversation state is stale; refresh conversation and retry",
@@ -129,6 +131,7 @@ def save_conversation_state(
     if active_messages:
         total_chars = sum(len(str(item.get("text") or "")) for item in active_messages)
         if total_chars > MAX_CONVERSATION_CHARS:
+            # 长对话按字符预算从尾部保留，优先保证最近上下文仍能恢复。
             trimmed: list[dict] = []
             running_chars = 0
             for item in reversed(active_messages):
@@ -161,6 +164,7 @@ def save_conversation_state(
         llm_model = str(item.get("llm_model") or "") or None
         existing = existing_by_message_id.get(message_id)
         if existing:
+            # 以 message_id 做幂等更新，避免 debounce/retry 造成重复行。
             existing.role = role
             existing.text = text_value
             existing.session_id = session_id
@@ -192,6 +196,7 @@ def save_conversation_state(
         if rows_to_add:
             session.add_all(rows_to_add)
         if seen_message_ids:
+            # 快照保存语义是“当前活动会话的完整状态”，未出现的旧消息需要删除。
             session.exec(
                 delete(AgentMessage).where(
                     AgentMessage.session_id == active_session,
@@ -201,6 +206,7 @@ def save_conversation_state(
         else:
             session.exec(delete(AgentMessage).where(AgentMessage.session_id == active_session))
         AgentPreferenceService(session).mark_dirty(commit=False)
+        # 活动会话和更新时间与消息写入同事务提交，避免前端看到半更新状态。
         settings.set(AGENT_CHAT_ACTIVE_SESSION_KEY, active_session, commit=False)
         settings.set(last_update_key, now, commit=False)
         session.commit()
@@ -225,7 +231,7 @@ def _normalize_response_cards(raw_cards: dict) -> dict[str, list[str]]:
 
 
 def start_new_conversation(settings: SettingsService) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """创建新会话并立即设为活动会话。"""
     session_id = new_session_id()
     settings.set(AGENT_CHAT_ACTIVE_SESSION_KEY, session_id)
     return session_id

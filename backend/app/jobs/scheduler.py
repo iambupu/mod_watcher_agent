@@ -33,10 +33,10 @@ SUMMARY_REPORT_CATCHUP_JOB_ID = "llm_summary_report_catchup"
 
 
 async def _discover_single_rule(rule_id: int, rule_name: str) -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """执行单条规则发现，并用 tracked job 记录运行结果。"""
 
     async def handler(db_session: Session) -> dict:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """在 tracked job 会话中运行规则发现服务。"""
         discovery = DiscoveryService(db_session)
         new_mods = await discovery.discover_from_rule(rule_id)
         return {
@@ -55,7 +55,7 @@ async def _discover_single_rule(rule_id: int, rule_name: str) -> dict:
 
 
 def _extract_rule_id(metadata_json: str | None) -> int | None:
-    """从原始内容中提取目标字段。"""
+    """从任务 metadata 中提取规则 ID，用于 watchdog 判断最近运行时间。"""
     parsed = json_object(metadata_json)
     if not parsed:
         return None
@@ -76,7 +76,7 @@ def _should_catch_up_summary_report(
     interval_minutes: int,
     now: datetime | None = None,
 ) -> bool:
-    """判断内部流程是否需要继续执行。"""
+    """判断摘要报告是否错过了一个调度周期，需要启动补跑。"""
     if interval_minutes <= 0:
         return False
 
@@ -107,7 +107,7 @@ def _should_catch_up_summary_report(
 
 
 async def _run_rule_watchdog() -> dict:
-    """执行内部任务流程。"""
+    """扫描超过规则间隔和宽限期的规则，并限量补跑。"""
     if _RULE_WATCHDOG_LOCK.locked():
         return {"triggered": 0, "skipped_locked": True}
 
@@ -183,7 +183,7 @@ async def _run_rule_watchdog() -> dict:
 
 
 def register_jobs(session: Session | None = None) -> None:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """根据当前规则和设置刷新 APScheduler 中的全部定时任务。"""
     if session is None:
         with Session(engine) as db_session:
             register_jobs(db_session)
@@ -324,6 +324,6 @@ def register_jobs(session: Session | None = None) -> None:
 
 
 async def setup_scheduler(session: Session | None = None) -> None:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """注册任务并启动后台调度器。"""
     register_jobs(session)
     scheduler.start()

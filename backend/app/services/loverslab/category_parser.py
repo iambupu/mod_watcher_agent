@@ -19,7 +19,7 @@ def parse_category_items(
     game_label: str,
     max_items: int = 50,
 ) -> list[ModItem]:
-    """解析输入内容并返回结构化结果。"""
+    """从 LoversLab 分类页 HTML 中解析文件条目列表。"""
     tree = HTMLParser(html)
     items: list[ModItem] = []
     seen: set[str] = set()
@@ -88,7 +88,7 @@ def extract_file_id(url: str) -> str | None:
 
 
 def parse_datetime(value: str | None) -> datetime | None:
-    """解析输入内容并返回结构化结果。"""
+    """解析分类页上的更新时间文本。"""
     if not value:
         return None
     text = value.strip()
@@ -104,7 +104,7 @@ def parse_datetime(value: str | None) -> datetime | None:
 
 
 def _find_item_container(node: Any) -> Any:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """从文件链接向上寻找包含作者、时间和摘要的列表项容器。"""
     current = node
     for _ in range(6):
         parent = current.parent
@@ -129,13 +129,13 @@ def _find_item_container(node: Any) -> Any:
 
 
 def _extract_title(link: Any) -> str:
-    """从原始内容中提取目标字段。"""
+    """从文件链接文本或 title 属性提取条目标题。"""
     text = link.text(separator=" ", strip=True)
     return _compact_text(text) or (link.attributes.get("title") or "").strip()
 
 
 def _extract_author(container: Any | None) -> str:
-    """从原始内容中提取目标字段。"""
+    """从条目容器中的个人主页链接提取作者名。"""
     if container is None:
         return ""
     for selector in ('a[href*="/profile/"]', 'a[href*="/members/"]'):
@@ -148,7 +148,7 @@ def _extract_author(container: Any | None) -> str:
 
 
 def _extract_time(container: Any | None) -> str | None:
-    """从原始内容中提取目标字段。"""
+    """从 time 节点或 datetime 属性提取远端更新时间文本。"""
     if container is None:
         return None
     for time_node in container.css("time, [datetime]"):
@@ -162,7 +162,7 @@ def _extract_time(container: Any | None) -> str | None:
 
 
 def _extract_thumbnail(container: Any | None, base_url: str) -> str:
-    """从原始内容中提取目标字段。"""
+    """从图片节点提取缩略图 URL，并补全相对地址。"""
     if container is None:
         return ""
     for img in container.css("img"):
@@ -175,7 +175,7 @@ def _extract_thumbnail(container: Any | None, base_url: str) -> str:
 
 
 def _extract_summary(container: Any | None, title: str, author: str) -> str:
-    """从原始内容中提取目标字段。"""
+    """从常见正文或元信息节点提取条目摘要。"""
     if container is None:
         return ""
     for selector in (".ipsType_richText", ".ipsDataItem_meta", ".ipsType_light", "p"):
@@ -193,5 +193,5 @@ def _extract_summary(container: Any | None, title: str, author: str) -> str:
 
 
 def _compact_text(value: str) -> str:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """折叠 HTML 文本中的连续空白。"""
     return re.sub(r"\s+", " ", value or "").strip()

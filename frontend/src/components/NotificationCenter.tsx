@@ -1,3 +1,5 @@
+// 中文注释：提供 NotificationCenter 业务组件。
+
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckCheck, BellOff, Loader2, AlertCircle } from "lucide-react";

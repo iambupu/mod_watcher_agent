@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_browser_page_fetcher.py 的模块职责，便于后续维护定位。
+
 import asyncio
 from pathlib import Path
 

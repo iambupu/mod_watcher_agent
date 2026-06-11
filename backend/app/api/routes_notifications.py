@@ -90,7 +90,7 @@ def unread_notification_count(
 
 
 def _notification_to_dict(n: Notification) -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """兼容旧桌面通知记录，并转换为通知中心列表项。"""
     channel = n.channel
     status = n.status
     error_message = n.error_message

@@ -75,7 +75,7 @@ def load_summary_map(
     *,
     fallback_language: str | None = None,
 ) -> dict[int, str]:
-    """加载配置或持久化数据。"""
+    """读取首选语言的 brief 摘要，必要时使用 fallback 语言。"""
     if not mod_ids:
         return {}
     languages = [language]
@@ -114,7 +114,7 @@ def load_preferred_brief_summary_map(
     *,
     fallback_language: str | None = None,
 ) -> dict[int, str]:
-    """加载配置或持久化数据。"""
+    """批量读取指定语言和类型的摘要，并按语言规则过滤异常内容。"""
     preferred_language = language or SettingsService(session).get("summary_language") or "zh-CN"
     return load_summary_map(
         session,
@@ -240,11 +240,11 @@ class SummaryService:
     """Service for generating AI-powered mod summaries."""
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于读取 Mod、调用 LLM 并写入摘要。"""
         self.session = session
 
     def _get_provider_chain(self) -> list[dict]:
-        """读取内部状态或派生结果。"""
+        """读取当前设置中的 LLM provider 调用顺序。"""
         return get_provider_chain(SettingsService(self.session))
 
     async def generate_summary(

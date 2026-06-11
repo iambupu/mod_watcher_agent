@@ -28,11 +28,11 @@ class DiscoveryService:
     """Service for discovering new mods from configured sources."""
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于读取规则、过滤结果和持久化 Mod。"""
         self.session = session
 
     async def discover_from_rule(self, rule_id: int) -> list[dict]:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """执行单条监控规则的抓取、过滤和入库流程。"""
         adapter = None
         try:
             rule = self.session.get(WatchRule, rule_id)
@@ -152,7 +152,7 @@ class DiscoveryService:
 
 
 def _mod_item_to_dict(item: ModItem) -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """把适配器 ModItem 统一转换为入库前的字段字典。"""
     raw = item.raw or {}
     game = raw.get("game") if isinstance(raw.get("game"), dict) else {}
     category = item.categories[0] if item.categories and len(item.categories) > 0 else None
@@ -259,7 +259,7 @@ def _tags_json_value(value) -> str | None:
 
 
 def _mod_to_dict(mod: Mod) -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """把已持久化的 Mod 行转换为发现结果字典。"""
     return {
         "id": mod.id,
         "source": mod.source,

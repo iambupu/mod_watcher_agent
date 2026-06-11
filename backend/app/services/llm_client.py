@@ -31,7 +31,7 @@ class LLMClient(ABC):
         max_tokens: int = 1024,
         request_timeout: float | None = None,
     ) -> str:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """发送聊天请求并返回模型文本内容。"""
         ...
 
 
@@ -39,7 +39,7 @@ class OpenAIClient(LLMClient):
     """OpenAI-compatible API: OpenAI, Groq, DeepSeek, OpenRouter, Ollama, SiliconFlow, xAI, Kimi, Qwen, MiniMax"""
 
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存 OpenAI 兼容接口凭据和 base_url。"""
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
 
@@ -50,7 +50,7 @@ class OpenAIClient(LLMClient):
         max_tokens: int = 1024,
         request_timeout: float | None = None,
     ) -> str:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """调用 OpenAI 兼容 chat/completions 接口。"""
         self.last_error = ""
         self.last_detail = ""
         try:
@@ -103,7 +103,7 @@ class AnthropicClient(LLMClient):
     DEFAULT_BASE_URL = "https://api.anthropic.com/v1"
 
     def __init__(self, api_key: str):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存 Anthropic API key。"""
         self.api_key = api_key
 
     async def chat(
@@ -113,7 +113,7 @@ class AnthropicClient(LLMClient):
         max_tokens: int = 1024,
         request_timeout: float | None = None,
     ) -> str:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """调用 Anthropic messages 接口并提取首个文本块。"""
         self.last_error = ""
         self.last_detail = ""
         try:
@@ -153,7 +153,7 @@ class GeminiClient(LLMClient):
     """Native Google Gemini API format"""
 
     def __init__(self, api_key: str):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存 Gemini API key。"""
         self.api_key = api_key
 
     async def chat(
@@ -163,7 +163,7 @@ class GeminiClient(LLMClient):
         max_tokens: int = 1024,
         request_timeout: float | None = None,
     ) -> str:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """调用 Gemini generateContent 接口并提取首个候选文本。"""
         self.last_error = ""
         self.last_detail = ""
         try:
@@ -199,7 +199,7 @@ class OllamaClient(LLMClient):
     """Native Ollama API client. Uses think=false so reasoning models return final content."""
 
     def __init__(self, base_url: str = "http://localhost:11434"):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存 Ollama 地址，并把 OpenAI 兼容 /v1 地址还原为原生地址。"""
         base = base_url.rstrip("/")
         if base.endswith("/v1"):
             base = base[:-3]
@@ -214,7 +214,7 @@ class OllamaClient(LLMClient):
         max_tokens: int = 1024,
         request_timeout: float | None = None,
     ) -> str:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """调用 Ollama 原生 chat 接口并关闭思考输出。"""
         self.last_error = ""
         self.last_detail = ""
         try:
@@ -276,7 +276,7 @@ def create_llm_client(
     api_key: str = "",
     base_url: str = "",
 ) -> LLMClient:
-    """创建并持久化对应的数据。"""
+    """根据 provider 名称创建对应的 LLM 客户端。"""
     provider = provider.lower().strip()
     base_url = validate_outbound_url(provider, base_url)
 
@@ -327,7 +327,7 @@ def create_llm_filter_client(session: _Session):
         llm_config: LlmFilterConfig,
         return_details: bool = False,
     ) -> list[dict] | dict:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """同步调用 LLM 对候选 Mod 批量返回保留索引。"""
         if not mods:
             return {"items": [], "details": []} if return_details else []
         system_prompt = (

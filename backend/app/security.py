@@ -31,7 +31,7 @@ def invalidate_runtime_policy_cache() -> None:
 
 
 def _normalize_host(value: str) -> str:
-    """规范化内部数据，供后续流程使用。"""
+    """规范化 Host 文本，去掉 IPv6 方括号并统一小写。"""
     host = (value or "").strip().lower()
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1]
@@ -46,12 +46,12 @@ def _host_to_ip(host: str):
 
 
 def _is_ip_literal(host: str) -> bool:
-    """判断内部条件是否成立。"""
+    """判断 host 是否是 IP 字面量。"""
     return _host_to_ip(_normalize_host(host)) is not None
 
 
 def is_loopback_host(host: str) -> bool:
-    """判断条件是否成立。"""
+    """判断 host 是否指向本机 loopback 地址。"""
     normalized = _normalize_host(host)
     if normalized in LOCAL_HOSTS:
         return True
@@ -60,7 +60,7 @@ def is_loopback_host(host: str) -> bool:
 
 
 def is_private_or_loopback_host(host: str) -> bool:
-    """判断条件是否成立。"""
+    """判断 host 是否属于本机、内网或链路本地地址。"""
     normalized = _normalize_host(host)
     if normalized == "localhost":
         return True
@@ -71,13 +71,13 @@ def is_private_or_loopback_host(host: str) -> bool:
 
 
 def is_local_request(request: Request) -> bool:
-    """判断条件是否成立。"""
+    """判断请求来源是否来自本机。"""
     host = request.client.host if request.client else ""
     return is_loopback_host(host)
 
 
 def is_lan_request(request: Request) -> bool:
-    """判断条件是否成立。"""
+    """判断请求来源是否来自本机或私有局域网。"""
     host = request.client.host if request.client else ""
     normalized = _normalize_host(host)
     if normalized in LOCAL_HOSTS:
@@ -89,7 +89,7 @@ def is_lan_request(request: Request) -> bool:
 
 
 def require_safe_bind_host() -> None:
-    """校验必需条件，不满足时抛出异常。"""
+    """local_relaxed 配置下强制绑定 loopback，避免误开放到局域网。"""
     profile = (settings.MW_ACCESS_PROFILE or "local_relaxed").strip().lower()
     bind_host = settings.MW_BIND_HOST
     if profile == "local_relaxed" and not is_loopback_host(bind_host):
@@ -107,7 +107,7 @@ class RuntimePolicy:
 
 
 def _load_runtime_policy(force_refresh: bool = False) -> RuntimePolicy:
-    """加载内部流程需要的配置或数据。"""
+    """读取并缓存运行时访问策略，数据库不可用时回退环境配置。"""
     now = time.monotonic()
     cached = _policy_cache.get("value")
     expires_at = float(_policy_cache.get("expires_at") or 0.0)
@@ -149,14 +149,14 @@ class AccessDecision:
 
 class AccessPolicy:
     def __init__(self) -> None:
-        """初始化实例并保存运行所需的依赖。"""
+        """加载当前访问策略快照。"""
         policy = _load_runtime_policy()
         self.profile = policy.profile
         self.allow_lan = policy.allow_lan
         self.admin_token = policy.admin_token
 
     def _allow_source(self, request: Request) -> bool:
-        """判断内部访问策略是否允许继续。"""
+        """根据访问 profile 判断请求来源是否允许访问 API。"""
         if self.profile in {"local_relaxed", "local_strict"}:
             return is_local_request(request)
         if self.profile == "shared_lan":
@@ -231,7 +231,7 @@ def _provider_default_base_url(provider: str) -> str:
 
 
 def validate_outbound_url(provider: str, base_url: str) -> str:
-    """校验输入是否符合业务约束。"""
+    """校验 LLM provider base_url，阻止非本地提供商访问内网地址。"""
     resolved = (base_url or "").strip() or _provider_default_base_url(provider)
     parsed = urlparse(resolved)
     scheme = (parsed.scheme or "").lower()

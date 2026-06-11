@@ -1,3 +1,5 @@
+// 中文注释：提供 Card 通用 UI 组件。
+
 import React from "react";
 
 interface CardProps {

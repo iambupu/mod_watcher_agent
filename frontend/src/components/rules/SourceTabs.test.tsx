@@ -1,3 +1,5 @@
+// 中文注释：提供规则编辑器里的 SourceTabs.test 表单组件。
+
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

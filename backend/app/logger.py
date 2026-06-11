@@ -228,7 +228,7 @@ def _tail_lines(path: Path, limit: int) -> list[str]:
 
 
 def _parse_log_lines(lines: list[str], *, source: str, fallback_timestamp: str = "") -> list[dict]:
-    """解析原始内容并返回结构化结果。"""
+    """把日志尾部行解析为结构化条目，并把续行合并到上一条消息。"""
     entries: list[dict] = []
     last_timestamp = fallback_timestamp
     for order, raw_line in enumerate(lines):
@@ -248,7 +248,7 @@ def _parse_log_lines(lines: list[str], *, source: str, fallback_timestamp: str =
 
 
 def _parse_log_line(line: str, *, source: str, fallback_timestamp: str = "") -> dict | None:
-    """解析原始内容并返回结构化结果。"""
+    """按文件日志、服务日志和纯文本日志三种格式解析单行。"""
     matched = _FILE_LOG_PATTERN.match(line)
     if matched:
         return {
@@ -292,7 +292,7 @@ def _file_timestamp(path: Path) -> str:
 
 
 def _normalize_level(level: str) -> str:
-    """规范化内部数据，供后续流程使用。"""
+    """规范化截断或别名日志级别。"""
     normalized = level.upper()
     if normalized == "WARNI":
         return "WARNING"

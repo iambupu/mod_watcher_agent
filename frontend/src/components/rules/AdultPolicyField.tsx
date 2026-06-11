@@ -1,3 +1,5 @@
+// 中文注释：提供规则编辑器里的 AdultPolicyField 表单组件。
+
 import React from "react";
 import { useTranslation } from "react-i18next";
 import type { AdultPolicy, CommonRuleFilters } from "@/types";

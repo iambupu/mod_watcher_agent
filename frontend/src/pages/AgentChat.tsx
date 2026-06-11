@@ -104,6 +104,7 @@ const AgentChat: React.FC = () => {
     if (!settings) return [];
     const options: AgentProviderDisplay[] = [];
     const seen = new Set<string>();
+    // 设置页允许多个供应商；这里按优先级生成会话级可选模型，并去掉重复配置。
     const enabled = [...(settings.llmProviders || [])]
       .filter((item) => item.enabled)
       .sort((a, b) => a.priority - b.priority);
@@ -150,6 +151,7 @@ const AgentChat: React.FC = () => {
     if (!activeSessionId || providerDisplays.length === 0) return;
     const storageKey = `agent:selected-model:${activeSessionId}`;
     const stored = window.sessionStorage.getItem(storageKey) || "";
+    // 模型选择只在当前浏览器 session 内记忆，避免影响服务端保存的对话内容。
     const nextKey = providerDisplays.some((item) => item.key === stored) ? stored : providerDisplays[0].key;
     setSelectedModelKey((current) => {
       if (current && providerDisplays.some((item) => item.key === current)) return current;
@@ -194,6 +196,7 @@ const AgentChat: React.FC = () => {
     if (message.role !== "assistant" || !message.matches?.length) {
       return message.text;
     }
+    // 把已展示候选压缩进历史，后端才能理解“第二个”“类似这个”等追问。
     const shownMods = message.matches.slice(0, 12).map((item, index) =>
       `${index + 1}. title=${item.title}; source=${item.source}; game=${item.game}; category=${item.category || ""}`,
     );
@@ -228,6 +231,7 @@ const AgentChat: React.FC = () => {
     if (constraints.length === 0) {
       return rawMessage;
     }
+    // [scope] 是前后端约定的硬约束块；后端会把它从自然语言关键词中剥离。
     return `${rawMessage}\n\n[scope]\n${constraints.join("\n")}`;
   };
 
@@ -284,6 +288,7 @@ const AgentChat: React.FC = () => {
     const message = input.trim();
     if (!message) return;
     const requestSessionId = activeSessionId || `sess_${Date.now()}`;
+    // 先乐观插入用户消息，提交给后端的 history 使用插入前快照，避免当前消息重复出现。
     setMessages((prev) => [
       ...prev,
       { id: `${Date.now()}-user`, role: "user", text: message, sessionId: requestSessionId },
@@ -364,6 +369,7 @@ const AgentChat: React.FC = () => {
   const applySourceCandidate = (candidate: string) => {
     const source = normalizeSourceCandidate(candidate);
     if (source === "nexusmods" || source === "loverslab") {
+      // 来源候选按钮同时更新筛选器和输入框，使下一次请求携带显式 scope。
       setSelectedSource(source);
       setInput((prev) => (prev.trim() ? prev : sourceCandidateQuestion(source)));
       window.requestAnimationFrame(() => inputRef.current?.focus());
@@ -409,6 +415,7 @@ const AgentChat: React.FC = () => {
   const onAskDetail = (mod: AgentModMatch) => {
     const askText = `请详细解析这个 Mod：${mod.title}`;
     const requestSessionId = activeSessionId || `sess_${Date.now()}`;
+    // 详情追问走独立接口，但仍携带当前会话历史，让后端保留上下文引用。
     setMessages((prev) => [
       ...prev,
       { id: `${Date.now()}-user-detail`, role: "user", text: askText, sessionId: requestSessionId },
@@ -430,6 +437,7 @@ const AgentChat: React.FC = () => {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(value);
       } else {
+        // 兼容没有 Clipboard API 的 WebView/旧浏览器环境。
         const textarea = document.createElement("textarea");
         textarea.value = value;
         textarea.setAttribute("readonly", "true");
@@ -459,6 +467,7 @@ const AgentChat: React.FC = () => {
   };
 
   const handleStartNewConversation = async () => {
+    // 新会话前主动刷写当前 session，减少切换时最后一条消息丢失的概率。
     queueActiveSessionSave();
     flushPendingSave();
     const res = await startAgentConversation();

@@ -10,7 +10,7 @@ from app.services.agent.schemas import (
 
 class AgentService:
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，并把请求转交给 AgentRuntime。"""
         self.session = session
 
     async def chat(

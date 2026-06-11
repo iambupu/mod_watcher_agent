@@ -8,13 +8,13 @@ from app.utils.time import parse_utc_datetime
 
 
 def is_allowed_loverslab_url(url: str, allowed_hosts: set[str]) -> bool:
-    """判断内部条件是否成立。"""
+    """检查 URL 主机是否属于当前调用方允许的 LoversLab 域名集合。"""
     host = (urlsplit(url).hostname or "").lower()
     return host in allowed_hosts
 
 
 def validate_loverslab_url(url: str, *, kind: str, allowed_hosts: set[str]) -> str:
-    """校验内部输入是否符合业务约束。"""
+    """要求 LoversLab URL 是绝对 http(s) 地址，并限制跳转目标域名。"""
     normalized = (url or "").strip()
     parsed = urlsplit(normalized)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -25,7 +25,7 @@ def validate_loverslab_url(url: str, *, kind: str, allowed_hosts: set[str]) -> s
 
 
 def parse_loverslab_updated_at(value: Any) -> datetime | None:
-    """解析输入内容并返回结构化结果。"""
+    """把 LoversLab 来源的更新时间解析为带 UTC 时区的 datetime。"""
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
     if not isinstance(value, str):
@@ -49,7 +49,7 @@ def parse_loverslab_updated_at(value: Any) -> datetime | None:
 
 
 def loverslab_mod_item_from_raw(raw_item: dict) -> ModItem:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """把 RSS、页面抓取或搜索物化后的 LoversLab 原始字段转换为 ModItem。"""
     return ModItem(
         source_id=raw_item.get("external_id", ""),
         source=raw_item.get("source", "loverslab"),

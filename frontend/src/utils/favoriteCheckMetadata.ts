@@ -1,3 +1,5 @@
+// 中文注释：提供 favoriteCheckMetadata 相关的前端纯函数工具。
+
 import { parseBoolean } from "./boolean";
 import { parseJobMetadata } from "./jobMetadata";
 import { parseWholeIntegerInput } from "./numberInput";

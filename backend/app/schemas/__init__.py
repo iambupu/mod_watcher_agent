@@ -1,3 +1,5 @@
+# 中文注释：标记 schemas 包，保证后端模块可以按包路径导入。
+
 from app.schemas.favorite import (
     FavoriteCreate,
     FavoriteImportCreate,

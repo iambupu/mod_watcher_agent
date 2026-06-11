@@ -1,3 +1,5 @@
+# 中文注释：提供布尔值解析相关的纯函数工具。
+
 TRUE_STRINGS = {"1", "true", "yes", "on"}
 FALSE_STRINGS = {"0", "false", "no", "off", ""}
 

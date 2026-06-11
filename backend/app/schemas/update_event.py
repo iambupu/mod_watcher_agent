@@ -1,3 +1,4 @@
+# 中文注释：定义更新事件 API请求和响应的数据契约。
 
 from pydantic import BaseModel
 

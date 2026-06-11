@@ -1,3 +1,5 @@
+// 中文注释：提供 modTitle 相关的前端纯函数工具。
+
 import type { SummaryMode } from "@/types";
 
 export function formatModTitle(

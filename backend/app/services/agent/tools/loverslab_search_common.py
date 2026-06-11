@@ -27,20 +27,20 @@ class LoversLabSearchRecord:
 
 
 def clean_loverslab_query(query: str) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """清理前端 scope 和 site: 片段，得到适合搜索引擎/站内检索的查询文本。"""
     query = strip_scope(query)
     query = re.sub(r"\bsite\s*:\s*\S+", "", query, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", query).strip()
 
 
 def is_loverslab_url(url: str) -> bool:
-    """判断条件是否成立。"""
+    """只接受 LoversLab 官方域名，避免把普通外链误当成可物化结果。"""
     parsed = urlparse(url)
     return parsed.scheme in {"http", "https"} and (parsed.hostname or "").lower() in LOVERSLAB_HOSTS
 
 
 def loverslab_external_id(url: str, *, game: str | None = None) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """LoversLab 搜索结果缺少稳定 API id，因此用规范化 URL 哈希作为外部身份。"""
     return canonical_external_id(
         "loverslab",
         hashlib.sha256(url.encode("utf-8")).hexdigest()[:32],
@@ -50,12 +50,12 @@ def loverslab_external_id(url: str, *, game: str | None = None) -> str:
 
 
 def clean_loverslab_title(title: str) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """去掉搜索结果标题尾部的站点名，保留用户可识别的 Mod 标题。"""
     return re.sub(r"\s*-\s*LoversLab\s*$", "", title, flags=re.IGNORECASE).strip()
 
 
 def score_loverslab_mod(query: str, mod: Mod) -> int:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """按标题、游戏、摘要和分类给 LoversLab 候选做轻量相关性评分。"""
     return text_score(query, [mod.title, mod.game, mod.original_summary], [mod.category] if mod.category else None)
 
 
@@ -66,11 +66,12 @@ def upsert_loverslab_search_records(
     game: str | None,
     adult_content: bool | None,
 ) -> list[Mod]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """将搜索记录物化为本地 Mod，并在同一批结果内按 URL 去重。"""
     now = datetime.now(UTC).isoformat()
     mods: list[Mod] = []
     seen_urls: set[str] = set()
     for record in records:
+        # Google/页面抓取可能返回同一文件的多个片段，入库前先按 URL 去重。
         if record.url in seen_urls:
             continue
         seen_urls.add(record.url)
@@ -104,6 +105,7 @@ def upsert_loverslab_search_records(
             "raw_json": json.dumps(record.raw, ensure_ascii=False),
         }
         if existing:
+            # 搜索记录通常没有完整元数据，None 不覆盖旧值，避免擦掉已有版本/统计字段。
             for key, value in fields.items():
                 if value is not None:
                     setattr(existing, key, value)
@@ -136,7 +138,7 @@ def score_and_sort_loverslab_mods(
     query: str,
     limit: int,
 ) -> list[tuple[int, Mod]]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """过滤忽略项后按相关性排序，返回给上层统一物化为 SearchResult。"""
     scored = [(max(score_loverslab_mod(query, mod), 1), mod) for mod in mods if mod.id is not None and not mod.ignored]
     scored.sort(key=lambda item: (item[0], item[1].first_seen_at), reverse=True)
     return scored[: max(1, min(20, limit))]

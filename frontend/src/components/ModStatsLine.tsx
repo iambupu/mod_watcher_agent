@@ -1,3 +1,5 @@
+// 中文注释：提供 ModStatsLine 业务组件。
+
 import { Clock, Download, ThumbsUp } from "lucide-react";
 import { nonNegativeNumberValue } from "@/utils/numberInput";
 

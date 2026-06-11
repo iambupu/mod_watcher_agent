@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_boolean_utils.py 的模块职责，便于后续维护定位。
+
 from app.utils.boolean import parse_bool, parse_optional_bool
 
 

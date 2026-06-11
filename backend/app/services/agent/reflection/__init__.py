@@ -1,3 +1,5 @@
+# 中文注释：标记 reflection 包，保证后端模块可以按包路径导入。
+
 from app.services.agent.reflection.audit_service import (
     annotate_action_evidence_consistency,
     apply_consistency_guard,

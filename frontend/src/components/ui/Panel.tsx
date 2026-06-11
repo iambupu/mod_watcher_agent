@@ -1,3 +1,5 @@
+// 中文注释：提供 Panel 通用 UI 组件。
+
 import React from "react";
 
 type PanelPadding = "none" | "sm" | "md" | "lg" | "xl";

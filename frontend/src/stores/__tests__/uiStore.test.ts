@@ -1,3 +1,5 @@
+// 中文注释：定义 uiStore.test 的 Zustand 状态边界。
+
 import { describe, it, expect, beforeEach } from 'vitest';
 import { act } from '@testing-library/react';
 import { useUIStore } from '../uiStore';

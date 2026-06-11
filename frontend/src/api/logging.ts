@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端日志读取接口的类型和请求函数。
+
 import { get, post } from "./client";
 import { boundedIntegerParam } from "./params";
 import { arrayOrEmpty } from "@/utils/array";

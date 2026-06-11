@@ -9,7 +9,7 @@ class UpdateTrackingService:
     """Dedicated service for querying and managing update events."""
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于查询和标记收藏更新事件。"""
         self.session = session
 
     def get_events(

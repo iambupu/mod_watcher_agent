@@ -30,7 +30,7 @@ def summary_report_interval_minutes(raw: str | None) -> int:
 
 
 def summary_window_minutes(interval_minutes: int, *, force: bool) -> int:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """计算摘要报告时间窗口，强制运行时默认回看一周。"""
     if interval_minutes > 0:
         return max(interval_minutes, MIN_SCHEDULED_WINDOW_MINUTES)
     return 10080 if force else 0
@@ -42,7 +42,7 @@ async def generate_summary_report_payload(
     force: bool = False,
     create_client: Callable[[str, str, str | None], Any] = create_llm_client,
 ) -> dict:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """基于近期新 Mod 生成 LLM 摘要报告载荷。"""
     settings_svc = SettingsService(session)
     interval = summary_report_interval_minutes(settings_svc.get("summary_report_interval_minutes"))
     prompt_focus = (settings_svc.get("summary_report_prompt") or "").strip()
@@ -121,7 +121,7 @@ def notify_summary_report_complete(
     *,
     notification_service_cls: type[SystemNotificationService] = SystemNotificationService,
 ) -> None:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """摘要报告生成成功后创建系统通知事件。"""
     if not result.get("generated"):
         return
     notification_service_cls(session).create_event(

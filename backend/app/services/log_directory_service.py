@@ -1,3 +1,5 @@
+# 中文注释：封装后端服务层的日志目录定位逻辑。
+
 import os
 import platform
 import subprocess

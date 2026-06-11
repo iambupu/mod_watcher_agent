@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_llm_provider_test_service.py 的模块职责，便于后续维护定位。
+
 import json
 
 import pytest

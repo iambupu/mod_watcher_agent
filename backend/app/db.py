@@ -1,3 +1,5 @@
+# 中文注释：初始化 SQLModel 引擎，并提供请求级数据库会话依赖。
+
 import json
 import logging
 from collections.abc import Generator

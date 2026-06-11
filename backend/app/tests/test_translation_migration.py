@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_translation_migration.py 的模块职责，便于后续维护定位。
+
 """Tests for summary_language migration in SettingsService.init_defaults().
 
 These tests verify the migration behavior:

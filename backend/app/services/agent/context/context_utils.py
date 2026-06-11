@@ -1,3 +1,5 @@
+# 中文注释：维护 Agent 多轮上下文的选择、窗口和持久化边界。
+
 from typing import Any
 
 from app.services.agent.list_utils import unique_text

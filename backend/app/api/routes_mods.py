@@ -1,3 +1,5 @@
+# 中文注释：声明Mod 列表与详情相关的 FastAPI 路由。
+
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query

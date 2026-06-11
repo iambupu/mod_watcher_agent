@@ -1,3 +1,4 @@
+# 中文注释：定义Mod 主表相关的数据库持久化模型。
 
 from sqlalchemy import Index, UniqueConstraint
 from sqlmodel import Field, SQLModel

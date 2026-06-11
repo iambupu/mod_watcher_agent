@@ -29,13 +29,13 @@ class SaveSnapshotRequest(BaseModel):
 
 @router.get("/status")
 def browser_status():
-    """处理当前模块的业务逻辑并返回结果。"""
+    """返回 LoversLab 浏览器 profile、Playwright 和浏览器安装状态。"""
     return BrowserPageFetcher.status_payload("loverslab")
 
 
 @router.post("/install-chromium")
 async def install_chromium():
-    """处理当前模块的业务逻辑并返回结果。"""
+    """串行触发 Playwright Chromium 安装，避免多个安装进程并发写目录。"""
     if not INSTALL_CHROMIUM_LOCK.acquire(blocking=False):
         return {
             "success": False,
@@ -52,7 +52,7 @@ async def install_chromium():
 
 @router.post("/open-login")
 async def open_login():
-    """处理当前模块的业务逻辑并返回结果。"""
+    """打开可见浏览器窗口，让用户完成 LoversLab 登录。"""
     result = await fetcher.open_login(profile_name="loverslab")
     return {
         "status": result.status,
@@ -65,7 +65,7 @@ async def open_login():
 
 @router.post("/check-session")
 async def check_session():
-    """处理当前模块的业务逻辑并返回结果。"""
+    """访问 LoversLab 文件页检查当前 profile 是否已登录且可用。"""
     result = await fetcher.fetch_html(
         "https://www.loverslab.com/files/",
         profile_name="loverslab",
@@ -86,7 +86,7 @@ async def check_session():
 
 @router.post("/test-category")
 async def test_category(body: TestCategoryRequest):
-    """处理当前模块的业务逻辑并返回结果。"""
+    """抓取并解析一个 LoversLab 分类页，用于设置页验证选择器是否仍可用。"""
     _require_loverslab_url(body.url)
     result = await fetcher.fetch_html(
         body.url,
@@ -136,7 +136,7 @@ async def test_category(body: TestCategoryRequest):
 
 @router.post("/save-snapshot")
 async def save_snapshot(body: SaveSnapshotRequest):
-    """保存数据并返回最新状态。"""
+    """保存当前 LoversLab 页面 HTML 快照，便于后续解析规则排查。"""
     _require_loverslab_url(body.url)
     result = await fetcher.fetch_html(
         body.url,
@@ -162,7 +162,7 @@ async def save_snapshot(body: SaveSnapshotRequest):
 
 
 def _require_loverslab_url(url: str) -> None:
-    """校验必需条件，不满足时抛出异常。"""
+    """只允许 HTTPS LoversLab URL，防止浏览器抓取接口访问任意站点。"""
     parsed = urlsplit((url or "").strip())
     if parsed.scheme != "https" or (parsed.hostname or "").lower() not in LOVERSLAB_HOSTS:
         raise HTTPException(status_code=422, detail="Only https LoversLab URLs are allowed")

@@ -24,7 +24,7 @@ async def _send_digest_for_window(
     *,
     force: bool = False,
 ) -> dict:
-    """发送内部通知或外部请求。"""
+    """按指定窗口生成并发送 digest，调用方提供是否强制发送。"""
     return await send_digest_for_window(
         session,
         period,
@@ -36,7 +36,7 @@ async def _send_digest_for_window(
 
 
 async def send_digest(period: DigestPeriod = "daily", *, force: bool = False) -> dict:
-    """发送通知或外部请求。"""
+    """根据当前时间计算应发送窗口，到期才发送 digest。"""
     window = _scheduled_window(period)
     if window is None:
         return {
@@ -51,19 +51,19 @@ async def send_digest(period: DigestPeriod = "daily", *, force: bool = False) ->
 
 
 async def send_daily_digest() -> dict:
-    """发送通知或外部请求。"""
+    """发送每日 digest 的调度入口。"""
     return await send_digest("daily")
 
 
 async def send_weekly_digest() -> dict:
-    """发送通知或外部请求。"""
+    """发送每周 digest 的调度入口。"""
     return await send_digest("weekly")
 
 
 async def run_digest_catchup(trigger: str = "scheduled") -> dict:
-    """执行任务流程并返回结果。"""
+    """启动时或定时检查漏发 digest，并记录 catch-up 任务。"""
     async def handler(session: Session) -> dict:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """逐个检查 daily/weekly 窗口，只保留实际处理过的结果。"""
         results: list[dict] = []
         for period in ("daily", "weekly"):
             window = _scheduled_window(period)

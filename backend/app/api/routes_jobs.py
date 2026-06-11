@@ -35,7 +35,7 @@ class NexusModsGameImportRequest(BaseModel):
 
 
 def _job_to_dict(job: JobRun, *, metadata: JobMetadataMode = "full") -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """把 JobRun 转成 API 响应；dashboard 模式会裁剪大体积 metadata。"""
     return {
         "id": job.id,
         "job_name": job.job_name,
@@ -65,7 +65,7 @@ def _job_metadata_json(job: JobRun, metadata: JobMetadataMode) -> str | None:
 
 
 def _queued_response(job: JobRun) -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """返回统一的异步任务排队响应。"""
     return {"status": "queued", "job_id": job.id}
 
 
@@ -83,7 +83,7 @@ def _current_week_start_utc_iso() -> str:
 
 @router.get("/stats")
 def get_stats(session: Session = Depends(get_session)):
-    """读取并返回对应的数据。"""
+    """返回仪表盘顶部使用的任务和内容统计。"""
     week_start_utc = _current_week_start_utc_iso()
     total_mods = session.exec(select(func.count(Mod.id))).one()
     new_mods_this_week = session.exec(
@@ -156,7 +156,7 @@ def list_job_runs(
 
 @router.get("/{job_id}")
 def get_job_run(job_id: int, session: Session = Depends(get_session)):
-    """读取并返回对应的数据。"""
+    """读取单个任务运行记录，包含完整 metadata。"""
     job = session.get(JobRun, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")

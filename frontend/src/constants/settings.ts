@@ -1,3 +1,5 @@
+// 中文注释：集中声明 settings 相关前端常量。
+
 import type { AccessProfile, SummaryMode, UILanguage } from "@/types";
 
 export const SETTINGS_NUMERIC_BOUNDS = {

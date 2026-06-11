@@ -26,7 +26,7 @@ class DeliveryResult:
 
 
 def _is_http_url(url: str) -> bool:
-    """判断内部条件是否成立。"""
+    """判断通知里的可点击链接是否是 http(s) URL。"""
     try:
         return urlsplit(url).scheme in {"http", "https"}
     except ValueError:
@@ -45,7 +45,7 @@ class NotificationService:
     """Service for sending notifications via Telegram and Discord."""
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于读取设置和写通知投递记录。"""
         self.session = session
     
     async def _send_and_record(
@@ -54,7 +54,7 @@ class NotificationService:
         text: str,
         channels: list[str] | None = None,
     ) -> tuple[bool, bool]:
-        """发送内部通知或外部请求。"""
+        """向选定外部渠道发送消息，并为每个渠道写入投递记录。"""
         selected = EXTERNAL_NOTIFICATION_CHANNELS if channels is None else set(channels) & EXTERNAL_NOTIFICATION_CHANNELS
         telegram_ok = False
         discord_ok = False
@@ -83,11 +83,11 @@ class NotificationService:
         return telegram_ok, discord_ok
 
     async def send_telegram_message(self, text: str) -> bool:
-        """发送通知或外部请求。"""
+        """兼容旧布尔接口，发送 Telegram 消息。"""
         return (await self.send_telegram_message_result(text)).ok
 
     async def send_telegram_message_result(self, text: str) -> DeliveryResult:
-        """发送通知或外部请求。"""
+        """发送 Telegram 消息并返回可记录的投递结果。"""
         from app.services.settings_service import SettingsService
         svc = SettingsService(self.session)
         if not parse_bool(svc.get("notifications_enabled"), default=True):
@@ -112,11 +112,11 @@ class NotificationService:
                 return DeliveryResult(False, f"Telegram send failed: {e}")
 
     async def send_discord_webhook(self, content: str) -> bool:
-        """发送通知或外部请求。"""
+        """兼容旧布尔接口，发送 Discord webhook。"""
         return (await self.send_discord_webhook_result(content)).ok
 
     async def send_discord_webhook_result(self, content: str) -> DeliveryResult:
-        """发送通知或外部请求。"""
+        """发送 Discord webhook 并返回可记录的投递结果。"""
         from app.services.settings_service import SettingsService
         svc = SettingsService(self.session)
         if not parse_bool(svc.get("notifications_enabled"), default=True):
@@ -139,14 +139,14 @@ class NotificationService:
                 return DeliveryResult(False, f"Discord webhook failed: {e}")
 
     async def send_external_channels(self, text: str) -> tuple[DeliveryResult, DeliveryResult]:
-        """发送通知或外部请求。"""
+        """同时尝试 Telegram 和 Discord 两个外部渠道。"""
         telegram = await self.send_telegram_message_result(text)
         discord = await self.send_discord_webhook_result(text)
         return telegram, discord
 
     @staticmethod
     def combined_delivery_status(results: list[DeliveryResult]) -> tuple[str, str | None]:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """把多个渠道结果折叠为通知记录状态。"""
         if any(result.ok for result in results):
             return "sent", None
         reasons = [result.reason for result in results if result.reason]
@@ -156,7 +156,7 @@ class NotificationService:
         return "failed", message
 
     async def _record(self, channel, recipient, subject, body, status, error_message=None):
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """写入一条外部通知投递记录，并对正文和错误脱敏。"""
         from datetime import datetime
 
         from app.models.notification import Notification
@@ -169,7 +169,7 @@ class NotificationService:
 
     @staticmethod
     def format_update_notification(mod_title, old_version, new_version, url):
-        """格式化展示或通知文本。"""
+        """格式化单个收藏更新的 HTML 通知正文。"""
         title = escape(str(mod_title or "Unknown"), quote=False)
         old = escape(str(old_version or "?"), quote=False)
         new = escape(str(new_version or "?"), quote=False)
@@ -178,7 +178,7 @@ class NotificationService:
 
     @staticmethod
     def format_daily_digest(new_mods, updates, date_str):
-        """格式化展示或通知文本。"""
+        """格式化每日摘要通知正文，最多列出前几条新 Mod 和更新。"""
         lines = [f"\U0001f4cb <b>Mod Watcher \u6bcf\u65e5\u6c47\u603b</b> ({date_str})", "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501"]
         if new_mods:
             lines.append(f"\U0001f195 \u65b0\u53d1\u73b0 Mod: {len(new_mods)} \u4e2a")
@@ -198,12 +198,12 @@ class NotificationService:
 
     @staticmethod
     def parse_notification_config(rule):
-        """解析输入内容并返回结构化结果。"""
+        """从规则 JSON 中解析通知渠道配置。"""
         data = json_object(getattr(rule, "notification_json", None))
         return NotificationConfig(**data)
 
     async def notify_new_mods(self, mods, rule_name, notification_config=None):
-        """处理当前模块的业务逻辑并返回结果。"""
+        """按规则通知设置发送新 Mod 命中摘要。"""
         if not mods:
             return {"telegram_ok": True, "discord_ok": True, "notified_count": 0}
         channels = None
@@ -229,7 +229,7 @@ class NotificationService:
         }
 
     async def notify_updates(self, events):
-        """处理当前模块的业务逻辑并返回结果。"""
+        """对收藏更新事件逐条发送外部通知。"""
         from app.models.favorite import Favorite
         from app.models.mod import Mod
         telegram_ok, discord_ok = True, True

@@ -1,3 +1,5 @@
+# 中文注释：记录数据库结构迁移步骤，供 Alembic 按版本顺序执行。
+
 """initial
 
 Revision ID: 97340fefbb99

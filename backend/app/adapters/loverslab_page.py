@@ -48,12 +48,12 @@ class LoversLabPageAdapter(BaseAdapter):
     """
 
     def __init__(self, **kwargs):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存共享 HTTP 客户端和浏览器抓取器，便于页面列表复用登录态。"""
         self._client: httpx.AsyncClient | None = None
         self._page_fetcher: BrowserPageFetcher = kwargs.get("page_fetcher") or BrowserPageFetcher()
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """读取内部状态或派生结果。"""
+        """返回用于详情页请求的共享 httpx 客户端。"""
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(REQUEST_TIMEOUT),
@@ -70,7 +70,7 @@ class LoversLabPageAdapter(BaseAdapter):
         self._client = None
 
     async def _get_allowed_url(self, url: str) -> httpx.Response:
-        """读取内部状态或派生结果。"""
+        """请求详情页并手动跟随有限次数跳转，确保最终仍在 LoversLab 域名。"""
         current_url = validate_loverslab_url(url, kind="page", allowed_hosts=ALLOWED_HOSTS)
         client = await self._get_client()
         for _ in range(5):
@@ -220,7 +220,7 @@ class LoversLabPageAdapter(BaseAdapter):
         return self._parse_page(html, file_id, url, game_domain or "")
 
     def normalize(self, raw_item: dict) -> ModItem:
-        """规范化输入数据，供后续流程使用。"""
+        """把页面解析得到的原始字段转换为统一 ModItem。"""
         return loverslab_mod_item_from_raw(raw_item)
 
     def _parse_listing_links(
@@ -356,7 +356,7 @@ class LoversLabPageAdapter(BaseAdapter):
         tree: HTMLParser,
         selectors: tuple[str, ...],
     ) -> str | None:
-        """从原始内容中提取目标字段。"""
+        """按选择器顺序取第一个非空文本，用于适配页面结构差异。"""
         for selector in selectors:
             el = tree.css_first(selector)
             if el:
@@ -370,7 +370,7 @@ class LoversLabPageAdapter(BaseAdapter):
         tree: HTMLParser,
         predicate,
     ) -> str | None:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """扫描常见标签节点，返回匹配标签所在父节点的完整文本。"""
         for selector in ("li", "dt", "span", "div"):
             elements = tree.css(selector)
             for el in elements:
@@ -593,12 +593,12 @@ class LoversLabPageAdapter(BaseAdapter):
 
     @staticmethod
     def _extract_external_id_from_url(url: str) -> str | None:
-        """从原始内容中提取目标字段。"""
+        """从 LoversLab 文件 URL 中提取数字文件 ID。"""
         return extract_loverslab_file_id_from_url(url, ALLOWED_HOSTS)
 
     @staticmethod
     def _is_cloudflare_challenge_html(html: str) -> bool:
-        """判断内部条件是否成立。"""
+        """识别页面 HTML 是否为 Cloudflare challenge，而不是实际文件内容。"""
         lowered = html.lower()
         return (
             "just a moment..." in lowered

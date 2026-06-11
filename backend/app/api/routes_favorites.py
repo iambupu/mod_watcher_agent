@@ -25,7 +25,7 @@ def _favorite_to_read(
     summary_by_mod: dict[int, str] | None = None,
     mod_by_id: dict[int, Mod] | None = None,
 ) -> dict:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """把收藏和关联 Mod 摘要打包成前端需要的 FavoriteRead 结构。"""
     data = FavoriteRead.model_validate(favorite).model_dump()
     mod = mod_by_id.get(favorite.mod_id) if mod_by_id is not None else session.get(Mod, favorite.mod_id)
     if mod is not None:

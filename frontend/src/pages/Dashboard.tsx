@@ -1,3 +1,5 @@
+// 中文注释：实现 Dashboard 页面级交互和数据装配。
+
 import React from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";

@@ -54,14 +54,14 @@ class LoversLabSearchScrapeTool:
     name = "loverslab_scrape_search"
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话和设置项，便于按配置启停公开搜索页抓取。"""
         self.session = session
         self.settings = SettingsService(session)
         self.last_status = "not_started"
         self.last_reason: str | None = None
 
     async def run(self, tool_input: LoversLabSearchScrapeInput) -> list[SearchResult]:
-        """执行任务流程并返回结果。"""
+        """抓取公开搜索页里的 LoversLab 链接，物化后按相关性排序。"""
         self.last_status = "succeeded"
         self.last_reason = None
         enabled = (self.settings.get("loverslab_search_scrape_enabled") or "true").strip().lower()
@@ -84,7 +84,7 @@ class LoversLabSearchScrapeTool:
         return self._score_and_sort(mods, tool_input)
 
     def _build_query(self, tool_input: LoversLabSearchScrapeInput) -> str:
-        """构建内部流程需要的数据结构。"""
+        """构造带 site:loverslab.com 的公开搜索查询。"""
         parts = ["site:loverslab.com", semantic_query(clean_loverslab_query(tool_input.query)).search_text()]
         if tool_input.game:
             parts.append(tool_input.game)
@@ -93,7 +93,7 @@ class LoversLabSearchScrapeTool:
         return " ".join(part for part in parts if part).strip()
 
     async def _fetch_search_page(self, *, query: str, engine: str, limit: int) -> str:
-        """请求外部数据并返回标准化结果。"""
+        """请求 Google 或 DuckDuckGo 的 HTML 搜索页。"""
         headers = {
             "User-Agent": SEARCH_USER_AGENT,
             "Accept": "text/html,application/xhtml+xml",
@@ -113,7 +113,7 @@ class LoversLabSearchScrapeTool:
             return response.text
 
     def _parse_results(self, html: str, engine: str) -> list[SearchScrapeResult]:
-        """解析原始内容并返回结构化结果。"""
+        """按搜索引擎类型解析 HTML 结果列表。"""
         tree = HTMLParser(html)
         return _parse_google_results(tree) if engine == "google" else _parse_duckduckgo_results(tree)
 
@@ -123,7 +123,7 @@ class LoversLabSearchScrapeTool:
         tool_input: LoversLabSearchScrapeInput,
         engine: str,
     ) -> list[Mod]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """规范化搜索结果 URL，写入 LoversLab 本地缓存。"""
         records: list[LoversLabSearchRecord] = []
         for result in results:
             url = _normalize_loverslab_url(result.url)
@@ -148,13 +148,13 @@ class LoversLabSearchScrapeTool:
         )
 
     def _score_and_sort(self, mods: list[Mod], tool_input: LoversLabSearchScrapeInput) -> list[SearchResult]:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """复用 LoversLab 公共排序，返回统一 SearchResult。"""
         scored = score_and_sort_loverslab_mods(mods, query=tool_input.query, limit=tool_input.limit)
         return [SearchResult(score=score, mod=mod, tool_name=self.name) for score, mod in scored]
 
 
 def loverslab_scrape_input_from_plan(query: str, plan: dict[str, Any]) -> LoversLabSearchScrapeInput | None:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """复用 Google 工具的 plan 转换逻辑，保证两个 LoversLab 在线入口约束一致。"""
     google_input = loverslab_google_input_from_plan(query, plan)
     if google_input is None:
         return None
@@ -162,7 +162,7 @@ def loverslab_scrape_input_from_plan(query: str, plan: dict[str, Any]) -> Lovers
 
 
 def _parse_duckduckgo_results(tree: HTMLParser) -> list[SearchScrapeResult]:
-    """解析原始内容并返回结构化结果。"""
+    """解析 DuckDuckGo HTML 结果，提取标题、最终 URL 和摘要。"""
     results: list[SearchScrapeResult] = []
     for node in tree.css(".result"):
         link = node.css_first("a.result__a")
@@ -183,7 +183,7 @@ def _parse_duckduckgo_results(tree: HTMLParser) -> list[SearchScrapeResult]:
 
 
 def _parse_google_results(tree: HTMLParser) -> list[SearchScrapeResult]:
-    """解析原始内容并返回结构化结果。"""
+    """解析 Google HTML 结果；只保留能还原到 LoversLab 的链接。"""
     results: list[SearchScrapeResult] = []
     for link in tree.css("a[href]"):
         url = _normalize_loverslab_url(link.attributes.get("href") or "")
@@ -198,7 +198,7 @@ def _parse_google_results(tree: HTMLParser) -> list[SearchScrapeResult]:
 
 
 def _normalize_loverslab_url(value: str) -> str | None:
-    """规范化内部数据，供后续流程使用。"""
+    """还原搜索引擎跳转 URL，移除 UTM 参数，并校验 LoversLab 域名。"""
     value = value.strip()
     if not value:
         return None
@@ -216,5 +216,5 @@ def _normalize_loverslab_url(value: str) -> str | None:
 
 
 def _text(node: Any) -> str:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """压缩 DOM 节点文本中的多余空白。"""
     return re.sub(r"\s+", " ", node.text(separator=" ", strip=True)).strip()

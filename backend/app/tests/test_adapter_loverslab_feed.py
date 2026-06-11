@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_adapter_loverslab_feed.py 的模块职责，便于后续维护定位。
+
 """Tests for LoversLabFeedAdapter RSS mode."""
 
 import time

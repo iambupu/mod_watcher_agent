@@ -1,3 +1,5 @@
+// 中文注释：封装 useSettingsSync.test 相关的 React 状态同步逻辑。
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

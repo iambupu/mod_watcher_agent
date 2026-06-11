@@ -1,3 +1,5 @@
+# 中文注释：封装 Agent 工具层的LLM 输出解析逻辑。
+
 LLM_ERROR_SENTINELS = {
     "error",
     "provider error",

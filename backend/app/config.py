@@ -1,3 +1,5 @@
+# 中文注释：集中定义后端运行配置、环境变量默认值和路径开关。
+
 import os
 from pathlib import Path
 

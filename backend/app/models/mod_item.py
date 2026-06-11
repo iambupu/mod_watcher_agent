@@ -1,3 +1,5 @@
+# 中文注释：定义适配器归一化条目相关的数据库持久化模型。
+
 from dataclasses import dataclass, field
 from datetime import datetime
 

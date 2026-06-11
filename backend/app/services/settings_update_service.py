@@ -1,3 +1,5 @@
+# 中文注释：封装后端服务层的设置更新副作用逻辑。
+
 from typing import Any
 
 from sqlmodel import Session

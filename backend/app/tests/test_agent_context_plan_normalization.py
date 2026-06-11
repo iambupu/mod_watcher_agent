@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_agent_context_plan_normalization.py 的模块职责，便于后续维护定位。
+
 from app.services.agent.planning.context_plan_normalization import normalize_context_query_plan
 
 

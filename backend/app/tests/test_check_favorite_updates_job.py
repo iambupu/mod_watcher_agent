@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_check_favorite_updates_job.py 的模块职责，便于后续维护定位。
+
 from unittest.mock import AsyncMock
 
 import pytest

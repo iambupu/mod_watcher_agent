@@ -1,3 +1,5 @@
+# 中文注释：管理 Agent 长期记忆、偏好和证据记录。
+
 from app.services.agent.schemas import AgentChatResponse
 from app.utils.numeric import safe_nonnegative_int
 

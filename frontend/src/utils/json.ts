@@ -1,3 +1,5 @@
+// 中文注释：提供 json 相关的前端纯函数工具。
+
 export function parseJsonText(value: string, invalidMessage = "Invalid JSON file"): unknown {
   try {
     return JSON.parse(value);

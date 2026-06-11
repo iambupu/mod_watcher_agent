@@ -1,3 +1,5 @@
+// 中文注释：说明 frontend/src/features/agentChat/AgentMatchCard.tsx 的前端模块职责，便于维护时快速定位。
+
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronUp, Heart, HeartOff, Sparkles } from "lucide-react";

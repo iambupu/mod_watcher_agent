@@ -1,3 +1,4 @@
+# 中文注释：定义后台任务运行记录相关的数据库持久化模型。
 
 from sqlmodel import Field, SQLModel
 

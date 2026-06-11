@@ -30,11 +30,11 @@ class FavoriteService:
     _adapter_class = NexusModsAdapter
 
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于管理收藏和更新检查状态。"""
         self.session = session
 
     async def add_favorite(self, mod_id: int, user_note: str | None = None, *, commit: bool = True) -> Favorite:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """把已有 Mod 加入收藏，并初始化版本跟踪基线。"""
         mod = self.session.get(Mod, mod_id)
         if mod is None:
             raise ValueError(f"Mod id={mod_id} not found")
@@ -187,7 +187,7 @@ class FavoriteService:
         )
 
     async def remove_favorite(self, favorite_id: int) -> None:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """删除收藏记录，并标记偏好缓存需要刷新。"""
         fav = self.session.get(Favorite, favorite_id)
         if fav is None:
             raise ValueError(f"Favorite id={favorite_id} not found")
@@ -196,7 +196,7 @@ class FavoriteService:
         AgentPreferenceService(self.session).mark_dirty()
 
     async def update_favorite(self, favorite_id: int, *, commit: bool = True, **fields) -> Favorite:
-        """更新已有数据并返回结果。"""
+        """更新收藏设置、备注或用户标签。"""
         fav = self.session.get(Favorite, favorite_id)
         if fav is None:
             raise ValueError(f"Favorite id={favorite_id} not found")
@@ -235,7 +235,7 @@ class FavoriteService:
         return created
 
     async def check_update(self, favorite_id: int) -> ModUpdateEvent | None:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """拉取收藏 Mod 详情并在版本或远端更新时间变化时创建更新事件。"""
         fav = self.session.get(Favorite, favorite_id)
         if fav is None:
             raise ValueError(f"Favorite id={favorite_id} not found")
@@ -320,7 +320,7 @@ class FavoriteService:
         return event
 
     async def check_all_favorites(self) -> list[ModUpdateEvent]:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """遍历所有启用跟踪的收藏并收集新增更新事件。"""
         favs = self.session.exec(
             select(Favorite).where(Favorite.tracking_enabled.is_(True))
         ).all()
@@ -374,7 +374,7 @@ class FavoriteService:
 
 
 def _extract_version_and_updated_at(detail: ModItem | dict) -> tuple[str | None, str | None]:
-    """从原始内容中提取目标字段。"""
+    """从适配器详情结果中提取版本号和远端更新时间。"""
     if isinstance(detail, ModItem):
         raw = detail.raw if isinstance(detail.raw, dict) else {}
         updated_at = detail.updated_at.isoformat() if detail.updated_at is not None else None

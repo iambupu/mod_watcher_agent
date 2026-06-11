@@ -45,7 +45,7 @@ def list_rules(
     q: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ):
-    """查询并返回列表数据。"""
+    """按来源、启用状态和关键词查询监控规则。"""
     return RuleService(session).list_rules(source=source, enabled=enabled, q=q)
 
 
@@ -91,7 +91,7 @@ def create_rule(
     data: WatchRuleCreate,
     session: Session = Depends(get_session),
 ):
-    """创建并持久化对应的数据。"""
+    """创建规则并重新注册调度任务。"""
     result = RuleService(session).create_rule(data, commit=False)
     _commit_rule_change_with_jobs(session)
     return result
@@ -103,7 +103,7 @@ def update_rule(
     data: WatchRuleUpdate,
     session: Session = Depends(get_session),
 ):
-    """更新已有数据并返回结果。"""
+    """更新规则并刷新调度任务。"""
     try:
         result = RuleService(session).update_rule(rule_id, data, commit=False)
     except RuleServiceError as exc:
@@ -114,7 +114,7 @@ def update_rule(
 
 @router.delete("/{rule_id}", status_code=204)
 def delete_rule(rule_id: int, session: Session = Depends(get_session)):
-    """删除对应数据并返回处理结果。"""
+    """删除规则并刷新调度任务注册。"""
     try:
         RuleService(session).delete_rule(rule_id, commit=False)
     except RuleServiceError as exc:
@@ -139,7 +139,7 @@ async def run_rule_discovery(
     rule_id: int,
     session: Session = Depends(get_session),
 ):
-    """执行任务流程并返回结果。"""
+    """把指定规则的一次发现任务加入队列。"""
     try:
         return enqueue_rule_discovery(session, rule_id)
     except RuleJobError as exc:
