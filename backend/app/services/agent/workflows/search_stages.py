@@ -1,7 +1,13 @@
+# 中文注释：定义 Agent 图工作流状态和阶段编排。
+
 from typing import Any
 
 from sqlmodel import Session
 
+from app.services.agent.tools.bounded_react_retrieval_tool import (
+    BoundedReactRetrievalInput,
+    BoundedReactRetrievalTool,
+)
 from app.services.agent.tools.candidate_ranking_tool import (
     CandidateRankingInput,
     CandidateRankingTool,
@@ -36,6 +42,46 @@ async def execute_retrieval_stage(
         "retrieval_evidence": output.evidence,
         "staged_results": output.staged_results,
         "online_results": output.online_results,
+    }
+
+
+async def bounded_react_retrieval_stage(
+    session: Session,
+    *,
+    query: str,
+    query_plan: dict[str, Any],
+    tool_plan: dict[str, Any],
+    staged_results: list,
+    online_results: list,
+    retrieval_evidence: list[dict[str, object]],
+    evidence_id: str,
+) -> dict[str, Any]:
+    output = await BoundedReactRetrievalTool(session).run(
+        BoundedReactRetrievalInput(
+            query=query,
+            query_plan=query_plan,
+            tool_plan=tool_plan,
+            staged_results=staged_results,
+            online_results=online_results,
+            retrieval_evidence=retrieval_evidence,
+            evidence_id=evidence_id,
+        )
+    )
+    return {
+        "retrieval_summary": {
+            "stage": "bounded_react_retrieval",
+            "strategy": output.react_summary.get("strategy"),
+            "react_triggered": output.react_summary.get("triggered"),
+            "react_round_count": output.react_summary.get("round_count"),
+            "react_stop_reason": output.react_summary.get("stop_reason"),
+            "staged_count": len(output.staged_results),
+            "online_count": len(output.online_results),
+        },
+        "retrieval_evidence": output.retrieval_evidence,
+        "staged_results": output.staged_results,
+        "online_results": output.online_results,
+        "react_summary": output.react_summary,
+        "react_trace": output.react_trace,
     }
 
 

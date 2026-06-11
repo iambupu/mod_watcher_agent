@@ -84,6 +84,7 @@ def _assert_succeeded_trace(trace: list[dict], *, compat: bool = False) -> None:
                 "diagnose_query",
                 "plan_tools",
                 "staged_retrieval",
+                "bounded_react_retrieval",
                 "rank_results",
                 "self_correction_review",
                 "generate_answer",
