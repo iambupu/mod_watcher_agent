@@ -1,4 +1,5 @@
 from app.services.agent.semantic_search import (
+    base_keywords,
     distinctive_query_terms,
     infer_categories,
     semantic_query,
@@ -63,6 +64,13 @@ def test_semantic_query_extracts_ascii_token_from_mixed_chinese_query():
     assert distinctive_query_terms("XXTB的mod") == ["xxtb"]
     assert text_score("XXTB的mod", ["XXTB - Prototype Suit CNS"], None) > 0
     assert text_score("XXTB的mod", ["Kawaii War Dress TypeA"], None) == 0
+
+
+def test_semantic_query_strips_generic_chinese_topic_suffix_before_mod_filler():
+    semantic = semantic_query("性别歧视主题的mod")
+
+    assert semantic.base_keywords == ["性别歧视"]
+    assert base_keywords("性别歧视主题的mod") == ["性别歧视"]
 
 
 def test_semantic_query_ignores_natural_language_intent_fillers():

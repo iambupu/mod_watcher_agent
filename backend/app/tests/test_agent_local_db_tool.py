@@ -78,6 +78,57 @@ async def test_local_db_tool_uses_sqlite_fts_for_relevance_keywords(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_local_db_tool_treats_game_domain_as_legacy_game_alias_for_fts():
+    engine = _engine()
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        vanilla = Mod(
+            source="loverslab",
+            external_id="489",
+            game="skyrimspecialedition",
+            game_domain=None,
+            title="Vanilla Sexism 2",
+            translated_title_zh="纯 vanilla 性别歧视 2",
+            url="https://example.com/sexism-2",
+            first_seen_at="2026-05-22T00:00:00+00:00",
+            last_seen_at="2026-05-22T00:00:00+00:00",
+        )
+        guard_replacer = Mod(
+            source="nexusmods",
+            external_id="2",
+            game="Skyrim Special Edition",
+            game_domain="skyrimspecialedition",
+            title="Katsune Sexist Guards Player Audio Replacer",
+            translated_title_zh="Katsune 性别歧视守卫玩家音频替换器",
+            url="https://example.com/guards",
+            first_seen_at="2026-05-20T00:00:00+00:00",
+            last_seen_at="2026-05-20T00:00:00+00:00",
+        )
+        session.add_all([vanilla, guard_replacer])
+        session.commit()
+
+        plan = SearchPlan.from_query_plan(
+            {
+                "keywords": ["性别歧视"],
+                "games": ["skyrimspecialedition"],
+                "game_domains": ["skyrimspecialedition"],
+                "sort_field": "relevance",
+                "sort_order": "desc",
+                "limit": 8,
+            }
+        )
+        results = await LocalDbSearchTool(session).run(
+            LocalDbSearchInput(query="性别歧视主题的 mod", plan=plan)
+        )
+
+    assert [result.mod.title for result in results[:2]] == [
+        "Vanilla Sexism 2",
+        "Katsune Sexist Guards Player Audio Replacer",
+    ]
+    assert results[0].score >= 90
+
+
+@pytest.mark.asyncio
 async def test_local_db_tool_preserves_negative_filter_fields_for_fts(monkeypatch):
     engine = _engine()
     SQLModel.metadata.create_all(engine)

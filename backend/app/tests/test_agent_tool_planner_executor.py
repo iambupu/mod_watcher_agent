@@ -1,8 +1,14 @@
+import pytest
+
 from app.models.mod import Mod
 from app.services.agent.planning import tool_planner as tool_planner_module
 from app.services.agent.planning.tool_planner import build_tool_plan
 from app.services.agent.search_types import SearchPlan, SearchResult
-from app.services.agent.tools.tool_executor_tool import _online_retrieval_decision
+from app.services.agent.tools.tool_executor_tool import (
+    ToolExecutorInput,
+    ToolExecutorTool,
+    _online_retrieval_decision,
+)
 from app.services.agent.tools.tool_planner_tool import ToolPlannerInput, ToolPlannerTool
 
 
@@ -306,6 +312,73 @@ def test_tool_planner_tool_uses_default_runtime_capabilities():
 
     assert [step["tool"] for step in via_tool["online_steps"]] == ["nexusmods_search"]
     assert via_tool["tool_policy_evidence"]["expand_online_candidates"] == ["loverslab_google"]
+
+
+@pytest.mark.asyncio
+async def test_tool_executor_runs_dual_local_retrieval_and_marks_branches(monkeypatch):
+    async def fake_local_run(self, tool_input):
+        keywords = tool_input.plan.keywords
+        if keywords == ["sexism"]:
+            return [
+                SearchResult(
+                    score=7,
+                    tool_name="local_db_search",
+                    mod=Mod(
+                        source="loverslab",
+                        external_id="sexism-2",
+                        game="Skyrim Special Edition",
+                        title="Vanilla Sexism 2",
+                        url="https://example.com/sexism-2",
+                    ),
+                )
+            ]
+        if keywords == ["bimbo"]:
+            return [
+                SearchResult(
+                    score=9,
+                    tool_name="local_db_search",
+                    mod=Mod(
+                        source="loverslab",
+                        external_id="bimbo-1",
+                        game="Skyrim Special Edition",
+                        title="Bimbo Roleplay",
+                        url="https://example.com/bimbo-1",
+                    ),
+                )
+            ]
+        return []
+
+    monkeypatch.setattr(
+        "app.services.agent.tools.tool_executor_tool.LocalDbSearchTool.run",
+        fake_local_run,
+    )
+    output = await ToolExecutorTool(session=None).run(
+        ToolExecutorInput(
+            query="性别歧视主题的 mod",
+            query_plan={
+                "keywords": ["bimbo"],
+                "sort_field": "relevance",
+                "sort_order": "desc",
+                "limit": 4,
+                "_agent_current_only_plan": {
+                    "keywords": ["sexism"],
+                    "sort_field": "relevance",
+                    "sort_order": "desc",
+                    "limit": 4,
+                },
+                "_agent_dual_retrieval": {"enabled": True, "reason": "fallback_keywords"},
+            },
+            tool_plan={"parallel_groups": [{"tools": ["local_db_search"]}], "online_steps": []},
+            evidence_id="ev_dual",
+        )
+    )
+
+    assert [item.retrieval_branch for item in output.staged_results] == ["current_only", "context_scoped"]
+    assert [item.mod.title for item in output.staged_results] == ["Vanilla Sexism 2", "Bimbo Roleplay"]
+    summary = next(item for item in output.evidence if item.get("retrieval_branch") == "dual_summary")
+    assert summary["current_only_count"] == 1
+    assert summary["context_scoped_count"] == 1
+    assert summary["current_only_reserved"] == 1
 
 
 def test_online_gate_queries_for_open_discovery_even_with_local_results():

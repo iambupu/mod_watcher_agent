@@ -57,6 +57,7 @@ class ResultFusionRankerTool:
         results = filter_by_exact_title(results, tool_input.plan.exact_title)
         results = filter_excluded_titles(results, _excluded_titles(tool_input.query_plan))
         results = filter_excluded_keywords(results, tool_input.plan.excluded_keywords)
+        results = _apply_context_pollution_guard(results, tool_input.query_plan, tool_input.plan)
         logger.info("agent.search.final count=%s limit=%s evidence_id=%s", len(results), tool_input.plan.limit, tool_input.evidence_id)
         logger.info(
             "agent.tool name=result_fusion_ranker status=succeeded count=%s staged=%s online=%s sort=%s/%s evidence_id=%s",
@@ -69,6 +70,7 @@ class ResultFusionRankerTool:
         )
         evidence: list[dict[str, object]] = []
         if tool_input.emit_evidence:
+            guard = tool_input.query_plan.get("_agent_context_pollution_guard")
             evidence.append(
                 {
                     "fragment_id": "r_fusion_1",
@@ -78,6 +80,7 @@ class ResultFusionRankerTool:
                     "count": len(results),
                     "evidence_id": tool_input.evidence_id,
                     "fields": ["sort_field", "sort_order", "limit"],
+                    **(_guard_evidence_fields(guard) if isinstance(guard, dict) else {}),
                 }
             )
         return ResultFusionRankerOutput(results=results, evidence=evidence)
@@ -136,3 +139,107 @@ def _fallback_filter_terms(query_plan: dict[str, Any], plan: SearchPlan) -> list
     if query_plan.get("intent") == "comparison":
         return []
     return plan.keywords
+
+
+def _apply_context_pollution_guard(
+    results: list[SearchResult],
+    query_plan: dict[str, Any],
+    plan: SearchPlan,
+) -> list[SearchResult]:
+    if not _dual_retrieval_enabled(query_plan):
+        return results
+    current_only = [item for item in results if item.retrieval_branch == "current_only"]
+    context_scoped = [item for item in results if item.retrieval_branch == "context_scoped"]
+    reserved = _current_only_reserved(plan.limit, len(current_only))
+    blocked_terms = _context_signal_terms(query_plan, "blocked_terms")
+    guard = {
+        "triggered": False,
+        "reason": "not_triggered",
+        "blocked_terms": blocked_terms,
+        "current_only_count": len(current_only),
+        "context_scoped_count": len(context_scoped),
+        "current_only_reserved": reserved,
+    }
+    if not reserved:
+        query_plan["_agent_context_pollution_guard"] = guard
+        return results
+
+    selected = current_only[:reserved]
+    selected_ids = {id(item) for item in selected}
+    leading_ids = {id(item) for item in results[:reserved]}
+    if selected_ids.issubset(leading_ids):
+        query_plan["_agent_context_pollution_guard"] = guard
+        return results
+
+    leading_context = [item for item in results[:reserved] if item.retrieval_branch == "context_scoped"]
+    context_hints = _context_signal_terms(query_plan, "context_hints")
+    reason = "current_only_reserved"
+    if leading_context and _results_mention_terms(leading_context, context_hints):
+        reason = "context_hints_displaced_current_only"
+    remaining = [item for item in results if id(item) not in selected_ids]
+    guard["triggered"] = True
+    guard["reason"] = reason
+    query_plan["_agent_context_pollution_guard"] = guard
+    return [*selected, *remaining]
+
+
+def _dual_retrieval_enabled(query_plan: dict[str, Any]) -> bool:
+    config = query_plan.get("_agent_dual_retrieval")
+    return isinstance(config, dict) and config.get("enabled") is True
+
+
+def _current_only_reserved(limit: int, current_only_count: int) -> int:
+    if current_only_count <= 0:
+        return 0
+    half_limit = max(1, limit // 2)
+    return min(current_only_count, min(3, half_limit))
+
+
+def _context_signal_terms(query_plan: dict[str, Any], field: str) -> list[str]:
+    signal = query_plan.get("_agent_context_signal")
+    if not isinstance(signal, dict):
+        return []
+    values = signal.get(field)
+    if not isinstance(values, list):
+        return []
+    terms: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        term = str(value or "").strip().lower()
+        if term and term not in seen:
+            terms.append(term)
+            seen.add(term)
+    return terms
+
+
+def _results_mention_terms(results: list[SearchResult], terms: list[str]) -> bool:
+    if not results or not terms:
+        return False
+    return any(_result_mentions_terms(item, terms) for item in results)
+
+
+def _result_mentions_terms(result: SearchResult, terms: list[str]) -> bool:
+    haystack = " ".join(
+        str(value or "")
+        for value in [
+            result.mod.title,
+            result.mod.translated_title_zh,
+            result.mod.category,
+            result.mod.tags_json,
+            result.mod.original_summary,
+        ]
+    ).lower()
+    return any(term in haystack for term in terms)
+
+
+def _guard_evidence_fields(guard: dict[str, Any]) -> dict[str, object]:
+    return {
+        "context_pollution_guard": {
+            "triggered": bool(guard.get("triggered")),
+            "reason": str(guard.get("reason") or ""),
+            "blocked_terms": guard.get("blocked_terms") if isinstance(guard.get("blocked_terms"), list) else [],
+            "current_only_count": int(guard.get("current_only_count") or 0),
+            "context_scoped_count": int(guard.get("context_scoped_count") or 0),
+            "current_only_reserved": int(guard.get("current_only_reserved") or 0),
+        }
+    }

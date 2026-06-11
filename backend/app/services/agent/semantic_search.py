@@ -11,6 +11,15 @@ from app.services.agent.semantic_inference import (
 from app.services.agent.semantic_taxonomy import CHINESE_QUERY_FILLERS, STOP_WORDS
 
 SCOPE_MARKER = "[scope]"
+_CHINESE_QUERY_SUFFIXES = (
+    "主题的",
+    "类型的",
+    "相关的",
+    "主题",
+    "类型",
+    "相关",
+    "的",
+)
 
 __all__ = [
     "SemanticQuery",
@@ -123,7 +132,19 @@ def _clean_keyword_token(token: str) -> str:
         return ""
     for filler in CHINESE_QUERY_FILLERS:
         cleaned = cleaned.replace(filler, "")
-    return cleaned.strip()
+    return _strip_chinese_query_suffixes(cleaned).strip()
+
+
+def _strip_chinese_query_suffixes(token: str) -> str:
+    cleaned = token.strip()
+    previous = ""
+    while cleaned and cleaned != previous:
+        previous = cleaned
+        for suffix in _CHINESE_QUERY_SUFFIXES:
+            if cleaned.endswith(suffix) and len(cleaned) > len(suffix) + 1:
+                cleaned = cleaned[: -len(suffix)].strip()
+                break
+    return cleaned
 
 
 def _mixed_keyword_parts(token: str) -> list[str]:

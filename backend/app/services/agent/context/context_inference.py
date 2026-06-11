@@ -117,7 +117,7 @@ def should_inherit_context_keywords(
     context_terms = _clean_terms(context_keywords or [])
     if not context_terms:
         return False
-    current_terms = _clean_terms(current_keywords or base_keywords(current_text))
+    current_terms = _clean_terms(current_keywords if current_keywords is not None else base_keywords(current_text))
     decision = followup_decision(current_text)
     continuity = semantic_continuity_score(current_text, current_terms, context_terms)
     if not current_terms:
@@ -144,7 +144,7 @@ def context_keyword_inherit_score(
     context_terms = _clean_terms(context_keywords or [])
     if not context_terms:
         return 0.0
-    current_terms = _clean_terms(current_keywords or base_keywords(current_text))
+    current_terms = _clean_terms(current_keywords if current_keywords is not None else base_keywords(current_text))
     decision = followup_decision(current_text)
     continuity = semantic_continuity_score(current_text, current_terms, context_terms)
     lexical_terms = [term for term in current_terms if _is_lexical_token(term)]
@@ -189,8 +189,8 @@ def decide_context_inheritance(
 ) -> ContextInheritDecision:
     effective_context_keywords = _clean_terms(context_keywords or [])
     decision = followup_decision(query)
-    continuity = semantic_continuity_score(query, current_keywords or [], effective_context_keywords)
-    inherit_score = context_keyword_inherit_score(query, current_keywords or [], effective_context_keywords)
+    continuity = semantic_continuity_score(query, current_keywords, effective_context_keywords)
+    inherit_score = context_keyword_inherit_score(query, current_keywords, effective_context_keywords)
     current_terms = _clean_terms(current_keywords or [])
     lexical_terms = [term for term in current_terms if _is_lexical_token(term)]
     distinctive_current = _has_distinctive_terms(lexical_terms)
@@ -244,7 +244,7 @@ def semantic_continuity_score(
     current_keywords: list[str] | None,
     context_keywords: list[str] | None,
 ) -> float:
-    current_terms = _clean_terms(current_keywords or base_keywords(current_text))
+    current_terms = _clean_terms(current_keywords if current_keywords is not None else base_keywords(current_text))
     context_terms = _clean_terms(context_keywords or [])
     if not current_terms or not context_terms:
         return 0.0
@@ -282,7 +282,7 @@ def _has_relational_intent(text: str) -> bool:
         return True
     patterns = (
         r"(?:^|[\s，。,？！!?.])(?:more|another|same|similar|related)(?:$|[\s，。,？！!?.])",
-        r"(?:^|[\s，。,？！!?.]).{0,2}(?:继续|再来|还有|同类|类似|相关)(?:$|[\s，。,？！!?.])",
+        r"(?:^|[\s，。,？！!?.]).{0,2}(?:继续|再来|还有|更多|同类|类似|相关).{0,4}(?:$|[\s，。,？！!?.])",
         r"(?:继续|保持).{0,4}(?:方向|这个方向|这个路子)",
         r"(?:^|[\s，。,？！!?.])(?:这种|那种|这个|那个)(?:$|[\s，。,？！!?.])",
     )
