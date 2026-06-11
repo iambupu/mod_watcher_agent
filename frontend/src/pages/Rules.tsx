@@ -1,3 +1,5 @@
+// 中文注释：实现 Rules 页面级交互和数据装配。
+
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";

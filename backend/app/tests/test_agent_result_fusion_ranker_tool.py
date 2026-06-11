@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_agent_result_fusion_ranker_tool.py 的模块职责，便于后续维护定位。
+
 from app.models.mod import Mod
 from app.services.agent.search_types import SearchPlan, SearchResult
 from app.services.agent.tools.result_fusion_ranker_tool import (

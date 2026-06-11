@@ -13,9 +13,9 @@ from app.services.system_notification_service import SystemNotificationService
 
 
 async def generate_summary_report(*, force: bool = False) -> dict:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """生成摘要报告并在成功生成时发送系统通知。"""
     async def handler(session: Session) -> dict:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """在 tracked job 会话中生成摘要报告 payload。"""
         return await generate_summary_report_payload(session, force=force, create_client=create_llm_client)
 
     result = await run_tracked_job("llm_summary_report", handler)

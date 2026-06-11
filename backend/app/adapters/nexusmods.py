@@ -69,7 +69,7 @@ def _parse_unix_timestamp(value: int | float | str | None) -> datetime | None:
 
 
 def _unix_timestamp_days_ago(days: int) -> str:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """生成 Nexus GraphQL 时间过滤需要的 Unix 秒级时间戳。"""
     cutoff = datetime.now(UTC) - timedelta(days=days)
     return str(int(cutoff.timestamp()))
 
@@ -80,13 +80,13 @@ class NexusModsAdapter(BaseAdapter):
     source = "nexusmods"
 
     def __init__(self, api_key: str | None = None):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存 Nexus API key；调用方可显式覆盖全局配置。"""
         self.api_key = api_key or settings.NEXUS_API_KEY
 
     async def _graphql_query(
         self, query: str, variables: dict | None = None
     ) -> dict:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """执行 Nexus GraphQL 请求，并把 429 转为可识别的限流异常。"""
         headers = {
             "Content-Type": "application/json",
             "Application-Name": "ModWatcherAgent",
@@ -113,7 +113,7 @@ class NexusModsAdapter(BaseAdapter):
             return data
 
     def _build_filter(self, config: NexusModsRuleConfig) -> dict:
-        """构建内部流程需要的数据结构。"""
+        """根据监控规则构造 Nexus GraphQL 过滤条件。"""
         clauses: list[dict] = [
             {
                 "gameDomainName": [
@@ -146,7 +146,7 @@ class NexusModsAdapter(BaseAdapter):
         return {"op": "AND", "filter": clauses}
 
     def _build_sort(self, sort_by: str) -> list[dict]:
-        """构建内部流程需要的数据结构。"""
+        """把规则排序枚举映射为 Nexus GraphQL sort 参数。"""
         field_map = {
             "updatedAt_desc": "updatedAt",
             "createdAt_desc": "createdAt",
@@ -157,7 +157,7 @@ class NexusModsAdapter(BaseAdapter):
         return [{field: {"direction": "DESC"}}]
 
     async def fetch(self, source_config_json: str) -> list[ModItem]:
-        """请求外部数据并返回标准化结果。"""
+        """分页读取 Nexus 规则结果；限流时返回已抓到的部分结果。"""
         try:
             config = NexusModsRuleConfig.model_validate_json(source_config_json)
         except Exception:
@@ -270,7 +270,7 @@ class NexusModsAdapter(BaseAdapter):
     async def fetch_mod_detail(
         self, external_id: str, game_domain: str | None = None
     ) -> ModItem | None:
-        """请求外部数据并返回标准化结果。"""
+        """优先用带 game_domain 的 REST 详情，必要时回退 GraphQL 查单个 modId。"""
         embedded_game_domain, mod_id = _parse_external_id(external_id)
         if mod_id is None:
             return None
@@ -431,7 +431,7 @@ class NexusModsAdapter(BaseAdapter):
         )
 
     def normalize(self, raw_item: dict) -> ModItem:
-        """规范化输入数据，供后续流程使用。"""
+        """把 Nexus GraphQL 节点转换为统一 ModItem，并把 source_id 命名空间化。"""
         game = raw_item.get("game") or {}
         game_domain = game.get("domainName", "")
         category = raw_item.get("category")

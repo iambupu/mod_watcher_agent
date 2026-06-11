@@ -19,14 +19,14 @@ DEFAULT_KNOWN_GAMES = [
 
 
 def alias_key(value: str) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """生成游戏别名匹配键，忽略空白、连接符和括号差异。"""
     import re
 
     return re.sub(r"[\s_\-:：/\\()（）]+", "", value.strip().lower())
 
 
 def alias_file_path(path: str | Path | None = None) -> Path:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """解析游戏别名文件路径，支持配置中的相对路径。"""
     if path is not None:
         return Path(path)
     configured = Path(settings.GAME_ALIAS_FILE)
@@ -36,7 +36,7 @@ def alias_file_path(path: str | Path | None = None) -> Path:
 
 
 def load_game_aliases(path: str | Path | None = None) -> dict[str, list[str]]:
-    """加载配置或持久化数据。"""
+    """读取持久化游戏别名文件，并兼容旧版裸映射格式。"""
     file_path = alias_file_path(path)
     if not file_path.exists():
         return {}
@@ -66,7 +66,7 @@ def load_game_aliases(path: str | Path | None = None) -> dict[str, list[str]]:
 
 
 def _write_game_aliases(aliases: dict[str, list[str]], path: str | Path | None = None) -> None:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """原子写入已验证的游戏别名映射。"""
     file_path = alias_file_path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"aliases": dict(sorted(aliases.items(), key=lambda item: alias_key(item[0])))}
@@ -76,7 +76,7 @@ def _write_game_aliases(aliases: dict[str, list[str]], path: str | Path | None =
 
 
 def build_resolved_aliases(allowed_values: list[str], aliases: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
-    """构建后续流程需要的数据结构。"""
+    """把别名目标收敛到当前允许的游戏列表。"""
     raw_aliases = aliases if aliases is not None else load_game_aliases()
     allowed_by_key = {alias_key(value): value for value in allowed_values}
     resolved_aliases: dict[str, list[str]] = {}

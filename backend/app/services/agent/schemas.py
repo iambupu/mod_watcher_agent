@@ -1,3 +1,5 @@
+# 中文注释：封装 Agent 服务层的Agent 服务层数据结构逻辑。
+
 from collections.abc import KeysView
 from typing import Literal
 

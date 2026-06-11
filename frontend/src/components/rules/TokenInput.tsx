@@ -1,3 +1,5 @@
+// 中文注释：提供规则编辑器里的 TokenInput 表单组件。
+
 import React, { useState } from "react";
 
 interface TokenInputProps {

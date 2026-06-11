@@ -1,3 +1,5 @@
+// 中文注释：提供 jobMetadata 相关的前端纯函数工具。
+
 import { parseJsonObject } from "./json";
 import { parseWholeIntegerInput } from "./numberInput";
 

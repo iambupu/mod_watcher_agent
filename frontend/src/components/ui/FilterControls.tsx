@@ -1,3 +1,5 @@
+// 中文注释：提供 FilterControls 通用 UI 组件。
+
 import React from "react";
 import { ChevronRight, X } from "lucide-react";
 

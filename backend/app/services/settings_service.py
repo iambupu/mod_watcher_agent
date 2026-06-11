@@ -1,3 +1,5 @@
+# 中文注释：封装后端服务层的设置读写逻辑。
+
 import json
 import os
 from datetime import UTC, datetime

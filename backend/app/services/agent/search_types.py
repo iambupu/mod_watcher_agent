@@ -1,3 +1,5 @@
+# 中文注释：封装 Agent 服务层的Agent 检索类型定义逻辑。
+
 from dataclasses import dataclass
 from typing import Any
 

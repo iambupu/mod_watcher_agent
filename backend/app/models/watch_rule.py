@@ -1,3 +1,4 @@
+# 中文注释：定义监控规则相关的数据库持久化模型。
 
 from sqlalchemy import Column, Text
 from sqlmodel import Field, SQLModel

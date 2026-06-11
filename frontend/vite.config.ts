@@ -1,3 +1,5 @@
+// 中文注释：配置 Vite 开发服务器、React 插件和构建入口。
+
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'

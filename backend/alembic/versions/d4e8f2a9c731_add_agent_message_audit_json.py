@@ -1,3 +1,5 @@
+# 中文注释：记录数据库结构迁移步骤，供 Alembic 按版本顺序执行。
+
 """add agent message audit json
 
 Revision ID: d4e8f2a9c731

@@ -1,3 +1,5 @@
+# 中文注释：执行 Agent 回复质量检查、门禁和端到端验证。
+
 import json
 import logging
 from pathlib import Path

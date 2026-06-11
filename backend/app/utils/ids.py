@@ -1,3 +1,5 @@
+# 中文注释：提供正整数 ID 清洗相关的纯函数工具。
+
 from collections.abc import Iterable
 
 

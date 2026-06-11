@@ -1,3 +1,5 @@
+// 中文注释：提供 ModFilterPanel 业务组件。
+
 import React from "react";
 import { Search } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";

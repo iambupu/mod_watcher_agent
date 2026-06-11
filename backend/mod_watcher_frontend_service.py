@@ -1,3 +1,5 @@
+# 中文注释：Windows 服务入口，用于托管前端静态服务生命周期。
+
 """Named frontend service process for Mod Watcher Agent."""
 
 from __future__ import annotations

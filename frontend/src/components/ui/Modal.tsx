@@ -1,3 +1,5 @@
+// 中文注释：提供 Modal 通用 UI 组件。
+
 import React from "react";
 import { X } from "lucide-react";
 

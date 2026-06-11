@@ -1,3 +1,5 @@
+// 中文注释：提供规则编辑器里的 RuleTestResultPanel.test 表单组件。
+
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { RuleTestResultPanel } from "@/components/rules/RuleTestResultPanel";

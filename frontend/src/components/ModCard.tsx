@@ -1,3 +1,5 @@
+// 中文注释：提供 ModCard 业务组件。
+
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ExternalLink, Heart, EyeOff, Languages, Sparkles, ChevronDown, ChevronUp } from "lucide-react";

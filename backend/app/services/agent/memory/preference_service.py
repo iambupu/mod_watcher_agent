@@ -1,3 +1,5 @@
+# 中文注释：管理 Agent 长期记忆、偏好和证据记录。
+
 import json
 from datetime import UTC, datetime
 from typing import Any

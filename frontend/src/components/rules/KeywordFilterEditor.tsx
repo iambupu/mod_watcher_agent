@@ -1,3 +1,5 @@
+// 中文注释：提供规则编辑器里的 KeywordFilterEditor 表单组件。
+
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";

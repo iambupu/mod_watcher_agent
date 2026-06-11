@@ -12,14 +12,14 @@ def list_logs(
     search: str | None = Query(None, description="Search in module name and message"),
     limit: int = Query(200, ge=1, le=1000, description="Maximum entries to return"),
 ):
-    """查询并返回列表数据。"""
+    """按级别/关键词读取最近日志条目。"""
     entries = get_log_entries(level=level, search=search, limit=limit)
     return {"entries": entries}
 
 
 @router.post("/open-dir")
 def open_log_directory():
-    """处理当前模块的业务逻辑并返回结果。"""
+    """调用系统文件管理器打开当前日志目录。"""
     try:
         log_dir = open_log_directory_in_system()
     except LogDirectoryOpenError as exc:

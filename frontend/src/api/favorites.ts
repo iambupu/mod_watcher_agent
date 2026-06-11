@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端收藏接口的类型和请求函数。
+
 import { get, post, put, del } from "./client";
 import { fetchMod } from "./mods";
 import { fallbackModItem, mergeTranslatedSummary } from "./modHydration";

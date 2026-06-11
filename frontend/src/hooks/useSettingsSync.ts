@@ -1,3 +1,5 @@
+// 中文注释：封装 useSettingsSync 相关的 React 状态同步逻辑。
+
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useUIStore } from '@/stores/uiStore';

@@ -1,3 +1,5 @@
+# 中文注释：封装 Agent 工具层的query plan repair tool逻辑。
+
 from dataclasses import dataclass, field
 from typing import Any
 

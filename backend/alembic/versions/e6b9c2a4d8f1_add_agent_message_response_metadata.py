@@ -1,3 +1,5 @@
+# 中文注释：记录数据库结构迁移步骤，供 Alembic 按版本顺序执行。
+
 """add agent message response metadata
 
 Revision ID: e6b9c2a4d8f1

@@ -8,7 +8,7 @@ class AutoStartUnsupportedError(Exception):
 
 
 def set_windows_auto_start(enabled: bool, *, platform_module=platform) -> dict:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """写入或删除 HKCU Run 启动项，只在 Windows 可用。"""
     if platform_module.system().lower() != "windows":
         raise AutoStartUnsupportedError()
 

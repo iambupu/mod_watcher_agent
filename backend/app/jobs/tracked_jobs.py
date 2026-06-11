@@ -19,7 +19,7 @@ TrackedJobHandler = Callable[[Session], Awaitable[dict[str, Any]]]
 
 
 def utc_now() -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """返回任务记录统一使用的 UTC ISO 时间。"""
     return datetime.now(UTC).isoformat()
 
 
@@ -28,7 +28,7 @@ def create_job_run_record(
     job_name: str,
     metadata: dict[str, Any] | None = None,
 ) -> JobRun:
-    """创建并持久化对应的数据。"""
+    """创建 queued 状态的任务运行记录并立即持久化。"""
     job_run = JobRun(
         job_name=job_name,
         status="queued",
@@ -42,7 +42,7 @@ def create_job_run_record(
 
 
 def mark_job_running(session: Session, job_run: JobRun) -> None:
-    """标记状态变更并返回结果。"""
+    """把任务标记为 running，并刷新 started_at。"""
     job_run.status = "running"
     job_run.started_at = utc_now()
     session.add(job_run)
@@ -55,7 +55,7 @@ def mark_job_failed(
     exc: Exception,
     metadata: dict[str, Any] | None = None,
 ) -> str:
-    """标记状态变更并返回结果。"""
+    """把任务标记为 failed，脱敏错误信息并生成系统通知。"""
     job_run.status = "failed"
     job_run.finished_at = utc_now()
     redacted_error = redact_sensitive_text(str(exc))
@@ -94,7 +94,7 @@ def mark_interrupted_jobs_failed(session: Session) -> int:
 
 
 def mark_job_succeeded(session: Session, job_run: JobRun, result: dict[str, Any]) -> None:
-    """标记状态变更并返回结果。"""
+    """把任务标记为 succeeded，并把计数和附加 metadata 写回记录。"""
     metadata = dict(result)
     job_run.status = "succeeded"
     job_run.finished_at = utc_now()
@@ -120,7 +120,7 @@ def create_tracked_job(
     job_name: str,
     metadata: dict[str, Any] | None = None,
 ) -> JobRun:
-    """创建并持久化对应的数据。"""
+    """兼容旧调用名，创建 tracked job 运行记录。"""
     return create_job_run_record(session, job_name, metadata)
 
 

@@ -1,3 +1,5 @@
+// 中文注释：封装 useSummaryRegeneration 相关的 React 状态同步逻辑。
+
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 

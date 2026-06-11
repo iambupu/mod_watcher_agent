@@ -1,3 +1,5 @@
+# 中文注释：装配 FastAPI 应用、中间件、静态资源和 API 路由。
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager

@@ -1,3 +1,5 @@
+# 中文注释：为 Agent 回复补充可解释性和后续动作。
+
 from app.services.agent.schemas import AgentChatResponse, AgentModMatch
 
 

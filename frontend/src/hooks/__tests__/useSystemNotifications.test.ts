@@ -1,3 +1,5 @@
+// 中文注释：封装 useSystemNotifications.test 相关的 React 状态同步逻辑。
+
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";

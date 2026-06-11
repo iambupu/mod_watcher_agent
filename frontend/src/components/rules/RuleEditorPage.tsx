@@ -1,3 +1,5 @@
+// 中文注释：提供规则编辑器里的 RuleEditorPage 表单组件。
+
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";

@@ -1,3 +1,5 @@
+# 中文注释：运行 Agent 质量门禁的命令行入口。
+
 import argparse
 import contextlib
 import io

@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端LoversLab 浏览器辅助接口的类型和请求函数。
+
 import { get, post } from "./client";
 
 type LoversLabBrowserStatusValue =

@@ -1,3 +1,5 @@
+// 中文注释：提供 NotificationSettings 业务组件。
+
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/Input";

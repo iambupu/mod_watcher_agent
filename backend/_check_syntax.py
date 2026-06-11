@@ -1,3 +1,5 @@
+# 中文注释：快速检查 Python 文件语法的本地维护脚本。
+
 import ast
 from pathlib import Path
 

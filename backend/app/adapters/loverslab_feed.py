@@ -57,14 +57,14 @@ class LoversLabFeedAdapter(BaseAdapter):
     # and normalize, both provided below.
 
     def __init__(self, **kwargs: Any) -> None:
-        """初始化实例并保存运行所需的依赖。"""
+        """延迟创建 HTTP 客户端，便于复用连接并按需读取代理配置。"""
         _ = kwargs
         self._client: httpx.AsyncClient | None = None
 
     # ── HTTP helpers ────────────────────────────────────────────────────
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """读取内部状态或派生结果。"""
+        """返回带 UA、超时和代理设置的共享 httpx 客户端。"""
         if self._client is None:
             proxy = self._detect_proxy()
             kwargs: dict[str, Any] = {
@@ -126,7 +126,7 @@ class LoversLabFeedAdapter(BaseAdapter):
         raise ValueError("Too many redirects while fetching LoversLab RSS")
 
     async def _read_checked_feed_response(self, response: httpx.Response) -> bytes:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """读取 RSS 响应体，同时检查状态码、跳转域名和最大体积。"""
         response.raise_for_status()
 
         final_url = str(response.url)
@@ -151,7 +151,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _is_cloudflare_body(text: str) -> bool:
-        """判断内部条件是否成立。"""
+        """识别 RSS 响应是否其实是 Cloudflare challenge 页面。"""
         return "cloudflare" in text.lower() and "challenge" in text.lower()
 
     # ── BaseAdapter interface ────────────────────────────────────────────
@@ -204,7 +204,7 @@ class LoversLabFeedAdapter(BaseAdapter):
     async def fetch_mod_detail(
         self, external_id: str, game_domain: str | None = None
     ) -> ModItem | None:
-        """请求外部数据并返回标准化结果。"""
+        """RSS 来源不支持单条详情补全，统一返回 None。"""
         _ = (external_id, game_domain)
         return None
 
@@ -215,7 +215,7 @@ class LoversLabFeedAdapter(BaseAdapter):
     # ── Entry normalisation ─────────────────────────────────────────────
 
     def _normalize_entry(self, entry, config: LoversLabRuleConfig) -> dict | None:
-        """规范化内部数据，供后续流程使用。"""
+        """把 feedparser entry 转换为入库原始字段，过滤没有真实文件链接的主题。"""
         link = (entry.get("link", "") or "").strip()
         if not link:
             return None
@@ -293,7 +293,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _extract_file_url_from_description(entry: Any) -> str | None:
-        """从原始内容中提取目标字段。"""
+        """从论坛主题 RSS 描述里的 View File 链接提取真实文件 URL。"""
         html = LoversLabFeedAdapter._extract_summary_html(entry)
         if not html:
             return None
@@ -302,7 +302,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _canonicalize_url(url: str) -> str:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """规范化 URL 后用于哈希兜底，降低协议和尾斜杠造成的重复。"""
         url = url.lower().strip()
         for prefix in ("https://", "http://"):
             if url.startswith(prefix):
@@ -313,7 +313,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _extract_tags(entry: Any) -> list[str]:
-        """从原始内容中提取目标字段。"""
+        """兼容 feedparser 的 dict 标签和字符串标签两种形态。"""
         out: list[str] = []
         for t in entry.get("tags") or []:
             if isinstance(t, dict):
@@ -326,7 +326,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _extract_summary_html(entry: Any) -> str:
-        """从原始内容中提取目标字段。"""
+        """按 RSS 常见字段顺序提取摘要 HTML。"""
         for key in ("summary", "description"):
             val = entry.get(key)
             if val:
@@ -341,7 +341,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _clean_summary(html: str) -> str:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """清理摘要 HTML 中不可见/脚本内容，并压缩为空白文本。"""
         if not html:
             return ""
         tree = HTMLParser(html)
@@ -356,7 +356,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _parse_feed_datetime(entry) -> datetime | None:
-        """解析原始内容并返回结构化结果。"""
+        """优先解析 feedparser 的 struct_time，再回退原始字符串时间。"""
         for key in ("updated_parsed", "published_parsed"):
             parsed = entry.get(key)
             if parsed:
@@ -376,7 +376,7 @@ class LoversLabFeedAdapter(BaseAdapter):
 
     @staticmethod
     def _parse_published_iso(entry) -> str | None:
-        """解析原始内容并返回结构化结果。"""
+        """提取发布时间并统一输出 ISO 字符串。"""
         pp = entry.get("published_parsed")
         if pp:
             try:

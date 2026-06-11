@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_agent_e2e_quality_runner.py 的模块职责，便于后续维护定位。
+
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path

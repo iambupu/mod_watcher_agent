@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端监控规则接口的类型和请求函数。
+
 import { get, post, patch, del } from "./client";
 import type { QueuedJob } from "./jobs";
 import { DEFAULT_RULE_INTERVAL_MINUTES } from "@/constants/rules";

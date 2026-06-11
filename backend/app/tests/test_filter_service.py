@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_filter_service.py 的模块职责，便于后续维护定位。
+
 """Tests for FilterService deterministic-first + LLM-post filtering."""
 
 import json

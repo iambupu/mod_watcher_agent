@@ -1,3 +1,5 @@
+# 中文注释：封装Agent 偏好缓存刷新任务的调度入口和任务处理。
+
 from typing import Any
 
 from sqlmodel import Session

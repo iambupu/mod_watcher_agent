@@ -21,7 +21,7 @@ from app.utils.numeric import bounded_int
 
 class RuleServiceError(Exception):
     def __init__(self, status_code: int, detail: str):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存可直接映射为 HTTP 响应的规则服务错误信息。"""
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
@@ -98,7 +98,7 @@ def _stored_source_config(source: str, raw: str | None) -> dict:
 
 class RuleService:
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于规则 CRUD、导入和导出。"""
         self.session = session
 
     def list_rules(
@@ -108,7 +108,7 @@ class RuleService:
         enabled: bool | None = None,
         q: str | None = None,
     ) -> list[WatchRuleRead]:
-        """查询并返回列表数据。"""
+        """按来源、启用状态和名称关键词查询规则。"""
         stmt = select(WatchRule)
         conditions = []
         if source is not None:
@@ -188,7 +188,7 @@ class RuleService:
         return model_to_read(self.get_rule(rule_id))
 
     def create_rule(self, data: WatchRuleCreate, *, commit: bool = True) -> WatchRuleRead:
-        """创建并持久化对应的数据。"""
+        """创建规则并返回读取模型。"""
         now = datetime.now(UTC).isoformat()
         rule = WatchRule(
             name=data.name,
@@ -210,7 +210,7 @@ class RuleService:
         return model_to_read(rule)
 
     def update_rule(self, rule_id: int, data: WatchRuleUpdate, *, commit: bool = True) -> WatchRuleRead:
-        """更新已有数据并返回结果。"""
+        """更新规则字段，保持来源不可变。"""
         rule = self.get_rule(rule_id)
         if data.source is not None and data.source != rule.source:
             raise RuleServiceError(422, "Source field is immutable")
@@ -242,7 +242,7 @@ class RuleService:
         return model_to_read(rule)
 
     def delete_rule(self, rule_id: int, *, commit: bool = True) -> None:
-        """删除对应数据并返回处理结果。"""
+        """删除规则，并按调用方要求提交或仅 flush。"""
         rule = self.get_rule(rule_id)
         self.session.delete(rule)
         if commit:

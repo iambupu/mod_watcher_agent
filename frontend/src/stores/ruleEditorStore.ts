@@ -1,3 +1,5 @@
+// 中文注释：定义 ruleEditorStore 的 Zustand 状态边界。
+
 import { create } from "zustand";
 import { DEFAULT_RULE_INTERVAL_MINUTES } from "@/constants/rules";
 import type {

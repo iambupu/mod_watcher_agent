@@ -1,3 +1,5 @@
+# 中文注释：实现 Agent 自校正证据收集和硬约束守卫。
+
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator

@@ -1,3 +1,5 @@
+# 中文注释：定义 Agent 图工作流状态和阶段编排。
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,5 @@
+# 中文注释：封装 Agent 检索器的SQLite FTS 检索逻辑。
+
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any

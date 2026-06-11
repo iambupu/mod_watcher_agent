@@ -30,12 +30,12 @@ WEEKLY_LAST_RUN_KEY = "digest_weekly_last_window_end"
 
 
 def local_now() -> datetime:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """返回带本地时区的当前时间，用作摘要窗口边界。"""
     return datetime.now().astimezone()
 
 
 def scheduled_window(period: DigestPeriod, now: datetime | None = None) -> tuple[datetime, datetime] | None:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """按每日 8 点或每周一 0:01 计算已到期的摘要窗口。"""
     current = now or local_now()
     if period == "daily":
         end_local = datetime.combine(current.date(), time(hour=8), tzinfo=current.tzinfo)
@@ -51,12 +51,12 @@ def scheduled_window(period: DigestPeriod, now: datetime | None = None) -> tuple
 
 
 def last_run_key(period: DigestPeriod) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """返回摘要周期对应的设置键。"""
     return DAILY_LAST_RUN_KEY if period == "daily" else WEEKLY_LAST_RUN_KEY
 
 
 def period_label(period: DigestPeriod, ui_language: str) -> str:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """按界面语言返回摘要周期标签。"""
     if ui_language == "en-US":
         return "Daily" if period == "daily" else "Weekly"
     if ui_language == "ja-JP":
@@ -65,7 +65,7 @@ def period_label(period: DigestPeriod, ui_language: str) -> str:
 
 
 def should_run_digest(settings_svc: SettingsService, period: DigestPeriod, window_end: datetime, force: bool) -> bool:
-    """判断流程是否需要继续执行。"""
+    """根据上次发送窗口和 force 参数判断本周期摘要是否应生成。"""
     if force:
         return True
     last_run = parse_utc_datetime(settings_svc.get(last_run_key(period)))
@@ -73,7 +73,7 @@ def should_run_digest(settings_svc: SettingsService, period: DigestPeriod, windo
 
 
 def collect_digest_items(session: Session, window_start: datetime, window_end: datetime) -> tuple[list[Mod], list[dict]]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """收集摘要窗口内的新 Mod 和未读收藏更新。"""
     start_utc = window_start.astimezone(UTC).isoformat()
     end_utc = window_end.astimezone(UTC).isoformat()
     mods = session.exec(
@@ -111,7 +111,7 @@ def collect_digest_items(session: Session, window_start: datetime, window_end: d
 
 
 def build_digest_context(mods: list[Mod], updates: list[dict]) -> str:
-    """构建后续流程需要的数据结构。"""
+    """把窗口内 Mod 和收藏更新压缩为 LLM 摘要上下文。"""
     lines = ["新发现 Mod:"]
     if mods:
         for mod in mods[:40]:
@@ -147,7 +147,7 @@ async def generate_digest_text(
     mods: list[Mod],
     updates: list[dict],
 ) -> tuple[str, str, str]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """调用已配置 LLM provider 生成指定周期的摘要文本。"""
     ui_language = settings_svc.get("ui_language") or "zh-CN"
     output_language = REPORT_LANGUAGE_NAMES.get(ui_language, ui_language)
     prompt_focus = (settings_svc.get("summary_report_prompt") or "").strip()
@@ -183,7 +183,7 @@ async def send_digest_for_window(
     force: bool = False,
     generate_text: DigestTextGenerator = generate_digest_text,
 ) -> dict:
-    """发送通知或外部请求。"""
+    """生成指定窗口摘要，发送外部通知并记录系统通知事件。"""
     settings_svc = SettingsService(session)
     if not should_run_digest(settings_svc, period, window_end, force):
         return {

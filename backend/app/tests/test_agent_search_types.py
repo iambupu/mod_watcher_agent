@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_agent_search_types.py 的模块职责，便于后续维护定位。
+
 from app.models.mod import Mod
 from app.services.agent.search_types import SearchPlan, SearchResult
 

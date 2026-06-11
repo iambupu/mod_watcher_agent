@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class RuleTestServiceError(Exception):
     def __init__(self, status_code: int, detail: str):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存可直接映射为 HTTP 响应的规则测试错误信息。"""
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
@@ -26,11 +26,11 @@ class RuleTestServiceError(Exception):
 
 class RuleTestService:
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于读取设置和执行过滤预览。"""
         self.session = session
 
     async def test_rule(self, body: RuleTestRequest) -> RuleTestResponse:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """抓取规则预览数据并返回确定性、LLM 和去重阶段的筛选结果。"""
         rule_data = body.rule
         adapter_class = BaseAdapter.adapters.get(rule_data.source)
         if adapter_class is None:

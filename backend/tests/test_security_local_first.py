@@ -1,3 +1,5 @@
+# 中文注释：覆盖对应后端行为的回归测试，防止后续改动破坏既有契约。
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

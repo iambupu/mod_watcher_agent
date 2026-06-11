@@ -1,3 +1,5 @@
+// 中文注释：实现 Discover 页面级交互和数据装配。
+
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";

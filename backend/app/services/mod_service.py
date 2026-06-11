@@ -39,16 +39,16 @@ CONTENT_LANGUAGE_KEYWORDS: dict[str, list[str]] = {
 
 class ModService:
     def __init__(self, session: Session):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存数据库会话，用于查询 Mod、摘要和推荐偏好。"""
         self.session = session
 
     def translation_enabled(self) -> bool:
-        """处理当前模块的业务逻辑并返回结果。"""
+        """判断当前是否存在可用 LLM provider 用于生成摘要。"""
         settings = SettingsService(self.session)
         return any(provider_config_has_credentials(provider) for provider in get_provider_chain(settings))
 
     def get_summary_language(self) -> str:
-        """读取并返回对应的数据。"""
+        """读取摘要目标语言，未配置时默认简体中文。"""
         return SettingsService(self.session).get("summary_language") or "zh-CN"
 
     def _build_mod_conditions(
@@ -60,7 +60,7 @@ class ModService:
         *,
         ignored: bool = False,
     ):
-        """构建内部流程需要的数据结构。"""
+        """构建 Mod 列表查询的通用过滤条件。"""
         conditions = [Mod.ignored == ignored]
         if game is not None:
             conditions.append(or_(Mod.game == game, Mod.game_domain == game))
@@ -105,7 +105,7 @@ class ModService:
         *,
         ignored: bool = False,
     ) -> tuple[list[Mod], int, str, dict[int, str], dict[int, str], list[int]]:
-        """查询并返回列表数据。"""
+        """分页查询 Mod，并返回对应语言的简短摘要和介绍映射。"""
         conditions = self._build_mod_conditions(game, source, content_language, adult_content, ignored=ignored)
         has_search = bool(search and search.strip())
 
@@ -178,7 +178,7 @@ class ModService:
         translated_summary: str | None = None,
         ai_introduction: str | None = None,
     ) -> dict:
-        """内部辅助函数，用于拆分上层流程中的局部规则。"""
+        """把 Mod 模型转换为前端展示字典并补入 AI 摘要。"""
         data = mod.model_dump()
         data["translated_summary"] = translated_summary
         data["ai_introduction"] = ai_introduction
@@ -198,7 +198,7 @@ class ModService:
         *,
         ignored: bool = False,
     ) -> tuple[list[dict], int, str, list[int]]:
-        """查询并返回列表数据。"""
+        """返回前端列表可直接消费的 Mod 展示数据。"""
         (
             items,
             total,
@@ -494,7 +494,7 @@ class ModService:
         return self.session.exec(stmt).all()
 
     def list_game_options(self) -> list[tuple[str, str, int]]:
-        """查询并返回列表数据。"""
+        """统计未忽略 Mod 中可供筛选的游戏选项。"""
         stmt = (
             select(
                 Mod.game_domain,
@@ -511,7 +511,7 @@ class ModService:
         self,
         mod_id: int,
     ) -> tuple[Mod | None, str, str | None, str | None]:
-        """读取并返回对应的数据。"""
+        """读取单个 Mod 及其首选语言下的简短摘要和介绍。"""
         mod = self.session.get(Mod, mod_id)
         language = self.get_summary_language()
         if mod is None:
@@ -524,14 +524,14 @@ class ModService:
         return mod, language, translated_summary, ai_introduction
 
     def get_mod_display(self, mod_id: int) -> tuple[dict | None, str]:
-        """读取并返回对应的数据。"""
+        """读取单个 Mod 的前端展示字典。"""
         mod, language, translated_summary, ai_introduction = self.get_mod_with_summaries(mod_id)
         if mod is None:
             return None, language
         return self._to_display_dict(mod, translated_summary, ai_introduction), language
 
     def get_mod_or_none(self, mod_id: int) -> Mod | None:
-        """读取并返回对应的数据。"""
+        """按 ID 读取 Mod，未找到时返回 None。"""
         return self.session.get(Mod, mod_id)
 
     def get_summary_content(
@@ -540,7 +540,7 @@ class ModService:
         language: str,
         summary_type: str,
     ) -> str:
-        """读取并返回对应的数据。"""
+        """读取指定语言和类型的摘要正文。"""
         row = self.session.exec(
             select(ModSummary).where(
                 ModSummary.mod_id == mod_id,
@@ -551,7 +551,7 @@ class ModService:
         return row.content if row else ""
 
     def mark_mod_ignored(self, mod_id: int) -> bool:
-        """标记状态变更并返回结果。"""
+        """把 Mod 标记为忽略并返回是否成功。"""
         mod = self.get_mod_or_none(mod_id)
         if mod is None:
             return False
@@ -561,7 +561,7 @@ class ModService:
         return True
 
     def mark_mod_visible(self, mod_id: int) -> bool:
-        """标记状态变更并返回结果。"""
+        """取消 Mod 忽略状态并返回是否成功。"""
         mod = self.get_mod_or_none(mod_id)
         if mod is None:
             return False
@@ -613,7 +613,7 @@ def _build_mod_search_condition(terms: list[str]):
 
 
 def _search_terms(search: str) -> list[str]:
-    """内部辅助函数，用于拆分上层流程中的局部规则。"""
+    """把用户搜索词扩展为语义检索和 FTS 共用的去重词组。"""
     semantic = semantic_query(search)
     return unique_terms([semantic.clean_query, *semantic.all_terms])[:12]
 

@@ -8,7 +8,7 @@ import httpx
 
 class RuleImportError(Exception):
     def __init__(self, status_code: int, detail: str):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存可直接映射为 HTTP 响应的导入错误信息。"""
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
@@ -20,7 +20,7 @@ def import_rules_payload_from_url(
     client_factory=httpx.Client,
     public_host_checker=None,
 ) -> list[dict]:
-    """处理当前模块的业务逻辑并返回结果。"""
+    """从公开 HTTP(S) 地址导入规则 JSON，并限制重定向和 DNS rebinding。"""
     public_host_checker = public_host_checker or require_public_host
     current_url = url
     parsed = urlparse(current_url)
@@ -66,7 +66,7 @@ def import_rules_payload_from_url(
 
 
 def require_public_host(hostname: str | None) -> set[str]:
-    """校验必需条件，不满足时抛出异常。"""
+    """解析主机名并拒绝内网、保留、多播或未指定地址。"""
     if not hostname:
         raise RuleImportError(422, "URL must include a hostname")
     try:

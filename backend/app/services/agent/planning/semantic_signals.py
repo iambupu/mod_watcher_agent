@@ -1,3 +1,5 @@
+# 中文注释：规范化 Agent 查询计划、槽位约束和语义信号。
+
 from app.services.agent.semantic_search import semantic_domains_for_anchors, semantic_query
 
 

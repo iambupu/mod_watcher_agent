@@ -1,3 +1,4 @@
+# 中文注释：定义Mod API请求和响应的数据契约。
 
 from pydantic import BaseModel
 

@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_routes_rules.py 的模块职责，便于后续维护定位。
+
 """Tests for rules API routes."""
 
 import pytest

@@ -40,7 +40,7 @@ MIN_LENGTH_SENSITIVE_KEYS: dict[str, int] = {
 }
 class SettingsPayloadError(Exception):
     def __init__(self, status_code: int, detail: str):
-        """初始化实例并保存运行所需的依赖。"""
+        """保存可直接映射为 HTTP 响应的设置载荷错误信息。"""
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail

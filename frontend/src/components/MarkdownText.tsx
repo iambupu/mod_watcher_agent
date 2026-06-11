@@ -1,3 +1,5 @@
+// 中文注释：提供 MarkdownText 业务组件。
+
 import React from "react";
 
 export function MarkdownText({ text, className = "" }: { text: string; className?: string }) {

@@ -1,3 +1,5 @@
+// 中文注释：实现 Updates 页面级交互和数据装配。
+
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";

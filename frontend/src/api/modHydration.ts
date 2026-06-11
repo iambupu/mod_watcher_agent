@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端Mod 摘要补全轮询接口的类型和请求函数。
+
 import type { ModItem } from "@/types";
 
 export function fallbackModItem(

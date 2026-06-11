@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_nexusmods_game_import.py 的模块职责，便于后续维护定位。
+
 import json
 
 import pytest

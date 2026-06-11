@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_send_digest_catchup.py 的模块职责，便于后续维护定位。
+
 import json
 from datetime import UTC, datetime
 

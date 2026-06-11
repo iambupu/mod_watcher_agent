@@ -1,3 +1,5 @@
+// 中文注释：封装前端访问后端Agent 聊天和详情追问接口的类型和请求函数。
+
 import { get, post } from "./client";
 
 export interface AgentModMatch {
