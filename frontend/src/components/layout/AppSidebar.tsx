@@ -5,14 +5,14 @@ import {
   Bell,
   BellRing,
   Bot,
+  ChevronLeft,
+  ChevronRight,
   Compass,
   FileText,
   Heart,
   LayoutDashboard,
   Settings,
   ListChecks,
-  PanelLeftClose,
-  PanelLeftOpen,
   Info,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -48,7 +48,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
-  const appVersion = import.meta.env.VITE_APP_VERSION || "0.2.1";
+  const appVersion = import.meta.env.VITE_APP_VERSION || "0.2.2";
 
   const { data: unread } = useQuery({
     queryKey: ["notifications-unread-count"],
@@ -62,11 +62,12 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
       <button
         type="button"
         onClick={toggleSidebar}
-        className="absolute -right-4 top-8 z-20 inline-flex h-9 w-5 items-center justify-center rounded-r-full bg-slate-50 text-slate-500 hover:bg-slate-50 active:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+        onMouseUp={(event) => event.currentTarget.blur()}
+        className="absolute right-2 top-1/2 z-20 inline-flex h-12 w-5 -translate-y-1/2 items-center justify-center rounded-md bg-transparent text-slate-400 opacity-0 transition-[background-color,color,opacity] duration-150 hover:bg-slate-100/70 hover:text-slate-600 hover:opacity-100 active:bg-slate-100 focus:outline-none focus-visible:bg-slate-100 focus-visible:text-blue-600 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-200"
         title={sidebarOpen ? t("settings.hideSidebar") : t("settings.showSidebar")}
         aria-label={sidebarOpen ? t("settings.hideSidebar") : t("settings.showSidebar")}
       >
-        {sidebarOpen ? <PanelLeftClose size={14} strokeWidth={2.5} /> : <PanelLeftOpen size={14} strokeWidth={2.5} />}
+        {sidebarOpen ? <ChevronLeft size={15} strokeWidth={2.35} /> : <ChevronRight size={15} strokeWidth={2.35} />}
       </button>
       <div className={`border-b border-slate-100 py-4 ${sidebarOpen ? "px-3" : "px-2"}`}>
         <div className="relative">
@@ -87,7 +88,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
         </div>
       </div>
 
-      <nav className={`flex-1 space-y-2 py-6 ${sidebarOpen ? "px-3" : "px-2"}`}>
+      <nav className={`flex-1 space-y-2 py-6 ${sidebarOpen ? "pl-3 pr-10" : "px-2"}`}>
         {NAV_ITEMS.map((item) => {
           const isActive = item.key === active;
           return (

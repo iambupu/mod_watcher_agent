@@ -1,6 +1,6 @@
 [project]
 name = "mod-watcher-agent"
-version = "0.2.1"
+version = "0.2.2"
 description = "Mod Watcher Agent Backend"
 requires-python = ">=3.11"
 dependencies = [
