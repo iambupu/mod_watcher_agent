@@ -18,6 +18,7 @@ from app.services.agent.tracing.search_trace import (
 )
 from app.services.agent.workflows.graph_state import AgentGraphState
 from app.services.agent.workflows.search_stages import (
+    bounded_react_retrieval_stage,
     execute_retrieval_stage,
     generate_chat_answer_stage,
     rank_candidates_stage,
@@ -244,6 +245,42 @@ async def _staged_retrieval(state: AgentGraphState) -> dict:
     }
 
 
+async def _bounded_react_retrieval(state: AgentGraphState) -> dict:
+    started_at = start_trace()
+    evidence_id = _state_evidence_id(state)
+    logger.info("agent.stage step=bounded_react_retrieval status=started evidence_id=%s", evidence_id)
+    # 受控 ReAct 只在检索质量不足时补充召回，并且不能修改硬约束。
+    update = await bounded_react_retrieval_stage(
+        _state_session(state),
+        query=_state_query(state),
+        query_plan=state.get("query_plan") or {},
+        tool_plan=state.get("tool_plan") or {},
+        staged_results=state.get("staged_results") or [],
+        online_results=state.get("online_results") or [],
+        retrieval_evidence=state.get("retrieval_evidence") or [],
+        evidence_id=evidence_id,
+    )
+    event = finish_trace(
+        "bounded_react_retrieval",
+        started_at,
+        "Agent bounded ReAct retrieval completed.",
+        evidence_id=evidence_id,
+    )
+    react_summary = update.get("react_summary") if isinstance(update.get("react_summary"), dict) else {}
+    logger.info(
+        "agent.stage step=bounded_react_retrieval status=succeeded duration_ms=%s triggered=%s rounds=%s stop_reason=%s evidence_id=%s",
+        _event_duration_ms(event),
+        bool(react_summary.get("triggered")),
+        react_summary.get("round_count", 0),
+        react_summary.get("stop_reason", ""),
+        evidence_id,
+    )
+    return {
+        **update,
+        "trace": append_trace(state.get("trace"), event),
+    }
+
+
 async def _rank_results(state: AgentGraphState) -> dict:
     started_at = start_trace()
     evidence_id = _state_evidence_id(state)
@@ -344,7 +381,7 @@ def _reflect(state: AgentGraphState) -> dict:
         *state.get("reflection_notes", []),
         {
             "stage": "graph",
-            "public_summary": "已完成上下文、诊断、工具计划、检索和排序兼容节点。",
+            "public_summary": "已完成上下文、诊断、工具计划、检索、受控 ReAct 扩展和排序兼容节点。",
         },
     ]
     event = finish_trace("reflect", started_at, "Graph compatibility reflection recorded.", evidence_id=evidence_id)
@@ -465,6 +502,7 @@ def _build_agent_graph_def() -> StateGraph:
     graph.add_node("diagnose_query", _diagnose_query)
     graph.add_node("plan_tools", _plan_tools)
     graph.add_node("staged_retrieval", _staged_retrieval)
+    graph.add_node("bounded_react_retrieval", _bounded_react_retrieval)
     graph.add_node("rank_results", _rank_results)
     graph.add_node("self_correction_review", _self_correction_review)
     graph.add_node("generate_answer", _generate_answer)
@@ -483,7 +521,8 @@ def _build_agent_graph_def() -> StateGraph:
     )
     graph.add_edge("diagnose_query", "plan_tools")
     graph.add_edge("plan_tools", "staged_retrieval")
-    graph.add_edge("staged_retrieval", "rank_results")
+    graph.add_edge("staged_retrieval", "bounded_react_retrieval")
+    graph.add_edge("bounded_react_retrieval", "rank_results")
     graph.add_edge("rank_results", "self_correction_review")
     graph.add_edge("self_correction_review", "generate_answer")
     graph.add_edge("generate_answer", "reflect")

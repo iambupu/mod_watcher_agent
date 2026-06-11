@@ -1,3 +1,5 @@
+# 中文注释：说明 backend/app/tests/test_agent_workflow_architecture.py 的模块职责，便于后续维护定位。
+
 from pathlib import Path
 
 
@@ -83,6 +85,7 @@ def test_mod_search_graph_stays_a_pure_stage_orchestrator():
     assert "StateGraph" in source
     assert "diagnose_query_stage" in source
     assert "execute_retrieval_stage" in source
+    assert "bounded_react_retrieval_stage" in source
     assert "rank_candidates_stage" in source
     assert "self_correction_review_stage" in source
     assert "generate_chat_answer_stage" in source
