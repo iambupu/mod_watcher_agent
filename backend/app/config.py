@@ -69,7 +69,7 @@ class Settings:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_DIR: str = os.getenv("LOG_DIR", "../log")
     GAME_ALIAS_FILE: str = os.getenv("GAME_ALIAS_FILE", "game_aliases.json")
-    # Local-first security settings (v0.2.1)
+    # Local-first security settings (v0.2.2)
     _LEGACY_LOCAL_ONLY_API: bool = _env_bool("LOCAL_ONLY_API", True)
     MW_ACCESS_PROFILE: str = (
         os.getenv("MW_ACCESS_PROFILE")
