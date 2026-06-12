@@ -20,6 +20,7 @@ interface ModCardProps {
   isFavorited?: boolean;
   onToggleFavorite?: () => void;
   showBottomFavoriteAction?: boolean;
+  measureSummaryOverflow?: boolean;
   onIgnore?: () => void;
   onRegenerateSummary?: () => void;
   regeneratingSummary?: boolean;
@@ -28,7 +29,7 @@ interface ModCardProps {
   footerContent?: React.ReactNode;
 }
 
-export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onToggleFavorite, showBottomFavoriteAction = true, onIgnore, onRegenerateSummary, regeneratingSummary = false, onGenerateIntroduction, generatingIntroduction = false, footerContent }) => {
+export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onToggleFavorite, showBottomFavoriteAction = true, measureSummaryOverflow = true, onIgnore, onRegenerateSummary, regeneratingSummary = false, onGenerateIntroduction, generatingIntroduction = false, footerContent }) => {
   const { t } = useTranslation();
   const summaryMode = useUIStore((s) => s.summaryMode);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
@@ -53,7 +54,12 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
     translated: mod.translated_summary,
     mode: summaryMode,
   });
+  const summaryIsTruncated = Boolean(fullSummary) && summary !== fullSummary;
   useEffect(() => {
+    if (!measureSummaryOverflow) {
+      setSummaryOverflow(false);
+      return;
+    }
     const el = summaryRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const updateOverflow = () => {
@@ -63,9 +69,9 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
     const observer = new ResizeObserver(updateOverflow);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [summary, fullSummary, summaryMode, summaryExpanded]);
+  }, [measureSummaryOverflow, summary, fullSummary, summaryMode, summaryExpanded]);
 
-  const canToggleSummary = summaryExpanded || summaryOverflow;
+  const canToggleSummary = summaryExpanded || summaryOverflow || summaryIsTruncated;
 
   const handleOpenIntroduction = async () => {
     setIntroductionOpen(true);
@@ -90,7 +96,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
       className="flex overflow-hidden flex-col transition hover:-translate-y-0.5 hover:shadow-md"
     >
       <div
-        className={`relative flex-shrink-0 bg-gradient-to-br from-slate-100 to-slate-200 ${
+        className={`relative flex-shrink-0 overflow-hidden bg-gradient-to-br from-slate-100 to-slate-200 ${
           mod.thumbnail_url ? "aspect-[300/169]" : "aspect-[300/85]"
         }`}
       >
@@ -98,8 +104,9 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
           <img
             src={mod.thumbnail_url}
             alt={displayTitle}
-            className="w-full h-full object-cover"
+            className="absolute inset-0 h-full w-full object-cover"
             loading="lazy"
+            decoding="async"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-400">

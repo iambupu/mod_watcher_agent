@@ -53,7 +53,7 @@ import { isAdultContent } from "@/utils/modAdult";
 import { parseIntegerInput, parseWholeIntegerInput } from "@/utils/numberInput";
 import type { ModItem, ModSource, AdultPolicy, SummaryMode } from "@/types";
 
-const PAGE_SIZE_OPTIONS = [20, 50, 80, 180] as const;
+const PAGE_SIZE_OPTIONS = [20, 50, 80] as const;
 type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 const DEFAULT_PAGE_SIZE: PageSize = 20;
 const DISCOVER_PAGE_SIZE_STORAGE_KEY = "modWatcher.discover.pageSize";
@@ -765,6 +765,7 @@ const Discover: React.FC = () => {
                         isFavorited={favoriteByModId.has(mod.id)}
                         onToggleFavorite={() => handleToggleFavorite(mod.id)}
                         showBottomFavoriteAction={false}
+                        measureSummaryOverflow={false}
                         onIgnore={() => handleIgnore(mod.id)}
                         onRegenerateSummary={() => handleRegenerateSummary(mod.id)}
                         regeneratingSummary={regeneratingSummaryIds.has(mod.id)}
