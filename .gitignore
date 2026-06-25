@@ -67,6 +67,9 @@ backend/data/snapshots/
 
 # Python test / coverage
 .pytest_cache/
+.pytest_tmp/
+pytest-cache-files-*/
+tmp_pytest_run/
 coverage/
 .mypy_cache/
 .tmp/
@@ -120,6 +123,7 @@ frontend/src/test-setup.ts
 # Local scratch docs
 .agents/
 docs/superpowers/
+mwadoc/
 AGENETS.md
 PLAN_repair.md
 REASONIX.md
