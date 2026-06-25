@@ -12,6 +12,7 @@ from app.db import engine
 from app.jobs.check_favorite_updates import check_favorite_updates
 from app.jobs.generate_summaries import SUMMARY_BATCH_SIZE, generate_summaries
 from app.jobs.generate_summary_report import generate_summary_report
+from app.jobs.maintain_fts import run_sqlite_fts_full_rebuild, run_sqlite_fts_incremental_repair
 from app.jobs.refresh_agent_preferences import refresh_agent_preferences
 from app.jobs.send_digest import run_digest_catchup, send_daily_digest, send_weekly_digest
 from app.jobs.tracked_jobs import run_tracked_job
@@ -229,6 +230,22 @@ def register_jobs(session: Session | None = None) -> None:
         IntervalTrigger(minutes=15),
         id="agent_profile_refresh",
         name="Agent Profile Refresh",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        run_sqlite_fts_incremental_repair,
+        IntervalTrigger(hours=6),
+        id="sqlite_fts_incremental_repair",
+        name="SQLite FTS Incremental Repair",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        run_sqlite_fts_full_rebuild,
+        CronTrigger(day_of_week="sun", hour=3, minute=30),
+        id="sqlite_fts_full_rebuild",
+        name="SQLite FTS Full Rebuild",
         replace_existing=True,
         max_instances=1,
     )

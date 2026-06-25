@@ -11,9 +11,10 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.config import settings
 from app.rule_constants import DEFAULT_RULE_INTERVAL_MINUTES
 from app.services.agent.retrievers.sqlite_fts_retriever import (
+    DEFAULT_FTS_REPAIR_LIMIT,
     ensure_mods_fts,
     mods_fts_needs_rebuild,
-    rebuild_mods_fts,
+    repair_stale_mods_fts,
 )
 from app.services.source_identity import canonical_external_id
 from app.utils.boolean import parse_bool
@@ -98,9 +99,9 @@ def rebuild_sqlite_fts_if_needed() -> None:
         return
     with Session(engine) as session:
         if ensure_mods_fts(session) and mods_fts_needs_rebuild(session):
-            logger.info("Rebuilding SQLite FTS index in deferred startup maintenance")
-            rebuild_mods_fts(session)
-            logger.info("SQLite FTS index rebuild completed")
+            logger.info("Repairing stale SQLite FTS rows in deferred startup maintenance")
+            repaired = repair_stale_mods_fts(session, limit=DEFAULT_FTS_REPAIR_LIMIT)
+            logger.info("SQLite FTS startup repair completed: %s rows", repaired)
 
 
 def _ensure_performance_indexes() -> None:
