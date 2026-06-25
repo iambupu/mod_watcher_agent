@@ -5,8 +5,13 @@ if /i "%1"=="/status" goto :status
 if /i "%1"=="/bg" goto :bg
 
 :: Developer mode (foreground): show startup/install logs and errors.
+set "MW_WAIT_FOR_KEY_IN_BAT=1"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1" -DevMode -Tray
+set "MW_WAIT_FOR_KEY_IN_BAT="
 if errorlevel 1 goto :failed
+echo.
+echo Press any key to close this window and keep running in tray mode...
+pause >nul
 goto :eof
 
 :bg

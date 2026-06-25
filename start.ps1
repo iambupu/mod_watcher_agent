@@ -643,6 +643,9 @@ if ($Tray) {
         }
 
         Write-Host "Startup checks completed and services are healthy." -ForegroundColor Green
+        if ($env:MW_WAIT_FOR_KEY_IN_BAT -eq "1") {
+            exit 0
+        }
         Write-Host "Press any key to close this window and keep running in tray mode..." -ForegroundColor Yellow
         if (-not [System.Console]::IsInputRedirected) {
             [void][System.Console]::ReadKey($true)
