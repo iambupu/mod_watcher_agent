@@ -77,7 +77,7 @@ export const LlmFilterSection: React.FC<LlmFilterSectionProps> = ({
           aria-checked={enabled}
           onClick={handleToggleEnabled}
           className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
-            enabled ? "bg-blue-600" : "bg-gray-300"
+            enabled ? "bg-sky-600" : "bg-gray-300"
           }`}
         >
           <span
@@ -97,7 +97,7 @@ export const LlmFilterSection: React.FC<LlmFilterSectionProps> = ({
           disabled={!enabled}
           placeholder={t("rules.filters.llmPromptPlaceholder")}
           rows={3}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:bg-gray-100"
         />
       </div>
       <div className="grid gap-3 md:grid-cols-[1fr_220px]">
@@ -109,7 +109,7 @@ export const LlmFilterSection: React.FC<LlmFilterSectionProps> = ({
             value={mode}
             onChange={handleModeChange}
             disabled={!enabled}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:bg-gray-100"
           >
             <option value="assist_only">
               {t("rules.filters.llmMode.assistOnly")}

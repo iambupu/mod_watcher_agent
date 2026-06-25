@@ -56,7 +56,7 @@ export const NotificationSection: React.FC = () => {
               onChange={(e) =>
                 updateNotification({ mode: e.target.value as NotifyMode })
               }
-              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
             >
               {NOTIFY_MODES.map((m) => (
                 <option key={m} value={m}>
@@ -80,7 +80,7 @@ export const NotificationSection: React.FC = () => {
                     type="checkbox"
                     checked={(notification.channels || []).includes(ch)}
                     onChange={() => toggleChannel(ch)}
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="h-4 w-4 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
                   />
                   {t(channelLabelKey[ch])}
                 </label>

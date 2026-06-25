@@ -56,7 +56,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
             type="checkbox"
             checked={notificationsEnabled}
             onChange={(e) => onNotificationsEnabledChange(e.target.checked)}
-            className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            className="h-5 w-5 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
           />
           <div>
             <p className="text-sm font-medium text-gray-700">{t("settings.notificationsToggleLabel")}</p>
@@ -72,7 +72,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
             checked={systemNotificationsEnabled}
             onChange={(e) => onSystemNotificationsEnabledChange(e.target.checked)}
             disabled={!notificationsEnabled}
-            className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+            className="h-5 w-5 rounded border-gray-300 text-sky-600 focus:ring-sky-500 disabled:opacity-50"
           />
           <div>
             <p className="text-sm font-medium text-gray-700">{t("settings.systemNotifications")}</p>

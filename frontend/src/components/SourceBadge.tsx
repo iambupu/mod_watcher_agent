@@ -9,14 +9,14 @@ interface SourceBadgeProps {
 }
 
 const sourceConfig: Record<ModSource, { label: string; classes: string }> = {
-  nexusmods: { label: "Nexus Mods", classes: "bg-blue-100 text-blue-800 border-blue-300" },
-  loverslab: { label: "LoversLab", classes: "bg-green-100 text-green-800 border-green-300" },
+  nexusmods: { label: "Nexus Mods", classes: "bg-cyan-50 text-cyan-900 border-cyan-300" },
+  loverslab: { label: "LoversLab", classes: "bg-sky-50 text-sky-900 border-sky-300" },
 };
 
 export const SourceBadge: React.FC<SourceBadgeProps> = ({ source, className = "" }) => {
   const config = sourceConfig[source];
   return (
-    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${config.classes} ${className}`}>
+    <span className={`inline-flex items-center whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-medium ${config.classes} ${className}`}>
       {config.label}
     </span>
   );

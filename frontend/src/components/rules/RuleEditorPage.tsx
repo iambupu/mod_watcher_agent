@@ -194,7 +194,7 @@ export const RuleEditorPage: React.FC = () => {
                   <h1 className="text-2xl font-bold tracking-normal text-slate-950">
                     {isEditMode ? t("rules.editRule") : t("rules.newRule")}
                   </h1>
-                  <span className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">
+                  <span className="rounded-md bg-sky-50 px-2.5 py-1 text-xs font-bold text-sky-700">
                     {activeSource === "nexusmods" ? t("rules.sourceTabs.nexusmods") : t("rules.sourceTabs.loverslab")}
                   </span>
                 </div>
@@ -279,7 +279,7 @@ export const RuleEditorPage: React.FC = () => {
               <Panel as="section" padding="md" className="space-y-3">
                 <div className="flex items-center justify-end">
                   <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${
-                    testStatusOk ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
+                    testStatusOk ? "bg-sky-50 text-sky-700" : "bg-slate-100 text-slate-500"
                   }`}>
                     {testStatusOk ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
                     {testStatusOk ? t("rules.test.statusHealthy") : t("rules.test.statusPending")}
@@ -288,7 +288,7 @@ export const RuleEditorPage: React.FC = () => {
                 <RuleTestResultPanel result={testResult} />
               </Panel>
 
-              <section className="rounded-lg border border-blue-100 bg-blue-50/60 p-4 text-sm text-slate-600">
+              <section className="rounded-lg border border-sky-100 bg-sky-50/60 p-4 text-sm text-slate-600">
                 <p className="font-bold text-slate-800">{t("rules.editorTipTitle")}</p>
                 <p className="mt-2 leading-6">{t("rules.editorTipBody")}</p>
               </section>
@@ -317,7 +317,7 @@ function RuleStepper() {
         {steps.map((step, index) => (
           <div key={step} className="flex items-center gap-2">
             <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-              index === 0 ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500"
+              index === 0 ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
             }`}>
               {index + 1}
             </span>
@@ -345,7 +345,7 @@ function RuleSection({
   return (
     <Panel as="section" padding="none" className="p-5">
       <div className="mb-4 flex items-start gap-3">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-50 text-sm font-bold text-blue-700">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sm font-bold text-sky-700">
           {index}
         </span>
         <div>

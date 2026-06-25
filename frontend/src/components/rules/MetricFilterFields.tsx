@@ -54,7 +54,7 @@ export const MetricFilterFields: React.FC<MetricFilterFieldsProps> = ({
             min={0}
             value={minDownloads ?? ""}
             onChange={handleNumberChange("minDownloads")}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -69,7 +69,7 @@ export const MetricFilterFields: React.FC<MetricFilterFieldsProps> = ({
             min={0}
             value={minEndorsements ?? ""}
             onChange={handleNumberChange("minEndorsements")}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -84,7 +84,7 @@ export const MetricFilterFields: React.FC<MetricFilterFieldsProps> = ({
             min={0}
             value={minLikes ?? ""}
             onChange={handleNumberChange("minLikes")}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -99,7 +99,7 @@ export const MetricFilterFields: React.FC<MetricFilterFieldsProps> = ({
             min={1}
             value={updatedWithinDays ?? ""}
             onChange={handleNumberChange("updatedWithinDays", 1)}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           />
         </div>
       </div>

@@ -92,20 +92,20 @@ const STAT_CARDS: StatCardConfig[] = [
 
 const toneClasses = {
   blue: {
-    icon: "bg-blue-50 text-blue-600",
-    delta: "text-blue-600",
+    icon: "bg-cyan-50 text-cyan-700",
+    delta: "text-cyan-700",
   },
   green: {
-    icon: "bg-emerald-50 text-emerald-600",
-    delta: "text-emerald-600",
+    icon: "bg-sky-50 text-sky-600",
+    delta: "text-sky-600",
   },
   red: {
     icon: "bg-rose-50 text-rose-600",
     delta: "text-rose-600",
   },
   purple: {
-    icon: "bg-purple-50 text-purple-600",
-    delta: "text-purple-600",
+    icon: "bg-slate-100 text-slate-700",
+    delta: "text-slate-700",
   },
   orange: {
     icon: "bg-orange-50 text-orange-600",
@@ -135,8 +135,8 @@ function formatDateTime(value: Date): string {
 }
 
 function jobStatusClass(status: JobRun["status"]): string {
-  if (status === "succeeded") return "bg-emerald-50 text-emerald-700";
-  if (status === "running") return "bg-blue-50 text-blue-700";
+  if (status === "succeeded") return "bg-sky-50 text-sky-700";
+  if (status === "running") return "bg-cyan-50 text-cyan-700";
   if (status === "queued") return "bg-slate-100 text-slate-600";
   return "bg-rose-50 text-rose-700";
 }
@@ -196,7 +196,7 @@ const RecommendedModCard: React.FC<{
     <Panel
       as="div"
       padding="none"
-      className="group w-[220px] shrink-0 overflow-hidden transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+      className="group w-[220px] shrink-0 overflow-hidden transition hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
     >
       <div className="aspect-[4/3] overflow-hidden bg-slate-100">
         <div className="relative h-full w-full">
@@ -225,7 +225,7 @@ const RecommendedModCard: React.FC<{
       </div>
       <div className="space-y-2 p-3">
         <a href={mod.url} target="_blank" rel="noopener noreferrer" className="block">
-          <h4 className="line-clamp-2 min-h-10 whitespace-pre-line text-sm font-bold leading-5 text-slate-900 group-hover:text-blue-700">
+          <h4 className="line-clamp-2 min-h-10 whitespace-pre-line text-sm font-bold leading-5 text-slate-900 group-hover:text-sky-700">
             {displayTitle}
           </h4>
         </a>
@@ -457,7 +457,7 @@ const Dashboard: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-3xl font-bold tracking-normal text-slate-950">{t("dashboard.workbenchTitle")}</h1>
-                  <Sparkles size={24} className="text-blue-600" />
+                  <Sparkles size={24} className="text-sky-600" />
                 </div>
                 <p className="mt-2 text-sm font-semibold text-slate-500">{t("dashboard.workbenchDesc")}</p>
               </div>
@@ -510,7 +510,7 @@ const Dashboard: React.FC = () => {
               <Panel as="section" padding="lg" className="min-w-0 max-w-full overflow-hidden">
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <Sparkles size={22} className="text-blue-600" />
+                    <Sparkles size={22} className="text-sky-600" />
                     <h2 className="text-xl font-bold text-slate-950">{t("dashboard.intelSummary")}</h2>
                     <span className="text-xs font-semibold text-slate-400">{t("dashboard.lastAnalysis")}</span>
                   </div>
@@ -526,11 +526,11 @@ const Dashboard: React.FC = () => {
                   </Button>
                 </div>
 
-                <div className="min-w-0 rounded-lg border border-indigo-100 bg-indigo-50/60 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-indigo-700">
+                <div className="min-w-0 rounded-lg border border-sky-100 bg-sky-50/60 p-4">
+                  <div className="mb-2 flex items-center gap-2 text-sky-800">
                     <MessageCircle size={20} />
                     <h3 className="font-bold">{t("dashboard.contentSummary")}</h3>
-                    <span className="rounded-md border border-indigo-100 bg-white/80 px-2 py-0.5 text-xs font-semibold text-indigo-600">
+                    <span className="rounded-md border border-sky-100 bg-white/80 px-2 py-0.5 text-xs font-semibold text-sky-700">
                       {contentSummarySource}
                     </span>
                   </div>
@@ -544,9 +544,9 @@ const Dashboard: React.FC = () => {
                 </div>
 
                 {(manualSummaryStatus || manualSummaryReport) && (
-                  <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-3">
+                  <div className="mt-4 rounded-lg border border-sky-100 bg-sky-50 px-4 py-3">
                     {manualSummaryStatus && (
-                      <p className="text-xs font-semibold text-indigo-800">{manualSummaryStatus}</p>
+                      <p className="text-xs font-semibold text-sky-800">{manualSummaryStatus}</p>
                     )}
                   </div>
                 )}
@@ -558,7 +558,7 @@ const Dashboard: React.FC = () => {
               <Panel as="section" padding="lg" className="min-w-0 max-w-full overflow-hidden">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-xl font-bold text-slate-950">{t("dashboard.systemStatus")}</h2>
-                  <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                  <span className="rounded-md bg-sky-50 px-2.5 py-1 text-xs font-bold text-sky-700">
                     {systemItems.every((item) => item.ok) ? t("dashboard.allNormal") : t("dashboard.needsAttention")}
                   </span>
                 </div>
@@ -572,7 +572,7 @@ const Dashboard: React.FC = () => {
                         <p className="truncate text-sm font-bold text-slate-800">{item.label}</p>
                         <p className="truncate text-xs font-semibold text-slate-400">{item.detail}</p>
                       </div>
-                      <span className={`h-2.5 w-2.5 rounded-full ${item.ok ? "bg-emerald-500" : "bg-rose-500"}`} />
+                      <span className={`h-2.5 w-2.5 rounded-full ${item.ok ? "bg-sky-500" : "bg-rose-500"}`} />
                     </div>
                   ))}
                 </div>
@@ -587,7 +587,7 @@ const Dashboard: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setShowSchedulerDialog(true)}
-                          className="rounded-md bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-600 hover:bg-blue-100"
+                          className="rounded-md bg-sky-50 px-2 py-0.5 text-xs font-bold text-sky-700 hover:bg-sky-100"
                         >
                           {t("dashboard.schedulerMore")}
                         </button>
@@ -602,7 +602,7 @@ const Dashboard: React.FC = () => {
                     <div className="space-y-2">
                       {visibleSchedulerJobs.map((job) => (
                         <div key={job.id} className="flex items-center gap-3 rounded-md bg-white px-3 py-2">
-                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-cyan-50 text-cyan-700">
                             <Clock size={15} />
                           </span>
                           <div className="min-w-0 flex-1">
@@ -630,7 +630,7 @@ const Dashboard: React.FC = () => {
               <Panel as="section" padding="lg">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-xl font-bold text-slate-950">{t("dashboard.recentTasks")}</h2>
-                  <Link to="/logs?tab=finished" className="text-sm font-bold text-blue-600 hover:text-blue-700">
+                  <Link to="/logs?tab=finished" className="text-sm font-bold text-sky-700 hover:text-sky-800">
                     {t("dashboard.viewAll")} →
                   </Link>
                 </div>
@@ -642,7 +642,7 @@ const Dashboard: React.FC = () => {
                   <div className="divide-y divide-slate-100">
                     {visibleRecentJobs.map((job) => (
                       <div key={job.id} className="flex items-center gap-3 py-3">
-                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-50 text-cyan-700">
                           <Database size={16} />
                         </span>
                         <div className="min-w-0 flex-1">
@@ -688,7 +688,7 @@ const Dashboard: React.FC = () => {
                     >
                       <ChevronRight size={16} />
                     </button>
-                    <Link to="/discover" className="text-sm font-bold text-blue-600 hover:text-blue-700">
+                    <Link to="/discover" className="text-sm font-bold text-sky-700 hover:text-sky-800">
                       {t("dashboard.viewAll")} →
                     </Link>
                   </div>
@@ -729,21 +729,21 @@ const Dashboard: React.FC = () => {
               </Panel>
             </div>
 
-            <section className="flex flex-col gap-4 rounded-lg border border-blue-200 bg-blue-50/60 p-5 shadow-sm md:flex-row md:items-center md:justify-between">
+            <section className="flex flex-col gap-4 rounded-lg border border-sky-200 bg-sky-50/60 p-5 shadow-sm md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-4">
-                <span className="flex h-14 w-14 items-center justify-center rounded-xl border border-blue-100 bg-white text-blue-600 shadow-sm">
+                <span className="flex h-14 w-14 items-center justify-center rounded-xl border border-sky-100 bg-white text-sky-700 shadow-sm">
                   <Bot size={28} />
                 </span>
                 <div>
-                  <h2 className="text-xl font-bold text-blue-700">{t("dashboard.agentTitle")}</h2>
+                  <h2 className="text-xl font-bold text-sky-800">{t("dashboard.agentTitle")}</h2>
                   <p className="mt-1 text-sm font-semibold text-slate-500">{t("dashboard.agentDesc")}</p>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-3">
-                <span className="rounded-lg border border-blue-100 bg-white px-4 py-2 text-sm font-semibold text-slate-600">
+                <span className="rounded-lg border border-sky-100 bg-white px-4 py-2 text-sm font-semibold text-slate-600">
                   {t("dashboard.agentPrompt1")}
                 </span>
-                <span className="rounded-lg border border-blue-100 bg-white px-4 py-2 text-sm font-semibold text-slate-600">
+                <span className="rounded-lg border border-sky-100 bg-white px-4 py-2 text-sm font-semibold text-slate-600">
                   {t("dashboard.agentPrompt2")}
                 </span>
                 <Link to="/agent">
@@ -780,7 +780,7 @@ const Dashboard: React.FC = () => {
                 <div className="space-y-2">
                   {sortedSchedulerJobs.map((job) => (
                     <div key={job.id} className="flex items-center gap-3 rounded-lg border border-slate-100 px-3 py-3">
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-cyan-50 text-cyan-700">
                         <Clock size={16} />
                       </span>
                       <div className="min-w-0 flex-1">

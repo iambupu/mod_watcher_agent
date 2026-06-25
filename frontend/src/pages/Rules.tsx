@@ -212,13 +212,13 @@ const Rules: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50">
       <div className="flex h-screen">
         <AppSidebar active="rules" />
 
         <main className="flex-1 overflow-y-auto p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-gray-900">
+            <h2 className="text-2xl font-bold text-slate-950">
               {t("rules.title")}
             </h2>
             <div className="flex items-center gap-2">
@@ -293,8 +293,8 @@ const Rules: React.FC = () => {
                           onClick={() => {
                             handleToggle(rule);
                           }}
-                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-                            rule.enabled ? "bg-blue-600" : "bg-gray-300"
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 ${
+                            rule.enabled ? "bg-sky-600" : "bg-slate-300"
                           }`}
                           aria-label={
                             rule.enabled ? t("rules.disableRule") : t("rules.enableRule")
@@ -307,7 +307,7 @@ const Rules: React.FC = () => {
                           />
                         </button>
                         <div>
-                          <h3 className="font-medium text-gray-900">
+                          <h3 className="font-medium text-slate-900">
                             {rule.name}
                           </h3>
                           <div className="flex gap-1 flex-wrap mt-1">
@@ -349,7 +349,7 @@ const Rules: React.FC = () => {
                       </div>
                     </div>
                     {runStatus[rule.id] && (
-                      <p className="text-xs text-blue-600 mt-2">
+                      <p className="mt-2 text-xs text-sky-700">
                         {runStatus[rule.id]}
                       </p>
                     )}

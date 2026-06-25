@@ -194,7 +194,7 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
           href={href}
           target="_blank"
           rel="noreferrer"
-          className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
+          className="text-sky-600 underline underline-offset-2 hover:text-sky-700"
         >
           {label}
         </a>,

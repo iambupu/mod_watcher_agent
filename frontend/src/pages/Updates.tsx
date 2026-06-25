@@ -22,8 +22,8 @@ import { useUIStore } from "@/stores/uiStore";
 import type { UpdateEvent } from "@/types";
 
 const SkeletonCard: React.FC = () => (
-  <div className="mb-6 relative pl-8 border-l-2 border-gray-200">
-    <div className="absolute -left-[9px] top-1 w-4 h-4 rounded-full border-2 bg-gray-200 border-gray-300" />
+  <div className="relative mb-6 border-l-2 border-slate-200 pl-8">
+    <div className="absolute -left-[9px] top-1 h-4 w-4 rounded-full border-2 border-slate-300 bg-slate-200" />
     <Card className="animate-pulse">
       <CardHeader className="pb-2">
         <div className="flex justify-between items-start">
@@ -56,21 +56,21 @@ const TimelineCard: React.FC<{
   const summaryMode = useUIStore((s) => s.summaryMode);
   return (
   <div className="mb-6 relative">
-    <div className="relative pl-8 border-l-2 border-gray-200">
+    <div className="relative border-l-2 border-slate-200 pl-8">
       <div
         className={`absolute -left-[9px] top-1 w-4 h-4 rounded-full border-2 ${
-          event.seen ? "bg-gray-200 border-gray-300" : "bg-blue-500 border-blue-400"
+          event.seen ? "bg-slate-200 border-slate-300" : "bg-sky-500 border-sky-400"
         }`}
       />
       <Card className={event.seen ? "opacity-70" : ""}>
         <CardHeader className="pb-2">
           <div className="flex justify-between items-start">
-            <h3 className="text-lg font-semibold text-gray-900">
+            <h3 className="text-lg font-semibold text-slate-900">
               <a
                 href={event.mod.url || "#"}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:underline hover:text-blue-600 transition-colors"
+                className="transition-colors hover:text-sky-700 hover:underline"
               >
                 {event.mod.title || `Mod #${event.modId}`}
               </a>
@@ -96,7 +96,7 @@ const TimelineCard: React.FC<{
                 {event.oldVersion || "?"}
               </span>
               <ArrowRight className="h-4 w-4 text-gray-400" />
-              <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-sm font-medium">
+              <span className="rounded bg-sky-50 px-2 py-1 text-sm font-medium text-sky-800">
                 {event.newVersion || "?"}
               </span>
             </div>
@@ -126,7 +126,7 @@ const TimelineCard: React.FC<{
                 href={event.mod.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center justify-center rounded-md font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 px-2 py-1 text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                className="inline-flex items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
               >
                 <ExternalLink size={14} className="mr-1" />
                 {t("common.viewMod")}
@@ -179,14 +179,14 @@ const Updates: React.FC = () => {
   const unseenCount = data?.items.filter((e) => !e.seen).length ?? 0;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50">
       <div className="flex h-screen">
         <AppSidebar active="updates" />
 
-        <main className="flex-1 overflow-y-auto p-6">
+          <main className="flex-1 overflow-y-auto p-6">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
-              <h2 className="text-2xl font-bold text-gray-900">{t("updates.title")}</h2>
+              <h2 className="text-2xl font-bold text-slate-950">{t("updates.title")}</h2>
               {unseenCount > 0 && (
                 <Badge variant="danger">{t("common.new_count", { count: unseenCount })}</Badge>
               )}

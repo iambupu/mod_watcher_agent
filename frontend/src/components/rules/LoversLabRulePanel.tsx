@@ -165,7 +165,7 @@ export const LoversLabRulePanel: React.FC = () => {
         <p className="text-xs text-gray-500">{t("rules.loverslab.ruleGuideLine4")}</p>
         <input
           id="loverslab-game-label"
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           placeholder={t("rules.loverslab.gameLabelPlaceholder")}
           required
           value={loverslabDraft.gameLabel || ""}
@@ -245,7 +245,7 @@ export const LoversLabRulePanel: React.FC = () => {
           {t("rules.loverslab.accessMode")}
         </label>
         <select
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           value={accessMode}
           onChange={(e) =>
             updateLoversLabConfig({
@@ -272,7 +272,7 @@ export const LoversLabRulePanel: React.FC = () => {
           <p className="text-xs text-gray-500">{t("rules.loverslab.feedUrlsHelp")}</p>
           <p className="text-xs text-gray-500">{t("rules.loverslab.ruleGuideLine5")}</p>
           <textarea
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
             rows={3}
             placeholder={t("rules.loverslab.feedUrlsPlaceholder")}
             value={(loverslabDraft.feedUrls || []).join("\n")}
@@ -295,7 +295,7 @@ export const LoversLabRulePanel: React.FC = () => {
           </label>
           <p className="text-xs text-gray-500">{t("rules.loverslab.pageUrlsHelp")}</p>
           <textarea
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
             rows={3}
             placeholder={t("rules.loverslab.pageUrlsPlaceholder")}
             value={pageUrlsText}
@@ -407,7 +407,7 @@ export const LoversLabRulePanel: React.FC = () => {
           {t("rules.loverslab.updateDetection")}
         </label>
         <select
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           value={loverslabDraft.updateDetection || "published_time"}
           onChange={(e) =>
             updateLoversLabConfig({

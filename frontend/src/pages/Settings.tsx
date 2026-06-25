@@ -326,21 +326,21 @@ const Settings: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <Loader2 className="animate-spin text-blue-500" size={32} />
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <Loader2 className="animate-spin text-sky-600" size={32} />
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <div className="text-center space-y-4">
           <p className="text-red-500 text-lg font-medium">{t("settings.loadError")}</p>
           <p className="text-gray-500 text-sm">{t("settings.loadErrorHint")}</p>
           <button
             onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600"
+            className="rounded-lg bg-sky-600 px-4 py-2 text-sm text-white hover:bg-sky-700"
           >
             {t("settings.retry")}
           </button>
@@ -350,13 +350,13 @@ const Settings: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50">
       <div className="flex h-screen">
         <AppSidebar active="settings" />
 
         <main className="flex-1 overflow-y-auto px-6 py-5">
           <div className="mb-5 flex items-center gap-3">
-            <h2 className="text-2xl font-bold text-gray-900">{t("settings.title")}</h2>
+            <h2 className="text-2xl font-bold text-slate-950">{t("settings.title")}</h2>
           </div>
 
           {isError && (
@@ -416,7 +416,7 @@ const Settings: React.FC = () => {
                         onChange={(e) => setSummaryReportPrompt(e.target.value)}
                         placeholder={t("settings.summaryReportPromptPlaceholder")}
                         rows={4}
-                        className="min-h-24 w-full resize-y rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="min-h-24 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                       />
                     </label>
                   </div>
@@ -524,7 +524,7 @@ const Settings: React.FC = () => {
                         type="checkbox"
                         checked={loverslabSearchScrapeEnabled}
                         onChange={(e) => setLoverslabSearchScrapeEnabled(e.target.checked)}
-                        className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        className="h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                       />
                       <span className="text-sm font-medium text-gray-700">{t("settings.loverslabSearchScrapeEnabled")}</span>
                     </label>
@@ -533,7 +533,7 @@ const Settings: React.FC = () => {
                         <select
                           value={loverslabSearchScrapeEngine}
                           onChange={(e) => setLoverslabSearchScrapeEngine(e.target.value as "duckduckgo" | "google")}
-                          className="h-9 rounded-md border border-gray-300 px-3 text-sm"
+                          className="h-9 rounded-md border border-slate-300 px-3 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                         >
                           <option value="duckduckgo">DuckDuckGo HTML</option>
                           <option value="google">Google Search</option>
@@ -566,7 +566,7 @@ const Settings: React.FC = () => {
                     const option = PROVIDER_OPTIONS.find((item) => item.provider === provider.provider);
                     const result = llmTestResults.find((item) => item.provider === provider.provider);
                     return (
-                      <div key={provider.provider} className="rounded-lg border border-gray-200 bg-white p-3">
+                      <div key={provider.provider} className="rounded-lg border border-slate-200 bg-white p-3">
                         <div className="mb-3 flex flex-wrap items-center gap-2">
                           <input
                             type="checkbox"
@@ -574,7 +574,7 @@ const Settings: React.FC = () => {
                             onChange={(e) => updateProvider(provider.provider, { enabled: e.target.checked })}
                             className="rounded"
                           />
-                          <span className="text-sm font-semibold text-gray-900">{provider.priority}. {option?.label ?? provider.provider}</span>
+                          <span className="text-sm font-semibold text-slate-900">{provider.priority}. {option?.label ?? provider.provider}</span>
                           <button type="button" onClick={() => moveProvider(provider.provider, -1)} disabled={index === 0} className="ml-auto rounded border px-2 py-1 text-xs disabled:opacity-40">
                             <ArrowUp size={14} />
                           </button>
@@ -583,7 +583,7 @@ const Settings: React.FC = () => {
                           </button>
                           {result && (
                             <span
-                              className={`rounded px-2 py-1 text-xs ${result.success ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}
+                              className={`rounded px-2 py-1 text-xs ${result.success ? "bg-sky-50 text-sky-700" : "bg-red-50 text-red-700"}`}
                               title={result.message}
                             >
                               {result.success ? t("settings.testOk") : t("settings.testFailed")}
@@ -620,7 +620,7 @@ const Settings: React.FC = () => {
                           </>
                         )}
                         {result && (
-                          <p className={`mt-1 rounded-md px-2 py-1 text-xs ${result.success ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
+                          <p className={`mt-1 rounded-md px-2 py-1 text-xs ${result.success ? "bg-sky-50 text-sky-700" : "bg-red-50 text-red-700"}`}>
                             {result.success ? t("settings.testSuccessMessage") : t("settings.testFailureReason")}: {result.message}
                           </p>
                         )}
@@ -664,7 +664,7 @@ const Settings: React.FC = () => {
             {importMsg && (
               <div className={`p-3 border rounded-lg text-sm ${
                 importMsg.type === "success"
-                  ? "bg-green-50 border-green-200 text-green-800"
+                  ? "bg-sky-50 border-sky-200 text-sky-800"
                   : "bg-red-50 border-red-200 text-red-800"
               }`}>
                 {importMsg.text}
@@ -682,7 +682,7 @@ const Settings: React.FC = () => {
                       type="checkbox"
                       checked={autoStart}
                       onChange={(e) => setAutoStart(e.target.checked)}
-                      className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      className="h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                     />
                     <div>
                       <p className="text-sm font-medium text-gray-700">{t("settings.autoStartLabel")}</p>
@@ -718,7 +718,7 @@ const Settings: React.FC = () => {
                     type="checkbox"
                     checked={proxyEnabled}
                     onChange={(e) => setProxyEnabled(e.target.checked)}
-                    className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                   />
                   <span className="text-sm font-medium text-gray-700">{t("settings.proxyEnabled")}</span>
                 </label>
@@ -727,7 +727,7 @@ const Settings: React.FC = () => {
                     <select
                       value={proxyType}
                       onChange={(e) => setProxyType(e.target.value as "http" | "socks5")}
-                      className="h-9 rounded-md border border-gray-300 px-3 text-sm"
+                      className="h-9 rounded-md border border-slate-300 px-3 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                     >
                       <option value="http">HTTP</option>
                       <option value="socks5">SOCKS5</option>
@@ -762,7 +762,7 @@ const Settings: React.FC = () => {
                   <select
                     value={accessProfile}
                     onChange={(e) => setAccessProfile(e.target.value as "local_relaxed" | "local_strict" | "shared_lan")}
-                    className="h-9 w-full rounded-md border border-gray-300 px-3 text-sm"
+                    className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                   >
                     <option value="local_relaxed">{t("settings.accessProfileOptions.localRelaxed")}</option>
                     <option value="local_strict">{t("settings.accessProfileOptions.localStrict")}</option>
@@ -814,7 +814,7 @@ const Settings: React.FC = () => {
                 {mutation.isPending || savingAutoStart ? t("common.loading") : t("settings.save")}
               </Button>
               {saved && (
-                <div className="px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
+                <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
                   {t("settings.saved")}
                 </div>
               )}

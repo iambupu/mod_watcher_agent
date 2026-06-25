@@ -40,7 +40,7 @@ export const AgentMatchCard: React.FC<AgentMatchCardProps> = ({
   const canToggleSummary = description.length > 120 || description.includes("\n\n");
   const sourceClass =
     item.source?.toLowerCase() === "nexusmods"
-      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+      ? "border-sky-200 bg-sky-50 text-sky-700"
       : "border-slate-200 bg-slate-100 text-slate-700";
   const hasAdultFlag = item.adult_content !== null && item.adult_content !== undefined;
   const adultContent = isAdultContent(item.adult_content);
@@ -49,7 +49,7 @@ export const AgentMatchCard: React.FC<AgentMatchCardProps> = ({
     hasAdultFlag && adultContent
       ? "border-rose-200 bg-rose-50 text-rose-700"
       : hasAdultFlag
-        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+        ? "border-sky-200 bg-sky-50 text-sky-700"
         : "";
 
   return (
@@ -87,7 +87,7 @@ export const AgentMatchCard: React.FC<AgentMatchCardProps> = ({
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="mt-2 inline-flex items-center gap-1 text-[12px] text-indigo-600 hover:text-indigo-700"
+          className="mt-2 inline-flex items-center gap-1 text-[12px] text-sky-600 hover:text-sky-700"
           title={expanded ? t("mod.collapseSummary") : t("mod.expandSummary")}
         >
           {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -108,7 +108,7 @@ export const AgentMatchCard: React.FC<AgentMatchCardProps> = ({
           href={item.url}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700"
+          className="inline-flex items-center gap-1 text-sky-600 hover:text-sky-700"
           title={t("mod.openOriginal")}
         >
           <span>{t("mod.openOriginal")}</span>
@@ -116,7 +116,7 @@ export const AgentMatchCard: React.FC<AgentMatchCardProps> = ({
         <button
           type="button"
           onClick={() => onAskDetail(item)}
-          className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700"
+          className="inline-flex items-center gap-1 text-sky-600 hover:text-sky-700"
           title={t("mod.detail")}
         >
           <Sparkles size={12} />

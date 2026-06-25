@@ -7,8 +7,10 @@ import {
   Play,
   Loader2,
   RefreshCw,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   LayoutGrid,
   List,
   ExternalLink,
@@ -23,6 +25,7 @@ import {
   TrendingUp,
   DownloadCloud,
   Search,
+  Sparkles,
   Tags,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
@@ -62,6 +65,13 @@ const DEFAULT_PAGE_SIZE: PageSize = 20;
 const DISCOVER_PAGE_SIZE_STORAGE_KEY = "modWatcher.discover.pageSize";
 type DiscoverViewMode = "card" | "list";
 
+const discoverSourceBadgeClass: Record<ModSource, string> = {
+  nexusmods:
+    "border-cyan-300/70 bg-cyan-50 text-cyan-900 shadow-[0_8px_24px_rgba(8,145,178,0.12)]",
+  loverslab:
+    "border-sky-300/70 bg-sky-50 text-sky-900 shadow-[0_8px_24px_rgba(2,132,199,0.12)]",
+};
+
 function isPageSize(value: number): value is PageSize {
   return PAGE_SIZE_OPTIONS.includes(value as PageSize);
 }
@@ -86,18 +96,20 @@ function savePageSize(pageSize: PageSize) {
 
 function SkeletonCard() {
   return (
-    <Panel padding="none" className="overflow-hidden animate-pulse">
-      <div className="aspect-[300/169] bg-gray-200" />
-      <div className="p-4 space-y-2">
-        <div className="h-4 bg-gray-200 rounded w-3/4" />
-        <div className="flex gap-3">
-          <div className="h-3 bg-gray-200 rounded w-16" />
-          <div className="h-3 bg-gray-200 rounded w-16" />
-          <div className="h-3 bg-gray-200 rounded w-20" />
+    <Panel padding="none" className="overflow-hidden border-slate-200/80 bg-[#f8fbff] animate-pulse">
+      <div className="aspect-[300/169] bg-slate-900" />
+      <div className="space-y-3 p-4">
+        <div className="h-4 w-3/4 rounded bg-slate-200" />
+        <div className="flex gap-2">
+          <div className="h-3 w-16 rounded bg-sky-100" />
+          <div className="h-3 w-16 rounded bg-cyan-100" />
+          <div className="h-3 w-20 rounded bg-slate-200" />
         </div>
-        <div className="h-3 bg-gray-200 rounded w-full" />
-        <div className="h-3 bg-gray-200 rounded w-2/3" />
-        <div className="h-9 bg-gray-200 rounded mt-2" />
+        <div className="rounded-lg border border-slate-200 bg-white/70 p-3">
+          <div className="h-3 w-full rounded bg-slate-200" />
+          <div className="mt-2 h-3 w-2/3 rounded bg-slate-200" />
+        </div>
+        <div className="mt-2 h-8 rounded bg-slate-200" />
       </div>
     </Panel>
   );
@@ -420,10 +432,11 @@ const Discover: React.FC = () => {
     };
 
     return (
-      <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+      <div className="mt-8 flex flex-wrap items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm">
         <Button
           variant="outline"
           size="sm"
+          className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
           disabled={page <= 1}
           onClick={() => setPage((p) => p - 1)}
         >
@@ -432,10 +445,10 @@ const Discover: React.FC = () => {
 
         {start > 1 && (
           <>
-            <Button variant="ghost" size="sm" onClick={() => setPage(1)}>
+            <Button variant="ghost" size="sm" className="text-slate-600 hover:bg-slate-100 hover:text-slate-950" onClick={() => setPage(1)}>
               1
             </Button>
-            {start > 2 && <span className="text-gray-400 px-1">...</span>}
+            {start > 2 && <span className="px-1 text-slate-400">...</span>}
           </>
         )}
 
@@ -444,6 +457,7 @@ const Discover: React.FC = () => {
             key={p}
             variant={p === page ? "default" : "ghost"}
             size="sm"
+            className={p === page ? "border border-sky-200 bg-sky-100 text-sky-800 hover:bg-sky-100" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"}
             onClick={() => setPage(p)}
           >
             {p}
@@ -452,8 +466,8 @@ const Discover: React.FC = () => {
 
         {end < totalPages && (
           <>
-            {end < totalPages - 1 && <span className="text-gray-400 px-1">...</span>}
-            <Button variant="ghost" size="sm" onClick={() => setPage(totalPages)}>
+            {end < totalPages - 1 && <span className="px-1 text-slate-400">...</span>}
+            <Button variant="ghost" size="sm" className="text-slate-600 hover:bg-slate-100 hover:text-slate-950" onClick={() => setPage(totalPages)}>
               {totalPages}
             </Button>
           </>
@@ -462,6 +476,7 @@ const Discover: React.FC = () => {
         <Button
           variant="outline"
           size="sm"
+          className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
           disabled={page >= totalPages}
           onClick={() => setPage((p) => p + 1)}
         >
@@ -479,10 +494,10 @@ const Discover: React.FC = () => {
                 jumpToPage();
               }
             }}
-            className="h-9 w-24 rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            className="h-9 w-24 rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-700 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
             aria-label={t("discover.pageJumpInputLabel")}
           />
-          <Button type="button" variant="outline" size="sm" onClick={jumpToPage}>
+          <Button type="button" variant="outline" size="sm" className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50" onClick={jumpToPage}>
             {t("discover.pageJumpAction")}
           </Button>
         </div>
@@ -495,18 +510,42 @@ const Discover: React.FC = () => {
       <div className="flex h-screen">
         <AppSidebar active="discover" />
 
-        <main className="flex-1 overflow-y-auto">
-          <div className="px-6 py-6 lg:px-8">
-            <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h1 className="text-3xl font-bold tracking-normal text-slate-950">{t("discover.title")}</h1>
-                <p className="mt-2 text-sm font-medium text-slate-500">{t("discover.subtitle")}</p>
+        <main className="relative flex-1 overflow-y-auto bg-slate-50">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(circle_at_18%_0%,rgba(14,165,233,0.12),transparent_34%),radial-gradient(circle_at_86%_8%,rgba(56,189,248,0.08),transparent_30%)]" />
+          <div className="relative px-5 py-5 lg:px-7">
+            <div className="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-[0_18px_42px_rgba(15,23,42,0.06)] md:p-5">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div className="min-w-0">
+                  <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-slate-500">
+                    <span className="h-2 w-2 rounded-full bg-sky-500 shadow-[0_0_12px_rgba(14,165,233,0.45)]" />
+                    <span>{t("nav.discover")}</span>
+                    <span className="h-px w-10 bg-slate-200" />
+                    <span>{updatedLabel}</span>
+                  </div>
+                  <h1 className="text-3xl font-bold tracking-normal text-slate-950">{t("discover.title")}</h1>
+                  <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-slate-500">{t("discover.subtitle")}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {source && (
+                    <span className="inline-flex h-10 items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50 px-3 text-sm font-semibold text-cyan-800">
+                      <Database size={16} />
+                      {source}
+                    </span>
+                  )}
+                  {game && (
+                    <span className="inline-flex h-10 max-w-56 items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-800">
+                      <Gamepad2 size={16} />
+                      <span className="truncate">{game}</span>
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
                 <Button
                   type="button"
+                  variant="outline"
                   onClick={() => setImportDialogOpen(true)}
-                  className="h-12 rounded-lg bg-slate-900 px-4 text-white shadow-sm hover:bg-slate-800"
+                  className="h-11 rounded-lg border-sky-300 bg-white px-4 text-sm font-bold text-sky-800 shadow-sm hover:border-sky-400 hover:bg-sky-50 hover:text-sky-900"
                 >
                   <DownloadCloud size={17} />
                   <span className="ml-2">{t("discover.importGame")}</span>
@@ -514,7 +553,7 @@ const Discover: React.FC = () => {
                 <Button
                   onClick={handleRunDiscovery}
                   disabled={isRunning}
-                  className="h-12 rounded-lg bg-blue-600 px-5 text-base shadow-sm shadow-blue-200 hover:bg-blue-700"
+                  className="h-11 rounded-lg bg-sky-600 px-5 text-base font-bold text-white shadow-sm shadow-sky-200 hover:bg-sky-700"
                 >
                   {isRunning ? (
                     <Loader2 size={18} className="animate-spin" />
@@ -529,6 +568,8 @@ const Discover: React.FC = () => {
             </div>
 
             <ModFilterPanel
+              compact
+              className="border-slate-200 bg-white shadow-[0_12px_34px_rgba(15,23,42,0.06)]"
               searchValue={searchText}
               searchLabel={t("discover.search")}
               searchPlaceholder={t("discover.searchPlaceholder")}
@@ -549,7 +590,7 @@ const Discover: React.FC = () => {
                     setPage(1);
                   },
                   icon: <Gamepad2 size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[320px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[260px]",
                   children: (
                     <>
                       <option value="">{t("discover.allGames")}</option>
@@ -570,7 +611,7 @@ const Discover: React.FC = () => {
                     setPage(1);
                   },
                   icon: <Database size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[320px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[220px]",
                   children: (
                     <>
                       <option value="">{t("discover.allSources")}</option>
@@ -588,7 +629,7 @@ const Discover: React.FC = () => {
                     setPage(1);
                   },
                   icon: <Tags size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[320px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[260px]",
                   children: (
                     <>
                       <option value="">{t("discover.allCategories")}</option>
@@ -609,7 +650,7 @@ const Discover: React.FC = () => {
                     setPage(1);
                   },
                   icon: <Clock size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[180px]",
                   children: (
                     <>
                       {SORTS.map((s) => (
@@ -629,7 +670,7 @@ const Discover: React.FC = () => {
                     setPage(1);
                   },
                   icon: <ShieldCheck size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[180px]",
                   children: (
                     <>
                       {ADULT_OPTIONS.map((o) => (
@@ -649,7 +690,7 @@ const Discover: React.FC = () => {
                     setPage(1);
                   },
                   icon: <Languages size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[180px]",
                   children: (
                     <>
                       <option value="any">{t("discover.contentLanguageAny")}</option>
@@ -667,7 +708,7 @@ const Discover: React.FC = () => {
                   value: summaryMode,
                   onChange: (value) => setSummaryMode(value as SummaryMode),
                   icon: <Languages size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[180px]",
                   children: (
                     <>
                       <option value="original">{t("summary.original")}</option>
@@ -680,14 +721,14 @@ const Discover: React.FC = () => {
             />
 
             {lastResult && (
-              <p className="mb-4 rounded-lg border border-blue-100 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700">
+              <p className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800">
                 {lastResult}
               </p>
             )}
 
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
-                <span className="inline-flex items-center gap-2 font-bold text-blue-600">
+                <span className="inline-flex items-center gap-2 font-bold text-sky-700">
                   <TrendingUp size={18} />
                   {t("discover.resultsCount", { count: data?.total ?? 0 })}
                 </span>
@@ -696,7 +737,7 @@ const Discover: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => refetch()}
-                  className="inline-flex items-center rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-blue-600"
+                  className="inline-flex items-center rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-sky-700"
                   title={t("discover.retry")}
                 >
                   <RefreshCw size={17} />
@@ -706,6 +747,8 @@ const Discover: React.FC = () => {
               <div className="flex flex-wrap items-center gap-3">
                 <FilterSelect
                   inlineLabel={t("discover.pageSize")}
+                  inlineClassName="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-1 shadow-sm [&>span]:text-slate-600"
+                  fieldClassName="border-slate-200 bg-white text-slate-700 focus:border-sky-500 focus:ring-sky-100"
                   value={String(pageSize)}
                   onValueChange={(value) => {
                     const nextPageSize = parseWholeIntegerInput(value);
@@ -722,7 +765,9 @@ const Discover: React.FC = () => {
                   ))}
                 </FilterSelect>
                 <FilterButtonGroup
-                  containerClassName="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm"
+                  containerClassName="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1 shadow-sm"
+                  activeClassName="bg-sky-100 text-sky-800 shadow-sm"
+                  inactiveClassName="text-slate-600 hover:bg-white hover:text-slate-950"
                   items={[
                     {
                       key: "card",
@@ -750,7 +795,7 @@ const Discover: React.FC = () => {
                 />
                 <FilterBarButton
                   type="button"
-                  className="text-slate-700"
+                  className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950"
                   onClick={() => setIgnoredListOpen(true)}
                 >
                   <EyeOff size={17} />
@@ -760,35 +805,35 @@ const Discover: React.FC = () => {
             </div>
 
             {isLoading ? (
-              <div className={viewMode === "card" ? "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5" : "space-y-3"}>
+              <div className={viewMode === "card" ? "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" : "space-y-3"}>
                 {Array.from({ length: 6 }).map((_, i) => (
                   <SkeletonCard key={i} />
                 ))}
               </div>
             ) : isError ? (
-              <div className="text-center py-16">
-                <p className="text-red-500 mb-4">
+              <div className="rounded-xl border border-rose-200 bg-rose-50 py-16 text-center">
+                <p className="mb-4 text-rose-700">
                   {(error as Error)?.message || t("discover.loadFailed")}
                 </p>
-                <Button onClick={() => refetch()}>
+                <Button onClick={() => refetch()} className="bg-rose-600 text-white hover:bg-rose-700">
                   <RefreshCw size={16} />
                   <span className="ml-1.5">{t("discover.retry")}</span>
                 </Button>
               </div>
             ) : data && data.items.length === 0 ? (
-              <div className="text-center py-16">
-                <div className="text-gray-400 mb-2">
+              <div className="rounded-xl border border-slate-200 bg-white py-16 text-center shadow-sm">
+                <div className="mb-2 text-slate-300">
                   <Search size={48} className="mx-auto" />
                 </div>
-                <p className="text-gray-500 text-sm">{t("discover.noMods")}</p>
-                <p className="text-gray-400 text-xs mt-1">
+                <p className="text-sm text-slate-600">{t("discover.noMods")}</p>
+                <p className="mt-1 text-xs text-slate-400">
                   {t("discover.configureHint")}
                 </p>
               </div>
             ) : (
               <>
                 {viewMode === "card" ? (
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {data?.items.map((mod) => (
                       <ModCard
                         key={mod.id}
@@ -796,7 +841,6 @@ const Discover: React.FC = () => {
                         isFavorited={favoriteByModId.has(mod.id)}
                         onToggleFavorite={() => handleToggleFavorite(mod.id)}
                         showBottomFavoriteAction={false}
-                        measureSummaryOverflow={false}
                         onIgnore={() => handleIgnore(mod.id)}
                         onRegenerateSummary={() => handleRegenerateSummary(mod.id)}
                         regeneratingSummary={regeneratingSummaryIds.has(mod.id)}
@@ -807,87 +851,20 @@ const Discover: React.FC = () => {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {data?.items.map((mod) => {
-                      const gameLabel = mod.game || mod.game_domain || "";
-                      const summary = formatModSummary({
-                        original: mod.original_summary,
-                        translated: mod.translated_summary,
-                        mode: summaryMode,
-                      });
-                      const displayTitle = formatModTitle(mod, summaryMode);
-                      return (
-                        <Card key={mod.id}>
-                          <CardContent className="py-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0 flex-1 space-y-2">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <SourceBadge source={mod.source} />
-                                  {isAdultContent(mod.adult_content) && (
-                                    <span className="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
-                                      NSFW
-                                    </span>
-                                  )}
-                                  {gameLabel && (
-                                    <span className="inline-flex items-center rounded-md border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-600">
-                                      {gameLabel}
-                                    </span>
-                                  )}
-                                </div>
-
-                                <a
-                                  href={mod.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="block truncate whitespace-pre-line text-base font-semibold text-gray-900 hover:text-blue-600"
-                                  title={displayTitle}
-                                >
-                                  {displayTitle}
-                                </a>
-
-                                <ModStatsLine
-                                  downloads={mod.downloads}
-                                  endorsements={mod.endorsements}
-                                  updatedAt={mod.updated_at_remote}
-                                  className="text-gray-500"
-                                />
-
-                                {summary && (
-                                  <p className="line-clamp-2 whitespace-pre-line text-sm text-gray-600">
-                                    {summary}
-                                  </p>
-                                )}
-                              </div>
-
-                              <div className="flex shrink-0 items-center gap-1">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleToggleFavorite(mod.id)}
-                                  title={favoriteByModId.has(mod.id) ? t("mod.unfavorite") : t("mod.favorite")}
-                                >
-                                  <Heart size={14} className={favoriteByModId.has(mod.id) ? "fill-red-500 text-red-500" : ""} />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleIgnore(mod.id)}
-                                  title={t("mod.ignore")}
-                                >
-                                  <EyeOff size={14} />
-                                </Button>
-                                <a href={mod.url} target="_blank" rel="noopener noreferrer">
-                                  <Button type="button" variant="outline" size="sm">
-                                    <ExternalLink size={14} />
-                                  </Button>
-                                </a>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
+                    {data?.items.map((mod) => (
+                      <DiscoverListRow
+                        key={mod.id}
+                        mod={mod}
+                        isFavorited={favoriteByModId.has(mod.id)}
+                        summaryMode={summaryMode}
+                        onToggleFavorite={() => handleToggleFavorite(mod.id)}
+                        onIgnore={() => handleIgnore(mod.id)}
+                        onRegenerateSummary={() => handleRegenerateSummary(mod.id)}
+                        regeneratingSummary={regeneratingSummaryIds.has(mod.id)}
+                        onGenerateIntroduction={() => handleGenerateIntroduction(mod.id)}
+                        generatingIntroduction={generateIntroductionMutation.isPending && generateIntroductionMutation.variables === mod.id}
+                      />
+                    ))}
                   </div>
                 )}
                 {renderPagination()}
@@ -946,7 +923,7 @@ const Discover: React.FC = () => {
                 type="button"
                 onClick={handleImportNexusGame}
                 disabled={isImportingGame}
-                className="bg-slate-900 text-white hover:bg-slate-800"
+                className="bg-sky-600 text-white hover:bg-sky-700"
               >
                 {isImportingGame ? <Loader2 size={17} className="animate-spin" /> : <DownloadCloud size={17} />}
                 <span className="ml-2">
@@ -1012,6 +989,207 @@ const Discover: React.FC = () => {
   );
 };
 
+function DiscoverListRow({
+  mod,
+  isFavorited,
+  summaryMode,
+  onToggleFavorite,
+  onIgnore,
+  onRegenerateSummary,
+  regeneratingSummary,
+  onGenerateIntroduction,
+  generatingIntroduction,
+}: {
+  mod: ModItem;
+  isFavorited: boolean;
+  summaryMode: SummaryMode;
+  onToggleFavorite: () => void;
+  onIgnore: () => void;
+  onRegenerateSummary: () => void;
+  regeneratingSummary: boolean;
+  onGenerateIntroduction: () => Promise<string | undefined>;
+  generatingIntroduction: boolean;
+}) {
+  const { t } = useTranslation();
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const [introductionOpen, setIntroductionOpen] = useState(false);
+  const [introduction, setIntroduction] = useState(mod.ai_introduction || "");
+  const [introError, setIntroError] = useState("");
+  const gameLabel = mod.game || mod.game_domain || "";
+  const displayTitle = formatModTitle(mod, summaryMode);
+  const summary = formatModSummary({
+    original: mod.original_summary,
+    translated: mod.translated_summary,
+    mode: summaryMode,
+    maxLength: 260,
+  });
+  const fullSummary = formatModSummary({
+    original: mod.original_summary,
+    translated: mod.translated_summary,
+    mode: summaryMode,
+  });
+  const canToggleSummary = Boolean(fullSummary) && (
+    summary !== fullSummary ||
+    fullSummary.length > 160 ||
+    fullSummary.includes("\n")
+  );
+
+  const handleOpenIntroduction = async () => {
+    setIntroductionOpen(true);
+    setIntroError("");
+    if (introduction || mod.ai_introduction) {
+      setIntroduction(introduction || mod.ai_introduction || "");
+      return;
+    }
+    try {
+      const content = await onGenerateIntroduction();
+      setIntroduction(content || "");
+    } catch (error) {
+      setIntroError(error instanceof Error ? error.message : "Failed to generate introduction");
+    }
+  };
+
+  return (
+    <Card className="border-slate-200 bg-[#f8fbff] shadow-[0_12px_30px_rgba(15,23,42,0.07)]">
+      <CardContent className="py-3">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <SourceBadge source={mod.source} className={discoverSourceBadgeClass[mod.source]} />
+            {isAdultContent(mod.adult_content) && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-800">
+                <ShieldCheck size={12} />
+                NSFW
+              </span>
+            )}
+            {gameLabel && (
+              <span className="inline-flex max-w-64 items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700">
+                <Gamepad2 size={12} />
+                <span className="truncate">{gameLabel}</span>
+              </span>
+            )}
+          </div>
+
+          <a
+            href={mod.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block truncate whitespace-pre-line text-base font-bold text-slate-950 hover:text-sky-700"
+            title={displayTitle}
+          >
+            {displayTitle}
+          </a>
+
+          <ModStatsLine
+            downloads={mod.downloads}
+            endorsements={mod.endorsements}
+            updatedAt={mod.updated_at_remote}
+            className="font-semibold text-slate-500"
+          />
+
+          {summary && (
+            <p className={`${summaryExpanded ? "" : "line-clamp-2"} whitespace-pre-line text-sm leading-6 text-slate-600`}>
+              {summaryExpanded ? fullSummary || summary : summary}
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-200/70 pt-3">
+            {canToggleSummary && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="border border-slate-200 bg-white/75 text-slate-700 hover:border-sky-200 hover:bg-sky-50 hover:text-sky-800"
+                onClick={() => setSummaryExpanded((value) => !value)}
+              >
+                {summaryExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                <span className="ml-1.5">{summaryExpanded ? t("mod.collapseSummary") : t("mod.expandSummary")}</span>
+              </Button>
+            )}
+            <a href={mod.url} target="_blank" rel="noopener noreferrer">
+              <Button size="sm" variant="ghost" className="border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100">
+                <ExternalLink size={14} />
+                <span className="ml-1.5">{t("common.viewMod")}</span>
+              </Button>
+            </a>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="border border-slate-200 bg-white/75 text-slate-700 hover:bg-slate-100"
+              onClick={onToggleFavorite}
+            >
+              <Heart size={14} className={isFavorited ? "fill-red-500 text-red-500" : ""} />
+              <span className="ml-1.5">{t(isFavorited ? "mod.unfavorite" : "mod.favorite")}</span>
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="border border-slate-200 bg-white/75 text-slate-700 hover:bg-slate-100"
+              onClick={onIgnore}
+            >
+              <EyeOff size={14} />
+              <span className="ml-1.5">{t("mod.ignore")}</span>
+            </Button>
+            {summaryMode !== "original" && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="border border-cyan-200 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
+                onClick={onRegenerateSummary}
+                disabled={regeneratingSummary}
+              >
+                <Languages size={14} />
+                <span className="ml-1.5">{regeneratingSummary ? t("common.loading") : t("mod.regenerateSummary")}</span>
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+              onClick={handleOpenIntroduction}
+              disabled={generatingIntroduction}
+            >
+              <Sparkles size={14} />
+              <span className="ml-1.5">{generatingIntroduction ? t("mod.generatingIntroduction") : t("mod.aiIntroduction")}</span>
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+
+      {introductionOpen && (
+        <ModalShell
+          open={introductionOpen}
+          onClose={() => setIntroductionOpen(false)}
+          size="md"
+          panelClassName="max-h-[80vh] overflow-hidden"
+        >
+          <ModalHeader
+            title={t("mod.aiIntroduction")}
+            subtitle={<span className="line-clamp-1">{displayTitle}</span>}
+            onClose={() => setIntroductionOpen(false)}
+            closeAriaLabel={t("common.close")}
+            className="mb-0 shrink-0 border-b border-slate-200 px-5 py-3"
+          />
+          <div className="max-h-[62vh] overflow-y-auto px-5 py-4">
+            {generatingIntroduction && !introduction ? (
+              <p className="text-sm text-slate-500">{t("mod.aiIntroductionLoading")}</p>
+            ) : introError ? (
+              <p className="text-sm text-rose-600">{introError}</p>
+            ) : (
+              <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                {introduction || mod.ai_introduction || t("mod.noAiIntroduction")}
+              </p>
+            )}
+          </div>
+        </ModalShell>
+      )}
+    </Card>
+  );
+}
+
 function IgnoredModsDialog({
   items,
   total,
@@ -1041,7 +1219,7 @@ function IgnoredModsDialog({
         subtitle={t("discover.hiddenListHint", { total })}
         onClose={onClose}
         closeAriaLabel={t("common.close")}
-        className="mb-0 border-b border-gray-200 px-4 py-3"
+        className="mb-0 border-b border-slate-200 px-4 py-3"
       />
       <div className="flex-1 overflow-y-auto">
         {loading ? (
@@ -1068,7 +1246,7 @@ function IgnoredModsDialog({
                         href={item.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="mt-1 block truncate whitespace-pre-line text-sm font-semibold text-gray-900 hover:text-blue-600"
+                        className="mt-1 block truncate whitespace-pre-line text-sm font-semibold text-slate-900 hover:text-sky-700"
                         title={displayTitle}
                       >
                         {displayTitle}

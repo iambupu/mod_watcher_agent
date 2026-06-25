@@ -113,7 +113,7 @@ const Logs: React.FC = () => {
   }, [searchParams]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50">
       <div className="flex h-screen">
         <AppSidebar active="logs" />
 
@@ -122,7 +122,7 @@ const Logs: React.FC = () => {
             <div className="mb-6 flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-2xl font-bold text-gray-900">{t("logs.title")}</h2>
+                  <h2 className="text-2xl font-bold text-slate-950">{t("logs.title")}</h2>
                   <button
                     type="button"
                     title={t("logs.openDirectory")}
@@ -142,7 +142,7 @@ const Logs: React.FC = () => {
                   {t("common.total", { total: entries.length })}
                   <span className="ml-2 text-xs text-gray-400">{t("logs.localTimezone")}</span>
                   {isFetching && (
-                    <span className="ml-2 text-blue-500 text-xs">
+                    <span className="ml-2 text-sky-600 text-xs">
                       {t("logs.autoRefresh")}
                     </span>
                   )}
@@ -154,21 +154,21 @@ const Logs: React.FC = () => {
               <button
                 type="button"
                 onClick={() => switchTab("logs")}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium ${activeTab === "logs" ? "bg-blue-600 text-white" : "border border-gray-300 bg-white text-gray-700"}`}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium ${activeTab === "logs" ? "border border-sky-200 bg-sky-100 text-sky-800" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
               >
                 {t("logs.tab.logs")}
               </button>
               <button
                 type="button"
                 onClick={() => switchTab("finished")}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium ${activeTab === "finished" ? "bg-blue-600 text-white" : "border border-gray-300 bg-white text-gray-700"}`}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium ${activeTab === "finished" ? "border border-sky-200 bg-sky-100 text-sky-800" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
               >
                 {t("logs.tab.finished")}
               </button>
               <button
                 type="button"
                 onClick={() => switchTab("running")}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium ${activeTab === "running" ? "bg-blue-600 text-white" : "border border-gray-300 bg-white text-gray-700"}`}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium ${activeTab === "running" ? "border border-sky-200 bg-sky-100 text-sky-800" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
               >
                 {t("logs.tab.running")}
               </button>
@@ -215,14 +215,14 @@ const Logs: React.FC = () => {
             {activeTab !== "logs" ? (
               <Card>
                 <CardContent className="p-0">
-                  <div className="border-b border-gray-100 px-4 py-3 flex items-center justify-between">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
                     <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
                       <Activity size={16} />
                       <span>{activeTab === "finished" ? t("logs.tab.finished") : t("logs.tab.running")}</span>
-                      <span className={`rounded-full px-2 py-0.5 text-xs ${schedulerStatus?.running ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${schedulerStatus?.running ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
                         {schedulerStatus?.running ? t("logs.schedulerRunning") : t("logs.schedulerPaused")}
                       </span>
-                      {jobsFetching && <span className="text-xs text-blue-500">{t("logs.refreshing")}</span>}
+                      {jobsFetching && <span className="text-xs text-sky-600">{t("logs.refreshing")}</span>}
                     </div>
                     <div className="flex items-center gap-2">
                       <Button
@@ -293,7 +293,7 @@ const Logs: React.FC = () => {
                       return (
                         <div key={idx}>
                           <div
-                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors"
+                            className="flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors hover:bg-slate-50"
                             onClick={() =>
                               setExpandedIndex(isExpanded ? null : idx)
                             }
@@ -319,7 +319,7 @@ const Logs: React.FC = () => {
                             </span>
                           </div>
                           {isExpanded && (
-                            <div className="px-12 py-3 bg-gray-50">
+                            <div className="bg-slate-50 px-12 py-3">
                               <MarkdownText
                                 text={entry.message}
                                 className="text-sm text-gray-600"
@@ -407,7 +407,7 @@ function TaskRow({
         <Badge variant={task.status === "failed" ? "danger" : task.status === "succeeded" ? "info" : "warning"}>
           {task.status}
         </Badge>
-        <span className="text-sm font-semibold text-gray-900">{task.job_name}</span>
+        <span className="text-sm font-semibold text-slate-900">{task.job_name}</span>
         <span className="ml-auto text-xs text-gray-500">{formatLogTime(task.started_at)}</span>
       </div>
       {isRuleRun && ruleName && (
@@ -415,7 +415,7 @@ function TaskRow({
           {ruleId > 0 && (
             <Link
               to={`/rules/${ruleId}/edit`}
-              className="inline-flex items-center justify-center rounded-md border border-gray-300 px-2 py-1 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              className="inline-flex items-center justify-center rounded-md border border-slate-300 px-2 py-1 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
             >
               <Settings2 size={12} />
               <span className="ml-1">{t("logs.ruleSettings")}</span>

@@ -36,8 +36,8 @@ export const Switch: React.FC<SwitchProps> = ({
         disabled={disabled}
         onClick={() => onCheckedChange(!checked)}
         onKeyDown={handleKeyDown}
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-          checked ? "bg-blue-600" : "bg-gray-300"
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+          checked ? "bg-sky-600" : "bg-slate-300"
         }`}
       >
         <span

@@ -24,6 +24,7 @@ interface ModFilterPanelProps {
   onSearchClear: () => void;
   fields: ModFilterField[];
   className?: string;
+  compact?: boolean;
 }
 
 export const ModFilterPanel: React.FC<ModFilterPanelProps> = ({
@@ -35,9 +36,21 @@ export const ModFilterPanel: React.FC<ModFilterPanelProps> = ({
   onSearchClear,
   fields,
   className = "",
+  compact = false,
 }) => {
+  const labelClassName = compact
+    ? "mb-1 block text-[11px] font-semibold text-slate-500"
+    : "mb-1.5 block text-xs font-semibold text-slate-500";
+  const fieldClassName = compact
+    ? "border-slate-200 bg-slate-50 text-slate-800 shadow-none placeholder:text-slate-400 focus:border-sky-500 focus:ring-sky-100"
+    : "";
+
   return (
-    <Panel as="section" padding="lg" className={`mb-6 ${className}`.trim()}>
+    <Panel
+      as="section"
+      padding={compact ? "md" : "lg"}
+      className={`mb-6 ${className}`.trim()}
+    >
       <FilterInput
         className="placeholder:text-slate-400"
         label={searchLabel}
@@ -48,10 +61,13 @@ export const ModFilterPanel: React.FC<ModFilterPanelProps> = ({
         onClear={onSearchClear}
         clearAriaLabel={closeAriaLabel}
         placeholder={searchPlaceholder}
-        containerClassName="mb-4 block"
+        containerClassName={compact ? "mb-3 block" : "mb-4 block"}
+        labelClassName={labelClassName}
+        fieldClassName={fieldClassName}
+        controlSize={compact ? "sm" : "md"}
       />
 
-      <div className="flex flex-wrap items-end gap-3">
+      <div className={compact ? "flex flex-wrap items-end gap-2.5" : "flex flex-wrap items-end gap-3"}>
         {fields.map((field) => (
           <FilterSelect
             key={field.key}
@@ -60,6 +76,9 @@ export const ModFilterPanel: React.FC<ModFilterPanelProps> = ({
             onValueChange={field.onChange}
             icon={field.icon}
             containerClassName={field.className}
+            labelClassName={labelClassName}
+            fieldClassName={fieldClassName}
+            controlSize={compact ? "sm" : "md"}
           >
             {field.children}
           </FilterSelect>

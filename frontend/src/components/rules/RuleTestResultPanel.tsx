@@ -99,7 +99,7 @@ export const RuleTestResultPanel: React.FC<RuleTestResultPanelProps> = ({ result
                         href={item.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-blue-500 hover:underline truncate"
+                        className="text-sky-500 hover:underline truncate"
                       >
                         {item.url}
                       </a>
@@ -141,7 +141,7 @@ export const RuleTestResultPanel: React.FC<RuleTestResultPanelProps> = ({ result
                           href={item.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-blue-500 hover:underline truncate"
+                          className="text-sky-500 hover:underline truncate"
                         >
                           {item.url}
                         </a>

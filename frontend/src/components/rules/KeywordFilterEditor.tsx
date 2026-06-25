@@ -39,13 +39,13 @@ const TagInput: React.FC<{
         {tags.map((tag, i) => (
           <span
             key={`${tag}-${i}`}
-            className="inline-flex items-center gap-0.5 rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-800"
+            className="inline-flex items-center gap-0.5 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-800"
           >
             {tag}
             <button
               type="button"
               onClick={() => onRemove(i)}
-              className="text-blue-500 hover:text-blue-700"
+              className="text-sky-500 hover:text-sky-700"
             >
               <X size={12} />
             </button>
@@ -59,7 +59,7 @@ const TagInput: React.FC<{
         onKeyDown={handleKeyDown}
         onBlur={handleAdd}
         placeholder={placeholder}
-        className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
       />
     </div>
   );

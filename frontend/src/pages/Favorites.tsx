@@ -39,16 +39,18 @@ import type { AdultPolicy, Favorite, ModSource, SummaryMode } from "@/types";
 
 function SkeletonCard() {
   return (
-    <Panel padding="none" className="overflow-hidden animate-pulse">
+    <Panel padding="none" className="overflow-hidden border-slate-200/80 bg-[#f8fbff] animate-pulse">
       <div className="aspect-[300/169] bg-slate-200" />
-      <div className="p-4 space-y-3">
-        <div className="h-4 bg-slate-200 rounded w-3/4" />
-        <div className="h-3 bg-slate-200 rounded w-1/2" />
-        <div className="h-3 bg-slate-200 rounded w-full" />
-        <div className="h-3 bg-slate-200 rounded w-2/3" />
+      <div className="space-y-3 p-4">
+        <div className="h-4 w-3/4 rounded bg-slate-200" />
+        <div className="h-3 w-1/2 rounded bg-slate-200" />
+        <div className="rounded-lg border border-slate-200 bg-white/70 p-3">
+          <div className="h-3 w-full rounded bg-slate-200" />
+          <div className="mt-2 h-3 w-2/3 rounded bg-slate-200" />
+        </div>
         <div className="grid grid-cols-2 gap-2 pt-2">
-          <div className="h-9 bg-slate-200 rounded" />
-          <div className="h-9 bg-slate-200 rounded" />
+          <div className="h-9 rounded bg-slate-200" />
+          <div className="h-9 rounded bg-slate-200" />
         </div>
       </div>
     </Panel>
@@ -347,12 +349,14 @@ const Favorites: React.FC = () => {
             </div>
 
             {checkingAllStatus && (
-              <p className="mb-4 rounded-lg border border-blue-100 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700">
+              <p className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800">
                 {checkingAllStatus}
               </p>
             )}
 
             <ModFilterPanel
+              compact
+              className="border-slate-200 bg-white shadow-[0_12px_34px_rgba(15,23,42,0.06)]"
               searchValue={searchText}
               searchLabel={t("discover.search")}
               searchPlaceholder={t("favorites.searchPlaceholder")}
@@ -368,7 +372,7 @@ const Favorites: React.FC = () => {
                   value: game,
                   onChange: (value) => setGame(value),
                   icon: <Gamepad2 size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[320px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[260px]",
                   children: (
                     <>
                       <option value="">{t("discover.allGames")}</option>
@@ -384,7 +388,7 @@ const Favorites: React.FC = () => {
                   value: source,
                   onChange: (value) => setSource(value as ModSource | ""),
                   icon: <Database size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[320px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[220px]",
                   children: (
                     <>
                       <option value="">{t("discover.allSources")}</option>
@@ -399,7 +403,7 @@ const Favorites: React.FC = () => {
                   value: sort,
                   onChange: (value) => setSort(value),
                   icon: <Clock size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[180px]",
                   children: (
                     <>
                       {SORTS.map((s) => (
@@ -416,7 +420,7 @@ const Favorites: React.FC = () => {
                   value: adultPolicy,
                   onChange: (value) => setAdultPolicy(value as AdultPolicy),
                   icon: <ShieldCheck size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[180px]",
                   children: (
                     <>
                       {ADULT_OPTIONS.map((o) => (
@@ -433,7 +437,7 @@ const Favorites: React.FC = () => {
                   value: contentLanguage,
                   onChange: (value) => setContentLanguage(value),
                   icon: <Languages size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[180px]",
                   children: (
                     <>
                       <option value="any">{t("discover.contentLanguageAny")}</option>
@@ -451,7 +455,7 @@ const Favorites: React.FC = () => {
                   value: summaryMode,
                   onChange: (value) => setSummaryMode(value as SummaryMode),
                   icon: <Languages size={18} />,
-                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[210px]",
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[180px]",
                   children: (
                     <>
                       <option value="original">{t("summary.original")}</option>
@@ -463,9 +467,9 @@ const Favorites: React.FC = () => {
               ]}
             />
 
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
-                <span className="inline-flex items-center gap-2 font-bold text-blue-600">
+                <span className="inline-flex items-center gap-2 font-bold text-sky-700">
                   <TrendingUp size={18} />
                   {t("discover.resultsCount", { count: filteredFavorites.length })}
                 </span>
@@ -474,7 +478,7 @@ const Favorites: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => refetch()}
-                  className="inline-flex items-center rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-blue-600"
+                  className="inline-flex items-center rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-sky-700"
                   title={t("common.refresh") || "Refresh"}
                 >
                   <RefreshCw size={17} />
@@ -483,7 +487,7 @@ const Favorites: React.FC = () => {
             </div>
 
             {isLoading ? (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {Array.from({ length: 6 }).map((_, i) => (
                   <SkeletonCard key={i} />
                 ))}
@@ -512,7 +516,7 @@ const Favorites: React.FC = () => {
                 <p className="text-sm text-slate-500">{t("favorites.noFilterMatches")}</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {filteredFavorites.map((fav) => (
                   <ModCard
                     key={fav.id}

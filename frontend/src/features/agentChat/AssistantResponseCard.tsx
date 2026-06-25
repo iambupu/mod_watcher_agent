@@ -117,8 +117,8 @@ export const AssistantResponseCard: React.FC<AssistantResponseCardProps> = ({
       )}
 
       {sections.conclusion.length > 0 && (
-        <div className={`${sectionClass} border-teal-200 bg-teal-50/60`}>
-          <p className="mb-1 text-[12px] font-semibold tracking-wide text-teal-700">{t("agent.section.conclusion")}</p>
+        <div className={`${sectionClass} border-cyan-200 bg-cyan-50/60`}>
+          <p className="mb-1 text-[12px] font-semibold tracking-wide text-cyan-700">{t("agent.section.conclusion")}</p>
           <ul className="space-y-1 text-slate-800">
             {sections.conclusion.map((line, idx) => (
               <li key={`conclusion-${idx}`} className="leading-6">{line}</li>
@@ -139,8 +139,8 @@ export const AssistantResponseCard: React.FC<AssistantResponseCardProps> = ({
       )}
 
       {sections.filters.length > 0 && (
-        <div className={`${sectionClass} border-indigo-200 bg-indigo-50/60`}>
-          <p className="mb-1 text-[12px] font-semibold tracking-wide text-indigo-700">{t("agent.section.filters")}</p>
+        <div className={`${sectionClass} border-sky-200 bg-sky-50/60`}>
+          <p className="mb-1 text-[12px] font-semibold tracking-wide text-sky-700">{t("agent.section.filters")}</p>
           <ul className="space-y-1 text-slate-800">
             {sections.filters.map((line, idx) => (
               <li key={`filters-${idx}`} className="leading-6">{line}</li>
@@ -150,8 +150,8 @@ export const AssistantResponseCard: React.FC<AssistantResponseCardProps> = ({
       )}
 
       {sections.results.length > 0 && (
-        <div className={`${sectionClass} border-emerald-200 bg-emerald-50/60`}>
-          <p className="mb-1 text-[12px] font-semibold tracking-wide text-emerald-700">{t("agent.section.results")}</p>
+        <div className={`${sectionClass} border-sky-200 bg-sky-50/60`}>
+          <p className="mb-1 text-[12px] font-semibold tracking-wide text-sky-700">{t("agent.section.results")}</p>
           <ul className="space-y-1 text-slate-800">
             {sections.results.map((line, idx) => (
               <li key={`results-${idx}`} className="leading-6">{line}</li>

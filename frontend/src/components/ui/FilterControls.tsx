@@ -23,7 +23,7 @@ const inputBaseClasses: ControlSizeOption = {
 const inlineSelectContainerClass =
   "inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-1 shadow-sm";
 const inlineSelectFieldClass = "h-8 rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-700";
-const focusClass = "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
+const focusClass = "focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100";
 
 const mergeClasses = (...classes: Array<string | false | null | undefined>) =>
   classes.filter(Boolean).join(" ");
@@ -139,7 +139,7 @@ export const FilterSelect: React.FC<FilterSelectProps> = ({
           className={mergeClasses(
             "h-8 rounded-md",
             "outline-none transition",
-            "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100",
+            "focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100",
             inlineSelectFieldClass,
             fieldClassName,
             className,
@@ -207,11 +207,11 @@ interface FilterButtonGroupProps {
 
 const defaultContainerClassName = "inline-flex";
 const defaultBaseButtonClassName = "inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-semibold transition";
-const defaultActiveClassName = "bg-blue-600 text-white shadow-sm";
+const defaultActiveClassName = "bg-sky-100 text-sky-800 shadow-sm";
 const defaultInactiveClassName = "text-slate-600 hover:bg-slate-50";
 const defaultDisabledClassName = "opacity-50 cursor-not-allowed";
 const filterBarButtonBaseClass =
-  "inline-flex items-center rounded-lg border border-slate-200 bg-white px-4 shadow-sm text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2";
+  "inline-flex items-center rounded-lg border border-slate-200 bg-white px-4 shadow-sm text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2";
 
 export const FilterButtonGroup: React.FC<FilterButtonGroupProps> = ({
   items,

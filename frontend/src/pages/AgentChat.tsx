@@ -526,7 +526,7 @@ const AgentChat: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-3xl font-bold tracking-normal text-slate-950">{t("agent.title")}</h1>
-                  <Sparkles size={24} className="text-blue-600" />
+                  <Sparkles size={24} className="text-sky-600" />
                 </div>
                 <p className="mt-2 text-sm font-semibold text-slate-500">{t("agent.subtitle")}</p>
               </div>
@@ -542,7 +542,7 @@ const AgentChat: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleStartNewConversation}
-                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-blue-200 bg-white px-4 text-sm font-bold text-blue-600 transition hover:bg-blue-50"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-sky-200 bg-white px-4 text-sm font-bold text-sky-700 transition hover:bg-sky-50"
                 >
                   <Plus size={17} />
                   {t("agent.startNewConversation")}
@@ -566,7 +566,7 @@ const AgentChat: React.FC = () => {
                   ) : (
                 <div className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} ${msg.role === "assistant" ? "gap-4" : ""}`}>
                   {msg.role === "assistant" && (
-                    <div className="mt-1 hidden h-12 w-12 shrink-0 items-center justify-center rounded-full border border-blue-100 bg-white text-blue-600 shadow-sm md:flex">
+                    <div className="mt-1 hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-sky-100 bg-white text-sky-700 shadow-sm md:flex">
                       <Sparkles size={22} />
                     </div>
                   )}
@@ -585,7 +585,7 @@ const AgentChat: React.FC = () => {
                     <div
                       className={`rounded-2xl border px-4 py-3 shadow-[0_10px_28px_rgba(15,23,42,0.06)] ${
                       msg.role === "user"
-                        ? "border-blue-500 bg-blue-600 text-white"
+                        ? "border-sky-700 bg-sky-700 text-white"
                         : "border-slate-200 bg-white text-slate-900"
                      }`}
                      >
@@ -639,7 +639,7 @@ const AgentChat: React.FC = () => {
                       type="button"
                       onClick={() => copyMessage(msg.id, msg.text)}
                       className={`mt-2 inline-flex items-center gap-1 text-[12px] ${
-                        msg.role === "user" ? "text-indigo-100 hover:text-white" : "text-slate-500 hover:text-slate-700"
+                        msg.role === "user" ? "text-sky-100 hover:text-white" : "text-slate-500 hover:text-slate-700"
                       }`}
                     >
                       {copiedId === msg.id ? <Check size={12} /> : <Copy size={12} />}
@@ -663,7 +663,7 @@ const AgentChat: React.FC = () => {
           </div>
 
           <div className="bg-slate-50 px-6 pb-5 lg:px-8">
-            <div className="mx-auto max-w-6xl rounded-2xl border border-blue-200 bg-white p-4 shadow-[0_12px_32px_rgba(37,99,235,0.08)]">
+            <div className="mx-auto max-w-6xl rounded-2xl border border-sky-200 bg-white p-4 shadow-[0_12px_32px_rgba(14,165,233,0.08)]">
               <div className="mb-3 flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-500">
                 <span>{t("agent.quickPromptLabel")}</span>
                 {[t("agent.quickPrompt.male"), t("agent.quickPrompt.recent"), t("agent.quickPrompt.downloads"), t("agent.quickPrompt.outfits")].map((prompt) => (
@@ -671,7 +671,7 @@ const AgentChat: React.FC = () => {
                     key={prompt}
                     type="button"
                     onClick={() => setInput(prompt)}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-600 transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-800"
                   >
                     {prompt}
                   </button>
@@ -686,7 +686,7 @@ const AgentChat: React.FC = () => {
                     if (e.key === "Enter") onSubmit();
                   }}
                   placeholder={t("agent.placeholder")}
-                  className="h-12 flex-1 rounded-xl border border-slate-300 px-4 text-[15px] text-slate-900 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  className="h-12 flex-1 rounded-xl border border-slate-300 px-4 text-[15px] text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"
                 />
                 <Button onClick={onSubmit} disabled={mutation.isPending || detailMutation.isPending} className="h-12 w-14 rounded-xl shadow-sm">
                   <Send size={20} />
@@ -801,7 +801,7 @@ const AgentChat: React.FC = () => {
             </>
           }
         >
-          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-blue-100 bg-blue-50 text-blue-600">
+          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-sky-100 bg-sky-50 text-sky-700">
             <Trash2 size={34} />
           </div>
         </ConfirmModal>

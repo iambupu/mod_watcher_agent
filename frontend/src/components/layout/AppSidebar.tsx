@@ -58,12 +58,12 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
   const unreadCount = unread?.count ?? 0;
 
   return (
-    <aside className={`${sidebarOpen ? "w-60" : "w-20"} relative flex h-screen flex-col border-r border-slate-200 bg-slate-50 shadow-[8px_0_30px_rgba(15,23,42,0.04)] transition-all duration-150`}>
+    <aside className={`${sidebarOpen ? "w-60" : "w-20"} relative flex h-screen flex-col border-r border-slate-200 bg-[#f8fbff] shadow-[8px_0_30px_rgba(15,23,42,0.04)] transition-all duration-150`}>
       <button
         type="button"
         onClick={toggleSidebar}
         onMouseUp={(event) => event.currentTarget.blur()}
-        className="absolute right-2 top-1/2 z-20 inline-flex h-12 w-5 -translate-y-1/2 items-center justify-center rounded-md bg-transparent text-slate-400 opacity-0 transition-[background-color,color,opacity] duration-150 hover:bg-slate-100/70 hover:text-slate-600 hover:opacity-100 active:bg-slate-100 focus:outline-none focus-visible:bg-slate-100 focus-visible:text-blue-600 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-200"
+        className="absolute right-2 top-1/2 z-20 inline-flex h-12 w-5 -translate-y-1/2 items-center justify-center rounded-md bg-transparent text-slate-400 opacity-0 transition-[background-color,color,opacity] duration-150 hover:bg-slate-100/70 hover:text-slate-600 hover:opacity-100 active:bg-slate-100 focus:outline-none focus-visible:bg-slate-100 focus-visible:text-sky-700 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-sky-200"
         title={sidebarOpen ? t("settings.hideSidebar") : t("settings.showSidebar")}
         aria-label={sidebarOpen ? t("settings.hideSidebar") : t("settings.showSidebar")}
       >
@@ -100,14 +100,14 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
                 sidebarOpen ? "gap-4 px-5 py-3" : "justify-center px-2 py-3"
                 } ${
                 isActive
-                  ? "bg-blue-50 text-blue-700 shadow-[0_10px_24px_rgba(37,99,235,0.10)] ring-1 ring-blue-100"
+                  ? "bg-sky-50 text-sky-800 shadow-[0_10px_24px_rgba(14,165,233,0.10)] ring-1 ring-sky-100"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"
               }`}
             >
               {isActive && (
-                <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-blue-600" />
+                <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-sky-600" />
               )}
-              <span className={`flex h-7 w-7 items-center justify-center ${isActive ? "text-blue-600" : "text-slate-500"}`}>
+              <span className={`flex h-7 w-7 items-center justify-center ${isActive ? "text-sky-700" : "text-slate-500"}`}>
                 {item.icon}
               </span>
               {sidebarOpen && <span className="truncate leading-6">{t(item.labelKey)}</span>}
@@ -166,44 +166,44 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
             title="Mod Watcher（模组巡望者）"
             onClose={() => setAboutOpen(false)}
             closeAriaLabel={t("common.close")}
-            className="mb-0 border-b border-gray-200 px-4 py-3 shrink-0"
+            className="mb-0 shrink-0 border-b border-slate-200 px-4 py-3"
           />
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm text-gray-700">
               <div className="flex justify-center pb-1">
                 <img src="/mwlogo.png" alt="Mod Watcher" className="h-40 w-auto" />
               </div>
-              <div className="rounded-lg border border-blue-100 bg-gradient-to-r from-blue-50 to-sky-50 px-3 py-2">
-                <p className="mb-1 inline-flex items-center rounded-full bg-blue-600/10 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-blue-700">
+              <div className="rounded-lg border border-sky-100 bg-gradient-to-r from-sky-50 to-cyan-50 px-3 py-2">
+                <p className="mb-1 inline-flex items-center rounded-full bg-sky-600/10 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-sky-700">
                   {t("about.version")}
                 </p>
                 <p className="font-medium">v{appVersion}</p>
               </div>
-              <div className="rounded-lg border border-emerald-100 bg-gradient-to-r from-emerald-50 to-white px-3 py-2">
-                <p className="mb-2 inline-flex items-center rounded-full bg-emerald-600/10 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-emerald-700">
+              <div className="rounded-lg border border-sky-100 bg-gradient-to-r from-sky-50 to-white px-3 py-2">
+                <p className="mb-2 inline-flex items-center rounded-full bg-sky-600/10 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-sky-700">
                   {t("about.changelog")}
                 </p>
                 <p className="break-words leading-6" style={{ whiteSpace: "pre-wrap" }}>{t("about.changelogText")}</p>
               </div>
-              <div className="rounded-lg border border-gray-100 px-3 py-2">
+              <div className="rounded-lg border border-slate-100 px-3 py-2">
                 <p className="mb-1 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-slate-700">{t("about.usage")}</p>
                 <p>{t("about.usageText")}</p>
                 <a
                   href="https://github.com/iambupu/mod_watcher_agent/blob/main/README.md"
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-2 inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                  className="mt-2 inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700 hover:bg-sky-100"
                 >
                   {t("about.usageLink")}
                 </a>
               </div>
-              <div className="rounded-lg border border-gray-100 px-3 py-2">
+              <div className="rounded-lg border border-slate-100 px-3 py-2">
                 <p className="mb-1 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-slate-700">{t("about.developer")}</p>
                 <p>{t("about.developerText")}</p>
                 <a
                   href="https://github.com/iambupu"
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-2 inline-flex items-center rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                  className="mt-2 inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
                 >
                   {t("about.githubProfile")}
                 </a>

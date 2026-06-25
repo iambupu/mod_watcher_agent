@@ -87,7 +87,7 @@ export const NexusModsRulePanel: React.FC = () => {
   );
 
   const selectClass =
-    "h-10 rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm bg-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+    "h-10 rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm bg-white focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500";
 
   return (
     <div className="grid gap-5 lg:grid-cols-3">

@@ -8,9 +8,9 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantClasses: Record<string, string> = {
-  default: "bg-blue-600 text-white hover:bg-blue-700",
-  outline: "border border-gray-300 text-gray-700 hover:bg-gray-50",
-  ghost: "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
+  default: "bg-sky-600 text-white hover:bg-sky-700",
+  outline: "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950",
+  ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-950",
   destructive: "bg-red-600 text-white hover:bg-red-700",
 };
 
@@ -31,7 +31,7 @@ export const Button: React.FC<ButtonProps> = ({
   return (
     <button
       type={type}
-      className={`inline-flex items-center justify-center rounded-md font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
+      className={`inline-flex items-center justify-center rounded-md font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
       {...props}
     >
       {children}

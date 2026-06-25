@@ -166,7 +166,7 @@ function NotificationRow({
   return (
     <div
       className={`px-4 py-3 border-b border-gray-100 cursor-pointer transition-colors ${
-        item.read ? "bg-white" : "bg-blue-50/70"
+        item.read ? "bg-white" : "bg-sky-50/70"
       } hover:bg-gray-50`}
       onClick={handleClick}
     >
@@ -175,7 +175,7 @@ function NotificationRow({
           <div className="flex items-center gap-2">
             <span
               className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${
-                item.read ? "bg-transparent" : "bg-blue-500"
+                item.read ? "bg-transparent" : "bg-sky-500"
               }`}
             />
             <p className="text-sm font-medium text-gray-900 truncate">{item.subject}</p>
@@ -216,8 +216,8 @@ function statusLabel(status: string, t: (key: string) => string): string {
 }
 
 function statusClassName(status: string): string {
-  if (status === "sent") return "text-green-600";
-  if (status === "pending") return "text-blue-600";
+  if (status === "sent") return "text-sky-600";
+  if (status === "pending") return "text-sky-600";
   if (status === "skipped") return "text-amber-600";
   return "text-red-500";
 }

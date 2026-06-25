@@ -33,7 +33,7 @@ export const AdultPolicyField: React.FC<AdultPolicyFieldProps> = ({
         onChange={(e) =>
           onChange({ adultPolicy: e.target.value as AdultPolicy })
         }
-        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
       >
         {options.map((opt) => (
           <option key={opt} value={opt}>

@@ -23,9 +23,9 @@ export const SourceTabs: React.FC = () => {
             role="tab"
             aria-selected={isActive}
             onClick={() => switchSource(source)}
-            className={`flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-bold transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset ${
+            className={`flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-bold transition-all focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-inset ${
               isActive
-                ? "bg-blue-600 text-white shadow-sm"
+                ? "bg-sky-600 text-white shadow-sm"
                 : "text-slate-600 hover:bg-white hover:text-slate-900"
             }`}
           >
