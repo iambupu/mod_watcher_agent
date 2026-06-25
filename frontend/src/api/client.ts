@@ -27,7 +27,7 @@ export function setSecurityToken(token: string): void {
   localStorage.setItem(SECURITY_TOKEN_STORAGE_KEY, value);
 }
 
-export function clearSecurityToken(): void {
+function clearSecurityToken(): void {
   localStorage.removeItem(SECURITY_TOKEN_STORAGE_KEY);
 }
 

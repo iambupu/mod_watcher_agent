@@ -2,12 +2,12 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { clearSecurityToken, get, post, setSecurityToken } from "./client";
+import { get, post, setSecurityToken } from "./client";
 
 
 describe("api client security token", () => {
   afterEach(() => {
-    clearSecurityToken();
+    setSecurityToken("");
     vi.restoreAllMocks();
   });
 
@@ -34,7 +34,7 @@ describe("api client security token", () => {
       json: async () => ({ ok: true }),
     } as Response);
 
-    clearSecurityToken();
+    setSecurityToken("");
     await get<{ ok: boolean }>("/settings");
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;

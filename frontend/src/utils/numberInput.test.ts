@@ -6,7 +6,6 @@ import {
   clampIntegerInput,
   clampNumberInput,
   nonNegativeNumberValue,
-  numberValue,
   parseIntegerInput,
   parseWholeIntegerInput,
 } from "./numberInput";
@@ -40,18 +39,13 @@ describe("number input helpers", () => {
     expect(parseWholeIntegerInput("", { allowEmpty: true })).toBeUndefined();
   });
 
-  it("normalizes runtime numeric values from API/cache payloads", () => {
-    expect(numberValue(42)).toBe(42);
-    expect(numberValue("42")).toBe(42);
-    expect(numberValue(" 42.5 ")).toBe(42.5);
-    expect(numberValue("")).toBeNull();
-    expect(numberValue("bad")).toBeNull();
-    expect(numberValue(Number.NaN)).toBeNull();
-  });
-
   it("rejects negative runtime metrics", () => {
     expect(nonNegativeNumberValue("12")).toBe(12);
     expect(nonNegativeNumberValue(0)).toBe(0);
+    expect(nonNegativeNumberValue(" 42.5 ")).toBe(42.5);
+    expect(nonNegativeNumberValue("")).toBeNull();
+    expect(nonNegativeNumberValue("bad")).toBeNull();
+    expect(nonNegativeNumberValue(Number.NaN)).toBeNull();
     expect(nonNegativeNumberValue("-1")).toBeNull();
   });
 });

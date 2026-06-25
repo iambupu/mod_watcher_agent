@@ -104,7 +104,7 @@ export function clampNumberInput(
   return Math.min(max, Math.max(min, parsed));
 }
 
-export function numberValue(value: unknown): number | null {
+function numberValue(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
   }

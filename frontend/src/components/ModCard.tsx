@@ -31,7 +31,6 @@ interface ModCardProps {
   isFavorited?: boolean;
   onToggleFavorite?: () => void;
   showBottomFavoriteAction?: boolean;
-  measureSummaryOverflow?: boolean;
   onIgnore?: () => void;
   onRegenerateSummary?: () => void;
   regeneratingSummary?: boolean;
@@ -47,7 +46,7 @@ const sourceBadgeTone: Record<ModItem["source"], string> = {
     "border-sky-300/70 bg-sky-50/95 text-sky-900 shadow-[0_8px_24px_rgba(2,132,199,0.16)]",
 };
 
-export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onToggleFavorite, showBottomFavoriteAction = true, measureSummaryOverflow = true, onIgnore, onRegenerateSummary, regeneratingSummary = false, onGenerateIntroduction, generatingIntroduction = false, footerContent }) => {
+export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onToggleFavorite, showBottomFavoriteAction = true, onIgnore, onRegenerateSummary, regeneratingSummary = false, onGenerateIntroduction, generatingIntroduction = false, footerContent }) => {
   const { t } = useTranslation();
   const summaryMode = useUIStore((s) => s.summaryMode);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
@@ -74,10 +73,6 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
   });
   const summaryIsTruncated = Boolean(fullSummary) && summary !== fullSummary;
   useEffect(() => {
-    if (!measureSummaryOverflow) {
-      setSummaryOverflow(false);
-      return;
-    }
     const el = summaryRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const updateOverflow = () => {
@@ -87,7 +82,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
     const observer = new ResizeObserver(updateOverflow);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [measureSummaryOverflow, summary, fullSummary, summaryMode, summaryExpanded]);
+  }, [summary, fullSummary, summaryMode, summaryExpanded]);
 
   const canToggleSummary = summaryExpanded || summaryOverflow || summaryIsTruncated;
 
