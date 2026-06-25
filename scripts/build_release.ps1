@@ -39,11 +39,47 @@ function Get-Sha256Hex {
     return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
 }
 
+function Test-ReleasePathExcluded {
+    param(
+        [System.IO.FileSystemInfo]$Item,
+        [string]$Rel,
+        [string[]]$ExcludeRelGlobs,
+        [string[]]$ExcludeDirNames,
+        [string[]]$ExcludeFileGlobs
+    )
+
+    $normalizedRel = $Rel -replace '/', '\'
+    foreach ($glob in $ExcludeRelGlobs) {
+        if ($normalizedRel -like $glob) {
+            return $true
+        }
+    }
+
+    $parts = @($normalizedRel -split '[\\/]' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    foreach ($dirName in $ExcludeDirNames) {
+        if ($parts -contains $dirName) {
+            return $true
+        }
+    }
+
+    if (-not $Item.PSIsContainer) {
+        foreach ($glob in $ExcludeFileGlobs) {
+            if ($Item.Name -like $glob) {
+                return $true
+            }
+        }
+    }
+
+    return $false
+}
+
 function Copy-TreeFiltered {
     param(
         [string]$Src,
         [string]$Dst,
-        [string[]]$ExcludeRelGlobs
+        [string[]]$ExcludeRelGlobs = @(),
+        [string[]]$ExcludeDirNames = @(),
+        [string[]]$ExcludeFileGlobs = @()
     )
     New-Item -ItemType Directory -Force -Path $Dst | Out-Null
 
@@ -52,14 +88,9 @@ function Copy-TreeFiltered {
     $items = @(Get-ChildItem -LiteralPath $srcRoot -Recurse -Force -ErrorAction SilentlyContinue)
     foreach ($item in $items) {
         $rel = $item.FullName.Substring($srcRoot.Length).TrimStart('\', '/')
-        $skip = $false
-        foreach ($glob in $ExcludeRelGlobs) {
-            if ($rel -like $glob) {
-                $skip = $true
-                break
-            }
+        if (Test-ReleasePathExcluded -Item $item -Rel $rel -ExcludeRelGlobs $ExcludeRelGlobs -ExcludeDirNames $ExcludeDirNames -ExcludeFileGlobs $ExcludeFileGlobs) {
+            continue
         }
-        if ($skip) { continue }
         $target = Join-Path $Dst $rel
         if ($item.PSIsContainer) {
             New-Item -ItemType Directory -Force -Path $target | Out-Null
@@ -305,25 +336,30 @@ Copy-Item -LiteralPath (Join-Path $root "start-debug.bat") -Destination (Join-Pa
 Copy-Item -LiteralPath (Join-Path $root "start.bat") -Destination (Join-Path $stagingRoot "start.bat") -Force
 Copy-Item -LiteralPath (Join-Path $root "start.ps1") -Destination (Join-Path $stagingRoot "start.ps1") -Force
 
-Copy-TreeFiltered -Src (Join-Path $root "backend") -Dst (Join-Path $stagingRoot "backend") -ExcludeRelGlobs @(
-    ".venv\*",
-    "__pycache__",
-    "__pycache__\*",
-    ".pytest_cache",
-    ".pytest_cache\*",
-    ".mypy_cache",
-    ".mypy_cache\*",
-    ".ruff_cache",
-    ".ruff_cache\*",
-    "logs",
-    "logs\*",
-    "mod_watcher_agent.egg-info",
-    "mod_watcher_agent.egg-info\*",
-    "tests",
-    "tests\*",
-    ".env",
-    "mod_watcher.db"
-)
+Copy-TreeFiltered -Src (Join-Path $root "backend") -Dst (Join-Path $stagingRoot "backend") `
+    -ExcludeRelGlobs @(".env") `
+    -ExcludeDirNames @(
+        ".venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "data",
+        "logs",
+        "tests",
+        ".test-log",
+        ".tmp",
+        ".test_aliases",
+        "mod_watcher_agent.egg-info"
+    ) `
+    -ExcludeFileGlobs @(
+        ".env",
+        "*.pyc",
+        "mod_watcher.db",
+        "mod_watcher.db-*",
+        "stdout.txt",
+        "stderr.txt"
+    )
 
 New-Item -ItemType Directory -Force -Path (Join-Path $stagingRoot "frontend\dist") | Out-Null
 Copy-TreeFiltered -Src (Join-Path $root "frontend\dist") -Dst (Join-Path $stagingRoot "frontend\dist") -ExcludeRelGlobs @()
