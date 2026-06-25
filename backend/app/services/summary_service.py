@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from time import perf_counter
 from weakref import WeakKeyDictionary
 
+from sqlalchemy import func, or_
+from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
 from app.models.mod import Mod
@@ -620,32 +622,14 @@ class SummaryService:
         if not language:
             language = SettingsService(self.session).get("summary_language") or "zh-CN"
 
-        stmt = select(Mod)
-        if mod_ids is not None:
-            if not mod_ids:
-                return {"scanned": 0, "generated": 0, "failed": 0, "failures": [], "mod_ids": []}
-            stmt = stmt.where(Mod.id.in_(mod_ids))
         if max_items is not None and max_items <= 0:
             return {"scanned": 0, "generated": 0, "failed": 0, "failures": [], "mod_ids": []}
 
-        stmt = stmt.order_by(Mod.id)
-        mods = self.session.exec(stmt).all()
-        mods_missing: list[Mod] = []
-        for mod_batch in _batched(mods, SUMMARY_LOOKUP_BATCH_SIZE):
-            mod_ids_batch = [mod.id for mod in mod_batch if mod.id is not None]
-            valid_summary_by_mod = load_summary_map(self.session, mod_ids_batch, language, "brief")
-            for mod in mod_batch:
-                if (
-                    mod.id is not None
-                    and mod.id not in valid_summary_by_mod
-                    and (mod.original_summary or mod.title)
-                ):
-                    mods_missing.append(mod)
-                    if max_items is not None and len(mods_missing) >= max_items:
-                        break
-            if max_items is not None and len(mods_missing) >= max_items:
-                break
-        mod_ids_missing = [mod.id for mod in mods_missing if mod.id is not None]
+        mod_ids_missing = self._summary_refresh_candidate_ids(
+            language=language,
+            mod_ids=mod_ids,
+            max_items=max_items,
+        )
         self.session.rollback()
 
         count = 0
@@ -677,3 +661,58 @@ class SummaryService:
             "failures": failures,
             "mod_ids": mod_ids_missing,
         }
+
+    def _summary_refresh_candidate_ids(
+        self,
+        *,
+        language: str,
+        mod_ids: list[int] | None,
+        max_items: int | None,
+    ) -> list[int]:
+        """Return mods that need a brief summary without loading the full mods table."""
+        if mod_ids is not None and not mod_ids:
+            return []
+
+        latest_summary_ids = (
+            select(
+                ModSummary.mod_id,
+                func.max(ModSummary.id).label("latest_summary_id"),
+            )
+            .where(
+                ModSummary.language == language,
+                ModSummary.summary_type == "brief",
+            )
+            .group_by(ModSummary.mod_id)
+            .subquery()
+        )
+        latest_summary = aliased(ModSummary)
+        source_changed_at = func.coalesce(
+            Mod.updated_at_remote,
+            Mod.published_at_remote,
+            Mod.created_at_remote,
+            Mod.first_seen_at,
+            "",
+        )
+        source_text = func.trim(func.coalesce(Mod.original_summary, Mod.title, ""))
+        refresh_reasons = [
+            latest_summary.id.is_(None),
+            latest_summary.generated_at.is_(None),
+            latest_summary.generated_at < source_changed_at,
+        ]
+        if _is_chinese_language(language) and self.session.get_bind().dialect.name == "sqlite":
+            refresh_reasons.append(~latest_summary.content.op("GLOB")("*[一-鿿]*"))
+
+        stmt = (
+            select(Mod.id)
+            .outerjoin(latest_summary_ids, latest_summary_ids.c.mod_id == Mod.id)
+            .outerjoin(latest_summary, latest_summary.id == latest_summary_ids.c.latest_summary_id)
+            .where(Mod.id.is_not(None), source_text != "", or_(*refresh_reasons))
+            .order_by(source_changed_at.desc(), Mod.id.asc())
+        )
+        if mod_ids is not None:
+            stmt = stmt.where(Mod.id.in_(mod_ids))
+        if max_items is not None:
+            stmt = stmt.limit(max_items)
+
+        rows = self.session.exec(stmt).all()
+        return [int(row) for row in rows if row is not None]

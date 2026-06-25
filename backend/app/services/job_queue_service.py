@@ -1,3 +1,5 @@
+import logging
+
 from sqlmodel import Session
 
 from app.jobs.check_favorite_updates import check_favorite_updates
@@ -10,10 +12,13 @@ from app.models.job_run import JobRun
 from app.services.system_notification_service import SystemNotificationService
 from app.utils.boolean import parse_bool
 
+logger = logging.getLogger(__name__)
+
 
 def queue_discover_all(session: Session) -> JobRun:
     job = create_job_run(session, "discover_all")
-    SystemNotificationService(session).create_event(
+    _create_queue_event(
+        session,
         "job_queued",
         "发现任务已加入队列",
         "正在准备抓取新的 Mod",
@@ -44,7 +49,8 @@ def queue_nexusmods_game_import(
             "max_batches": max_batches,
         },
     )
-    SystemNotificationService(session).create_event(
+    _create_queue_event(
+        session,
         "job_queued",
         "NexusMods 导入任务已加入队列",
         f"正在分批导入 {game_domain_name} 的 Mod 信息",
@@ -92,6 +98,14 @@ def queue_generate_summaries(session: Session) -> JobRun:
 
     enqueue_job_run(job.id, handler)
     return job
+
+
+def _create_queue_event(session: Session, event_type: str, title: str, message: str) -> None:
+    try:
+        SystemNotificationService(session).create_event(event_type, title, message)
+    except Exception:
+        session.rollback()
+        logger.warning("Failed to create queued job notification: %s", title, exc_info=True)
 
 
 def _count_numeric_values(result: dict) -> tuple[int, int]:

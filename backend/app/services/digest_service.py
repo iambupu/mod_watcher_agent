@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, time, timedelta
 from typing import Literal
@@ -19,12 +20,15 @@ from app.services.system_notification_service import SystemNotificationService
 from app.utils.boolean import parse_bool
 from app.utils.time import parse_utc_datetime
 
+logger = logging.getLogger(__name__)
+
 DigestPeriod = Literal["daily", "weekly"]
 DigestTextGenerator = Callable[
     [SettingsService, DigestPeriod, datetime, datetime, list[Mod], list[dict]],
     Awaitable[tuple[str, str, str]],
 ]
 
+MIN_DIGEST_REPORT_CHARS = 20
 DAILY_LAST_RUN_KEY = "digest_daily_last_window_end"
 WEEKLY_LAST_RUN_KEY = "digest_weekly_last_window_end"
 
@@ -139,6 +143,11 @@ def build_digest_context(mods: list[Mod], updates: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def digest_report_is_usable(report: str) -> bool:
+    """判断 LLM 返回内容是否足够作为摘要通知写入。"""
+    return len((report or "").strip()) >= MIN_DIGEST_REPORT_CHARS
+
+
 async def generate_digest_text(
     settings_svc: SettingsService,
     period: DigestPeriod,
@@ -168,9 +177,16 @@ async def generate_digest_text(
         if not provider_config_has_credentials(provider_config):
             continue
         client = create_llm_client(used_provider, api_key, base_url)
-        report = await client.chat(prompt, used_model, max_tokens=1800)
-        if report.strip():
-            return report.strip(), used_provider, used_model
+        report = (await client.chat(prompt, used_model, max_tokens=1800)).strip()
+        if digest_report_is_usable(report):
+            return report, used_provider, used_model
+        if report:
+            logger.warning(
+                "Digest LLM response from provider %s model %s was too short: %r",
+                used_provider,
+                used_model,
+                report[:80],
+            )
     return "", "none", "none"
 
 
@@ -196,7 +212,8 @@ async def send_digest_for_window(
 
     mods, updates = collect_digest_items(session, window_start, window_end)
     report, provider, model = await generate_text(settings_svc, period, window_start, window_end, mods, updates)
-    if not report:
+    report = (report or "").strip()
+    if not digest_report_is_usable(report):
         return {
             "generated": False,
             "reason": "llm_unavailable",
