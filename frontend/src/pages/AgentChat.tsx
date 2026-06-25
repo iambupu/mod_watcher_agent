@@ -55,6 +55,13 @@ const AgentChat: React.FC = () => {
   const copiedTimerRef = useRef<number | null>(null);
   const scrollTimerRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const sessionVersionRef = useRef<Map<string, number>>(new Map());
+
+  const getSessionVersion = (sessionId: string) => sessionVersionRef.current.get(sessionId) ?? 0;
+  const bumpSessionVersion = (sessionId: string) => {
+    const nextVersion = getSessionVersion(sessionId) + 1;
+    sessionVersionRef.current.set(sessionId, nextVersion);
+  };
 
   const favoritesQuery = useQuery({
     queryKey: ["favorites", "refs"],
@@ -245,6 +252,7 @@ const AgentChat: React.FC = () => {
       message: string;
       history: AgentHistoryItem[];
       sessionId: string;
+      sessionVersion: number;
       providerOverride?: string;
       modelOverride?: string;
     }) =>
@@ -253,6 +261,7 @@ const AgentChat: React.FC = () => {
         modelOverride,
       }),
     onSuccess: (data, variables) => {
+      if (getSessionVersion(variables.sessionId) !== variables.sessionVersion) return;
       setMessages((prev) => [
         ...prev,
         {
@@ -272,6 +281,7 @@ const AgentChat: React.FC = () => {
       }
     },
     onError: (error, variables) => {
+      if (getSessionVersion(variables.sessionId) !== variables.sessionVersion) return;
       setMessages((prev) => [
         ...prev,
         {
@@ -298,6 +308,7 @@ const AgentChat: React.FC = () => {
       message: buildScopedMessage(message),
       history: buildHistory(messages, requestSessionId),
       sessionId: requestSessionId,
+      sessionVersion: getSessionVersion(requestSessionId),
       providerOverride: selectedModelOption?.provider,
       modelOverride: selectedModelOption?.model,
     });
@@ -329,6 +340,7 @@ const AgentChat: React.FC = () => {
       question?: string;
       history: AgentHistoryItem[];
       sessionId: string;
+      sessionVersion: number;
       providerOverride?: string;
       modelOverride?: string;
     }) =>
@@ -337,6 +349,7 @@ const AgentChat: React.FC = () => {
         modelOverride,
       }),
     onSuccess: (data, variables) => {
+      if (getSessionVersion(variables.sessionId) !== variables.sessionVersion) return;
       setMessages((prev) => [
         ...prev,
         {
@@ -425,6 +438,7 @@ const AgentChat: React.FC = () => {
       question: askText,
       history: buildHistory(messages, requestSessionId),
       sessionId: requestSessionId,
+      sessionVersion: getSessionVersion(requestSessionId),
       providerOverride: selectedModelOption?.provider,
       modelOverride: selectedModelOption?.model,
     });
@@ -482,6 +496,7 @@ const AgentChat: React.FC = () => {
       createWelcomeMessage(currentSessionId, `${Date.now()}-assistant-cleared`),
     ];
     try {
+      bumpSessionVersion(currentSessionId);
       await clearConversation(currentSessionId);
       setMessages(nextMessages);
       setClearConfirmOpen(false);
