@@ -10,6 +10,7 @@ import { arrayOrEmpty } from "@/utils/array";
 export interface ModsQueryParams {
   game?: string;
   source?: string;
+  category?: string;
   contentLanguage?: string;
   search?: string;
   adultContent?: "include" | "exclude" | "only";
@@ -25,10 +26,17 @@ export interface ModGameOption {
   count: number;
 }
 
+export interface ModCategoryOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
 function buildModsQuery(params: ModsQueryParams): Record<string, string> {
   const query: Record<string, string> = {};
   if (params.game) query.game = params.game;
   if (params.source) query.source = params.source;
+  if (params.category) query.category = params.category;
   if (params.contentLanguage) query.content_language = params.contentLanguage;
   if (params.search) query.search = params.search;
   if (params.adultContent) query.adult_content = params.adultContent;
@@ -56,6 +64,10 @@ export async function fetchRecommendedMods(limit = 5): Promise<ModList> {
 
 export async function fetchModGames(): Promise<ModGameOption[]> {
   return get<unknown>("/mods/games").then((data) => arrayOrEmpty<ModGameOption>(data));
+}
+
+export async function fetchModCategories(): Promise<ModCategoryOption[]> {
+  return get<unknown>("/mods/categories").then((data) => arrayOrEmpty<ModCategoryOption>(data));
 }
 
 export async function fetchMod(id: number): Promise<ModItem> {

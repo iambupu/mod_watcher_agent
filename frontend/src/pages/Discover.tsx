@@ -23,6 +23,7 @@ import {
   TrendingUp,
   DownloadCloud,
   Search,
+  Tags,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -37,6 +38,7 @@ import { ModFilterPanel } from "@/components/ModFilterPanel";
 import { Panel } from "@/components/ui/Panel";
 import {
   fetchIgnoredMods,
+  fetchModCategories,
   fetchModGames,
   fetchMods,
   generateModIntroduction,
@@ -50,6 +52,7 @@ import { useUIStore } from "@/stores/uiStore";
 import { formatModSummary } from "@/utils/modSummary";
 import { formatModTitle } from "@/utils/modTitle";
 import { isAdultContent } from "@/utils/modAdult";
+import { formatModCategory } from "@/utils/modCategory";
 import { parseIntegerInput, parseWholeIntegerInput } from "@/utils/numberInput";
 import type { ModItem, ModSource, AdultPolicy, SummaryMode } from "@/types";
 
@@ -119,6 +122,7 @@ const Discover: React.FC = () => {
   const queryClient = useQueryClient();
   const { summaryMode, setSummaryMode } = useUIStore();
   const [game, setGame] = useState("");
+  const [category, setCategory] = useState("");
   const [searchText, setSearchText] = useState("");
   const [search, setSearch] = useState("");
   const [source, setSource] = useState<ModSource | "">("");
@@ -158,6 +162,10 @@ const Discover: React.FC = () => {
     queryKey: ["mod-games"],
     queryFn: fetchModGames,
   });
+  const { data: categoryOptions = [] } = useQuery({
+    queryKey: ["mod-categories"],
+    queryFn: fetchModCategories,
+  });
   const { data: favorites = [] } = useQuery({
     queryKey: ["favorites", "refs"],
     queryFn: fetchFavoriteRefs,
@@ -168,6 +176,7 @@ const Discover: React.FC = () => {
   const queryParams = useMemo(
     () => ({
       game: game || undefined,
+      category: category || undefined,
       search: search || undefined,
       source: source || undefined,
       contentLanguage: contentLanguage === "any" ? undefined : contentLanguage,
@@ -177,7 +186,7 @@ const Discover: React.FC = () => {
       offset,
       limit: pageSize,
     }),
-    [adultPolicy, contentLanguage, game, offset, pageSize, search, sort, source]
+    [adultPolicy, category, contentLanguage, game, offset, pageSize, search, sort, source]
   );
 
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -286,6 +295,7 @@ const Discover: React.FC = () => {
       }
       setLastResult(t("discover.importFinished", { created: job.items_matched, scanned: job.items_scanned }));
       queryClient.invalidateQueries({ queryKey: ["mod-games"] });
+      queryClient.invalidateQueries({ queryKey: ["mod-categories"] });
       refetch();
     } catch (e) {
       if (isCurrentRun()) {
@@ -566,6 +576,27 @@ const Discover: React.FC = () => {
                       <option value="">{t("discover.allSources")}</option>
                       <option value="nexusmods">{t("discover.sourceNexusmods")}</option>
                       <option value="loverslab">{t("discover.sourceLoverslab")}</option>
+                    </>
+                  ),
+                },
+                {
+                  key: "category",
+                  label: t("discover.category"),
+                  value: category,
+                  onChange: (value) => {
+                    setCategory(value);
+                    setPage(1);
+                  },
+                  icon: <Tags size={18} />,
+                  className: "w-full md:w-[calc(50%-0.375rem)] xl:w-[320px]",
+                  children: (
+                    <>
+                      <option value="">{t("discover.allCategories")}</option>
+                      {categoryOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {formatModCategory(option.label, t)} ({option.count})
+                        </option>
+                      ))}
                     </>
                   ),
                 },

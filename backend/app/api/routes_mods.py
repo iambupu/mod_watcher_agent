@@ -12,7 +12,7 @@ from app.jobs.generate_summaries import (
     run_single_summary_job,
 )
 from app.jobs.manual_jobs import create_job_run, enqueue_job_run
-from app.schemas.mod import ModGameOption, ModList, ModRead
+from app.schemas.mod import ModCategoryOption, ModGameOption, ModList, ModRead
 from app.services.mod_service import ModService
 
 router = APIRouter(prefix="/api/mods", tags=["mods"])
@@ -25,6 +25,7 @@ def list_mods(
     session: SessionDep,
     game: str | None = Query(default=None),
     source: str | None = Query(default=None),
+    category: str | None = Query(default=None),
     search: str | None = Query(default=None),
     content_language: str | None = Query(default=None),
     adult_content: Literal["include", "exclude", "only"] | None = Query(default=None),
@@ -38,6 +39,7 @@ def list_mods(
     displays, total, language, missing_ids = mod_service.list_mod_displays(
         game=game,
         source=source,
+        category=category,
         search=search,
         content_language=content_language,
         adult_content=adult_content,
@@ -77,11 +79,25 @@ def list_mod_games(
     return sorted(merged.values(), key=lambda option: (-option.count, option.label))
 
 
+@router.get("/categories", response_model=list[ModCategoryOption])
+def list_mod_categories(
+    session: SessionDep,
+):
+    """Return category filter options aggregated from the current mod list."""
+    rows = ModService(session).list_category_options()
+    return [
+        ModCategoryOption(value=category, label=category, count=count)
+        for category, count in rows
+        if category
+    ]
+
+
 @router.get("/ignored", response_model=ModList)
 def list_ignored_mods(
     session: SessionDep,
     game: str | None = Query(default=None),
     source: str | None = Query(default=None),
+    category: str | None = Query(default=None),
     search: str | None = Query(default=None),
     content_language: str | None = Query(default=None),
     adult_content: Literal["include", "exclude", "only"] | None = Query(default=None),
@@ -94,6 +110,7 @@ def list_ignored_mods(
     displays, total, _language, _missing_ids = ModService(session).list_mod_displays(
         game=game,
         source=source,
+        category=category,
         search=search,
         content_language=content_language,
         adult_content=adult_content,

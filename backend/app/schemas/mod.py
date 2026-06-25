@@ -47,5 +47,11 @@ class ModGameOption(BaseModel):
     count: int
 
 
+class ModCategoryOption(BaseModel):
+    value: str
+    label: str
+    count: int
+
+
 class ModIgnore(BaseModel):
     ignored: bool = True

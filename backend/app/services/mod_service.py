@@ -55,6 +55,7 @@ class ModService:
         self,
         game: str | None,
         source: str | None,
+        category: str | None,
         content_language: str | None,
         adult_content: Literal["include", "exclude", "only"] | None,
         *,
@@ -66,6 +67,8 @@ class ModService:
             conditions.append(or_(Mod.game == game, Mod.game_domain == game))
         if source is not None:
             conditions.append(Mod.source == source)
+        if category is not None:
+            conditions.append(Mod.category == category)
         language_condition = self._build_content_language_condition(content_language)
         if language_condition is not None:
             conditions.append(language_condition)
@@ -95,6 +98,7 @@ class ModService:
         self,
         game: str | None,
         source: str | None,
+        category: str | None,
         search: str | None,
         content_language: str | None,
         adult_content: Literal["include", "exclude", "only"] | None,
@@ -106,7 +110,7 @@ class ModService:
         ignored: bool = False,
     ) -> tuple[list[Mod], int, str, dict[int, str], dict[int, str], list[int]]:
         """分页查询 Mod，并返回对应语言的简短摘要和介绍映射。"""
-        conditions = self._build_mod_conditions(game, source, content_language, adult_content, ignored=ignored)
+        conditions = self._build_mod_conditions(game, source, category, content_language, adult_content, ignored=ignored)
         has_search = bool(search and search.strip())
 
         sort_by = _normalize_sort_by(sort_by)
@@ -121,6 +125,7 @@ class ModService:
                 terms=terms,
                 game=game,
                 source=source,
+                category=category,
                 content_language=content_language,
                 adult_content=adult_content,
                 sort_by=sort_by,
@@ -188,6 +193,7 @@ class ModService:
         self,
         game: str | None,
         source: str | None,
+        category: str | None,
         search: str | None,
         content_language: str | None,
         adult_content: Literal["include", "exclude", "only"] | None,
@@ -209,6 +215,7 @@ class ModService:
         ) = self.list_mods_with_summaries(
             game=game,
             source=source,
+            category=category,
             search=search,
             content_language=content_language,
             adult_content=adult_content,
@@ -234,6 +241,7 @@ class ModService:
         terms: list[str],
         game: str | None,
         source: str | None,
+        category: str | None,
         content_language: str | None,
         adult_content: Literal["include", "exclude", "only"] | None,
         sort_by: str,
@@ -250,6 +258,7 @@ class ModService:
                 terms=terms,
                 game=game,
                 source=source,
+                category=category,
                 content_language=content_language,
                 adult_content=adult_content,
                 sort_by=sort_by,
@@ -267,6 +276,9 @@ class ModService:
         if source is not None:
             where_clauses.append("m.source = :source")
             params["source"] = source
+        if category is not None:
+            where_clauses.append("m.category = :category")
+            params["category"] = category
         language_key = (content_language or "").strip().lower()
         keywords = CONTENT_LANGUAGE_KEYWORDS.get(language_key)
         if keywords:
@@ -291,6 +303,16 @@ class ModService:
                 "m.id IN (SELECT mod_id FROM mods_fts WHERE mods_fts MATCH :match_query)"
             )
             params["match_query"] = match_query
+        trigram_terms = [term for term in terms if _is_long_cjk_term(term)]
+        trigram_match_query = _fts_or_query(trigram_terms)
+        if trigram_match_query:
+            search_fragments.append(
+                "m.id IN ("
+                "SELECT mod_id FROM mods_fts_trigram "
+                "WHERE mods_fts_trigram MATCH :trigram_match_query"
+                ")"
+            )
+            params["trigram_match_query"] = trigram_match_query
 
         probe_terms = [term for term in terms if _requires_like_probe(term)]
         per_term_direct: list[str] = []
@@ -354,15 +376,12 @@ class ModService:
             self.session.rollback()
             return False
         try:
-            fts_count = int(self.session.execute(text("SELECT COUNT(1) FROM mods_fts")).scalar_one() or 0)
-            mod_count = int(
-                self.session.execute(text("SELECT COUNT(1) FROM mods WHERE id IS NOT NULL")).scalar_one()
-                or 0
-            )
+            has_fts_rows = self.session.execute(text("SELECT 1 FROM mods_fts LIMIT 1")).first() is not None
+            has_mod_rows = self.session.execute(text("SELECT 1 FROM mods WHERE id IS NOT NULL LIMIT 1")).first() is not None
         except Exception:
             self.session.rollback()
             return False
-        if mod_count > 0 and fts_count <= 0:
+        if has_mod_rows and not has_fts_rows:
             rebuild_mods_fts(self.session)
         return True
 
@@ -372,6 +391,7 @@ class ModService:
         terms: list[str],
         game: str | None,
         source: str | None,
+        category: str | None,
         content_language: str | None,
         adult_content: Literal["include", "exclude", "only"] | None,
         sort_by: str,
@@ -380,7 +400,7 @@ class ModService:
         limit: int,
         ignored: bool,
     ) -> tuple[list[Mod], int]:
-        conditions = self._build_mod_conditions(game, source, content_language, adult_content, ignored=ignored)
+        conditions = self._build_mod_conditions(game, source, category, content_language, adult_content, ignored=ignored)
         if not terms:
             return [], 0
         search_condition = _build_mod_search_condition(terms)
@@ -504,6 +524,19 @@ class ModService:
             .where(Mod.ignored == False)  # noqa: E712
             .group_by(Mod.game_domain, Mod.game)
             .order_by(func.count(Mod.id).desc(), Mod.game.asc())
+        )
+        return self.session.exec(stmt).all()
+
+    def list_category_options(self) -> list[tuple[str, int]]:
+        """统计未忽略 Mod 中可供筛选的分类选项。"""
+        stmt = (
+            select(
+                Mod.category,
+                func.count(Mod.id),
+            )
+            .where(Mod.ignored == False, Mod.category.is_not(None), Mod.category != "")  # noqa: E712
+            .group_by(Mod.category)
+            .order_by(func.count(Mod.id).desc(), Mod.category.asc())
         )
         return self.session.exec(stmt).all()
 
@@ -638,7 +671,20 @@ def _requires_like_probe(term: str) -> bool:
     value = str(term or "").strip()
     if not value:
         return False
+    return _contains_cjk(value) and not _is_long_cjk_term(value)
+
+
+def _is_long_cjk_term(term: str) -> bool:
+    value = str(term or "").strip()
+    return _contains_cjk(value) and _cjk_char_count(value) >= 3
+
+
+def _contains_cjk(value: str) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in value)
+
+
+def _cjk_char_count(value: str) -> int:
+    return sum(1 for char in value if "\u4e00" <= char <= "\u9fff")
 
 
 def _is_ascii_alnum_token(value: str) -> bool:
