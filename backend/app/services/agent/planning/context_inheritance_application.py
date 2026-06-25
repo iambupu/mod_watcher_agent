@@ -121,6 +121,7 @@ def apply_followup_context(raw: dict[str, Any], context: dict[str, Any], query: 
         raw["_agent_context_signal"]["llm_selected"] = True
         raw["_agent_context_signal"]["llm_confidence"] = context.get("llm_confidence")
         raw["_agent_context_signal"]["llm_reason"] = context.get("llm_reason")
+    _apply_dual_retrieval_signal(raw, inherit_mode)
     logger.info(
         "agent.context_inherit source=%s inherited=%s inherit_mode=%s inherited_fields=%s skipped_reason=%s overridden_by_current_signal=%s inherit_keywords=%s followup_score=%.2f continuity_score=%.2f inherit_score=%.2f inherit_threshold=%.2f topic_shift=%s low_signal=%s quality_score=%.2f reasons=%s policy_reasons=%s current_keywords=%s context_keywords=%s context_semantic_anchors=%s fallback_keywords=%s blocked_terms=%s",
         context.get("source"),
@@ -170,6 +171,17 @@ def mark_current_context_not_inherited(raw: dict[str, Any], context: dict[str, A
         "overridden_by_current_signal": True,
         "reasons": [],
         "policy_reasons": [],
+    }
+
+
+def _apply_dual_retrieval_signal(raw: dict[str, Any], inherit_mode: str) -> None:
+    if inherit_mode not in {"fallback_keywords", "constraints_only"}:
+        return
+    raw["_agent_dual_retrieval"] = {
+        "enabled": True,
+        "reason": inherit_mode,
+        "reserve_min": 3,
+        "reserve_ratio": 0.5,
     }
 
 
@@ -306,6 +318,13 @@ def _is_weak_keyword(token: str) -> bool:
         "nexus",
         "nexusmods",
         "继续",
+        "更多",
+        "这个",
+        "方向",
+        "这个方向",
+        "玩法",
+        "玩法方向",
+        "这个玩法方向",
         "相关",
         "类似",
         "同类",

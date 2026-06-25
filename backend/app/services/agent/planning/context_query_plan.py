@@ -47,7 +47,6 @@ def build_context_query_plan(
     apply_active_constraints(raw, constraints)
     apply_active_constraints(current_only_plan, constraints)
     raw["_agent_current_only_plan"] = _current_only_query_plan(current_only_plan)
-    _apply_dual_retrieval_signal(raw)
     return normalize_context_query_plan(raw=raw, query=query, constraints=constraints, session=session)
 
 
@@ -96,18 +95,3 @@ _CURRENT_ONLY_PLAN_FIELDS = {
 
 def _current_only_query_plan(raw: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in raw.items() if key in _CURRENT_ONLY_PLAN_FIELDS}
-
-
-def _apply_dual_retrieval_signal(raw: dict[str, Any]) -> None:
-    signal = raw.get("_agent_context_signal")
-    if not isinstance(signal, dict):
-        return
-    inherit_mode = str(signal.get("inherit_mode") or "").strip()
-    if inherit_mode not in {"fallback_keywords", "constraints_only"}:
-        return
-    raw["_agent_dual_retrieval"] = {
-        "enabled": True,
-        "reason": inherit_mode,
-        "reserve_min": 3,
-        "reserve_ratio": 0.5,
-    }
