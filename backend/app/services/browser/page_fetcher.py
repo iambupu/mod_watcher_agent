@@ -44,8 +44,7 @@ LOVERSLAB_BROWSER_LOCK = asyncio.Lock()
 
 def browser_profile_root() -> Path:
     """Return the current browser profile root without caching environment overrides."""
-    configured = os.getenv("MW_BROWSER_PROFILE_ROOT")
-    return Path(configured) if configured else build_runtime_paths().browser_profile_dir
+    return build_runtime_paths().browser_profile_dir
 
 
 class BrowserPageFetcher:

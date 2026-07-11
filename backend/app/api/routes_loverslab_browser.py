@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from threading import Lock
 from urllib.parse import urlsplit
@@ -20,8 +19,7 @@ INSTALL_CHROMIUM_LOCK = Lock()
 
 def snapshot_root() -> Path:
     """Return the current snapshot root without caching environment overrides."""
-    configured = os.getenv("MW_SNAPSHOT_ROOT")
-    return Path(configured) if configured else build_runtime_paths().snapshot_dir
+    return build_runtime_paths().snapshot_dir
 
 
 class TestCategoryRequest(BaseModel):

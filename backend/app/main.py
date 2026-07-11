@@ -49,33 +49,37 @@ async def _run_deferred_startup_maintenance() -> None:
 async def lifespan(_app: FastAPI):
     """Initialize runtime services and shut down the scheduler on app exit."""
     _app.state.database_ready = False
-    require_safe_bind_host()
-    setup_logging()
-    init_db()
-    _app.state.database_ready = True
-    with Session(engine) as session:
-        SettingsService(session).init_defaults()
-        interrupted_count = mark_interrupted_jobs_failed(session)
-        if interrupted_count:
-            logger.warning("Marked %s interrupted job runs as failed", interrupted_count)
-        try:
-            await setup_scheduler(session)
-            logger.info("Scheduler started successfully")
-        except Exception as e:
-            logger.error("Failed to start scheduler: %s", e)
-    asyncio.create_task(_run_deferred_startup_maintenance())
     try:
+        require_safe_bind_host()
+        setup_logging()
+        init_db()
+        _app.state.database_ready = True
+        with Session(engine) as session:
+            SettingsService(session).init_defaults()
+            interrupted_count = mark_interrupted_jobs_failed(session)
+            if interrupted_count:
+                logger.warning("Marked %s interrupted job runs as failed", interrupted_count)
+            try:
+                await setup_scheduler(session)
+                logger.info("Scheduler started successfully")
+            except Exception as e:
+                logger.error("Failed to start scheduler: %s", e)
+        asyncio.create_task(_run_deferred_startup_maintenance())
         yield
     finally:
+        from app.jobs.scheduler import scheduler
+
+        try:
+            if scheduler.running:
+                scheduler.shutdown(wait=False)
+        except Exception:
+            logger.exception("Failed to stop the scheduler")
+
         try:
             await routes_loverslab_browser.fetcher.close_login()
         except Exception:
             logger.exception("Failed to close the persistent browser")
-
-        from app.jobs.scheduler import scheduler
-
-        if scheduler.running:
-            scheduler.shutdown(wait=False)
+        _app.state.database_ready = False
 
 
 app = FastAPI(
