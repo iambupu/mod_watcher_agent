@@ -296,6 +296,64 @@ def test_target_created_during_migration_is_preserved(
     assert not list(runtime_paths.database_path.parent.glob(".mod_watcher.db.migration-*"))
 
 
+def test_atomic_publish_never_clobbers_target_created_at_primitive_boundary(
+    runtime_paths: RuntimePaths,
+    legacy_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata_path = runtime_paths.backup_dir / "migration.json"
+    metadata_path.parent.mkdir(parents=True)
+    previous_metadata = b"metadata before primitive race\x00\xff\n"
+    metadata_path.write_bytes(previous_metadata)
+    real_replace = os.replace
+    publish_name = "rename" if os.name == "nt" else "link"
+    real_publish = getattr(os, publish_name)
+
+    def create_external_target() -> None:
+        _create_database(runtime_paths.database_path, "external target")
+
+    def interleaved_replace(
+        source: str | Path,
+        target: str | Path,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        if Path(target) == runtime_paths.database_path:
+            create_external_target()
+        real_replace(source, target, *args, **kwargs)
+
+    def interleaved_no_clobber_publish(
+        source: str | Path,
+        target: str | Path,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        if Path(target) == runtime_paths.database_path:
+            create_external_target()
+        real_publish(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(database_migration.os, "replace", interleaved_replace)
+    monkeypatch.setattr(
+        database_migration.os,
+        publish_name,
+        interleaved_no_clobber_publish,
+    )
+
+    with pytest.raises(DatabaseMigrationError) as error:
+        migrate_legacy_database(runtime_paths, candidates=[legacy_db])
+
+    assert isinstance(error.value.__cause__, FileExistsError)
+    with sqlite3.connect(runtime_paths.database_path) as database:
+        assert database.execute("SELECT value FROM sample").fetchone() == ("external target",)
+    with sqlite3.connect(legacy_db) as database:
+        assert database.execute("SELECT value FROM sample ORDER BY rowid").fetchall() == [
+            ("main database row",),
+            ("committed WAL row",),
+        ]
+    assert metadata_path.read_bytes() == previous_metadata
+    assert not list(runtime_paths.database_path.parent.glob(".mod_watcher.db.migration-*"))
+
+
 def test_failed_integrity_check_removes_partial_target_and_preserves_source(
     runtime_paths: RuntimePaths,
     tmp_path: Path,
@@ -333,50 +391,52 @@ def test_metadata_write_failure_does_not_publish_target(
     assert not list(runtime_paths.database_path.parent.glob(".mod_watcher.db.migration-*"))
 
 
-def test_final_replace_failure_rolls_back_metadata_and_partial_target(
+def test_final_publish_failure_rolls_back_metadata_and_partial_target(
     runtime_paths: RuntimePaths,
     legacy_db: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    real_replace = os.replace
+    publish_name = "rename" if os.name == "nt" else "link"
+    real_publish = getattr(os, publish_name)
     metadata_path = runtime_paths.backup_dir / "migration.json"
 
-    def fail_final_replace(source: str | Path, target: str | Path) -> None:
+    def fail_final_publish(source: str | Path, target: str | Path) -> None:
         if Path(target) == runtime_paths.database_path:
             assert metadata_path.is_file()
-            raise OSError("target replace failed")
-        real_replace(source, target)
+            raise OSError("target publish failed")
+        real_publish(source, target)
 
-    monkeypatch.setattr(database_migration.os, "replace", fail_final_replace)
+    monkeypatch.setattr(database_migration.os, publish_name, fail_final_publish)
 
     with pytest.raises(DatabaseMigrationError) as error:
         migrate_legacy_database(runtime_paths, candidates=[legacy_db])
 
     assert isinstance(error.value.__cause__, OSError)
-    assert "target replace failed" in str(error.value.__cause__)
+    assert "target publish failed" in str(error.value.__cause__)
     assert legacy_db.exists()
     assert not metadata_path.exists()
     assert all(not artifact.exists() for artifact in _target_artifacts(runtime_paths.database_path))
     assert not list(runtime_paths.database_path.parent.glob(".mod_watcher.db.migration-*"))
 
 
-def test_final_replace_failure_restores_existing_metadata_bytes(
+def test_final_publish_failure_restores_existing_metadata_bytes(
     runtime_paths: RuntimePaths,
     legacy_db: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    real_replace = os.replace
+    publish_name = "rename" if os.name == "nt" else "link"
+    real_publish = getattr(os, publish_name)
     metadata_path = runtime_paths.backup_dir / "migration.json"
     metadata_path.parent.mkdir(parents=True)
     previous_metadata = b"previous metadata bytes\x00\xff\n"
     metadata_path.write_bytes(previous_metadata)
 
-    def fail_final_replace(source: str | Path, target: str | Path) -> None:
+    def fail_final_publish(source: str | Path, target: str | Path) -> None:
         if Path(target) == runtime_paths.database_path:
-            raise OSError("target replace failed")
-        real_replace(source, target)
+            raise OSError("target publish failed")
+        real_publish(source, target)
 
-    monkeypatch.setattr(database_migration.os, "replace", fail_final_replace)
+    monkeypatch.setattr(database_migration.os, publish_name, fail_final_publish)
 
     with pytest.raises(DatabaseMigrationError):
         migrate_legacy_database(runtime_paths, candidates=[legacy_db])
@@ -408,3 +468,28 @@ def test_migration_removes_owned_stale_temporary_files(
     assert result.migrated is True
     assert all(not artifact.exists() for artifact in stale_artifacts)
     assert unrelated.read_bytes() == b"keep"
+
+
+def test_migration_removes_owned_metadata_temp_and_preserves_lookalikes(
+    runtime_paths: RuntimePaths,
+    legacy_db: Path,
+) -> None:
+    runtime_paths.backup_dir.mkdir(parents=True)
+    stale_metadata = runtime_paths.backup_dir / ".migration.json.crashed_1.tmp"
+    stale_metadata.write_bytes(b"stale metadata")
+    lookalikes = [
+        runtime_paths.backup_dir / ".migration.json..tmp",
+        runtime_paths.backup_dir / ".migration.json.token.tmp.keep",
+        runtime_paths.backup_dir / ".migration.json.token.tmp-wal",
+    ]
+    for lookalike in lookalikes:
+        lookalike.write_bytes(b"keep")
+    matching_directory = runtime_paths.backup_dir / ".migration.json.directory.tmp"
+    matching_directory.mkdir()
+
+    result = migrate_legacy_database(runtime_paths, candidates=[legacy_db])
+
+    assert result.migrated is True
+    assert not stale_metadata.exists()
+    assert all(lookalike.read_bytes() == b"keep" for lookalike in lookalikes)
+    assert matching_directory.is_dir()

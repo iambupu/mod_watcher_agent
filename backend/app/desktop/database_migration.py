@@ -168,6 +168,45 @@ def _remove_owned_stale_temporary_files(target: Path) -> None:
         )
 
 
+def _remove_owned_stale_metadata_files(metadata_path: Path) -> None:
+    metadata_directory = metadata_path.parent
+    if not metadata_directory.is_dir():
+        return
+
+    escaped_name = re.escape(metadata_path.name)
+    pattern = re.compile(rf"^\.{escaped_name}\.[A-Za-z0-9_-]+\.tmp$")
+    cleanup_failures: list[str] = []
+    for artifact in metadata_directory.iterdir():
+        if (
+            pattern.fullmatch(artifact.name) is None
+            or artifact.is_symlink()
+            or not artifact.is_file()
+        ):
+            continue
+        try:
+            artifact.unlink()
+        except OSError as exc:
+            cleanup_failures.append(f"{artifact}: {exc}")
+    if cleanup_failures:
+        raise DatabaseMigrationError(
+            "Unable to remove stale migration metadata files: " + "; ".join(cleanup_failures)
+        )
+
+
+def _publish_without_overwrite(source: Path, target: Path) -> None:
+    if os.name == "nt":
+        os.rename(source, target)
+        return
+
+    os.link(source, target)
+    try:
+        source.unlink()
+    except OSError:
+        with suppress(OSError):
+            target.unlink()
+        raise
+
+
 def _write_bytes_atomically(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = _temporary_path(
@@ -269,6 +308,7 @@ def _migrate_locked_database(
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         _remove_owned_stale_temporary_files(target)
+        _remove_owned_stale_metadata_files(metadata_path)
         temporary_target = _temporary_path(
             target.parent,
             prefix=f".{target.name}.migration-",
@@ -298,7 +338,7 @@ def _migrate_locked_database(
 
         if target.exists():
             raise DatabaseMigrationError(f"Target database appeared during migration: {target}")
-        os.replace(temporary_target, target)
+        _publish_without_overwrite(temporary_target, target)
     except DatabaseMigrationError as exc:
         cleanup_failures = _cleanup_failed_attempt(
             temporary_target,
