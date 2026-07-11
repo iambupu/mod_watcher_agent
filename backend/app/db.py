@@ -3,13 +3,13 @@
 import json
 import logging
 from collections.abc import Generator
-from pathlib import Path
 
 from sqlalchemy import event, inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import settings
 from app.rule_constants import DEFAULT_RULE_INTERVAL_MINUTES
+from app.runtime_paths import build_runtime_paths
 from app.services.agent.retrievers.sqlite_fts_retriever import (
     DEFAULT_FTS_REPAIR_LIMIT,
     ensure_mods_fts,
@@ -46,13 +46,14 @@ def init_db() -> None:
     SQLModel.metadata.create_all(engine)
 
     # ── Alembic managed migrations ──────────────────────────────────
-    alembic_ini = Path(__file__).resolve().parents[1] / "alembic.ini"
+    alembic_ini = build_runtime_paths().alembic_ini_path
     try:
         from alembic.config import Config as AlembicConfig
 
         from alembic import command
 
         cfg = AlembicConfig(str(alembic_ini))
+        cfg.set_main_option("script_location", str(alembic_ini.parent / "alembic"))
         inspector = inspect(engine)
         has_alembic_version = inspector.has_table("alembic_version")
         if has_alembic_version:

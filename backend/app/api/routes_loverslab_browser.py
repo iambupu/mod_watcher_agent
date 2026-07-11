@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from threading import Lock
 from urllib.parse import urlsplit
@@ -6,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
+from app.runtime_paths import build_runtime_paths
 from app.services.browser import BrowserPageFetcher
 from app.services.loverslab.category_parser import parse_category_items
 from app.services.loverslab.constants import LOVERSLAB_HOSTS
@@ -14,6 +16,12 @@ router = APIRouter(prefix="/api/loverslab/browser", tags=["loverslab-browser"])
 
 fetcher = BrowserPageFetcher()
 INSTALL_CHROMIUM_LOCK = Lock()
+
+
+def snapshot_root() -> Path:
+    """Return the current snapshot root without caching environment overrides."""
+    configured = os.getenv("MW_SNAPSHOT_ROOT")
+    return Path(configured) if configured else build_runtime_paths().snapshot_dir
 
 
 class TestCategoryRequest(BaseModel):
@@ -148,7 +156,7 @@ async def save_snapshot(body: SaveSnapshotRequest):
         raise HTTPException(status_code=502, detail=result.error or result.status)
     _require_loverslab_url(result.final_url)
 
-    snapshot_dir = Path("data") / "snapshots" / "loverslab"
+    snapshot_dir = snapshot_root() / "loverslab"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     filename = BrowserPageFetcher.now_iso().replace(":", "-").replace("+", "Z")
     path = snapshot_dir / f"{filename}.html"

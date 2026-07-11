@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from app.runtime_paths import build_runtime_paths
+
 BrowserFetchStatus = Literal[
     "ok",
     "login_required",
@@ -38,7 +40,12 @@ class BrowserLaunchChoice:
 
 
 LOVERSLAB_BROWSER_LOCK = asyncio.Lock()
-PROFILE_ROOT = Path("data") / "browser_profiles"
+
+
+def browser_profile_root() -> Path:
+    """Return the current browser profile root without caching environment overrides."""
+    configured = os.getenv("MW_BROWSER_PROFILE_ROOT")
+    return Path(configured) if configured else build_runtime_paths().browser_profile_dir
 
 
 class BrowserPageFetcher:
@@ -408,7 +415,7 @@ class BrowserPageFetcher:
     def _profile_dir(profile_name: str) -> Path:
         """清理 profile 名称，防止用户输入逃逸到 profile 根目录外。"""
         safe_name = "".join(ch for ch in profile_name if ch.isalnum() or ch in {"-", "_"})
-        return PROFILE_ROOT / (safe_name or "default")
+        return browser_profile_root() / (safe_name or "default")
 
     @staticmethod
     def _profile_dir_for_choice(profile_dir: Path, choice: BrowserLaunchChoice) -> Path:

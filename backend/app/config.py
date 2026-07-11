@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 
 from app.utils.boolean import parse_bool
 
-load_dotenv()
+env_file = os.getenv("MW_ENV_FILE")
+load_dotenv(env_file if env_file else None)
 
 
 def _env_bool(name: str, default: bool) -> bool:

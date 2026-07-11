@@ -2,8 +2,8 @@
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,8 +30,10 @@ from app.db import engine, init_db, rebuild_sqlite_fts_if_needed
 from app.jobs.scheduler import setup_scheduler
 from app.jobs.tracked_jobs import mark_interrupted_jobs_failed
 from app.logger import setup_logging
+from app.runtime_paths import build_runtime_paths, is_frozen
 from app.security import AccessPolicy, require_safe_bind_host
 from app.services.settings_service import SettingsService
+from app.utils.boolean import parse_bool
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +48,11 @@ async def _run_deferred_startup_maintenance() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Initialize runtime services and shut down the scheduler on app exit."""
+    _app.state.database_ready = False
     require_safe_bind_host()
     setup_logging()
     init_db()
+    _app.state.database_ready = True
     with Session(engine) as session:
         SettingsService(session).init_defaults()
         interrupted_count = mark_interrupted_jobs_failed(session)
@@ -60,10 +64,18 @@ async def lifespan(_app: FastAPI):
         except Exception as e:
             logger.error("Failed to start scheduler: %s", e)
     asyncio.create_task(_run_deferred_startup_maintenance())
-    yield
-    from app.jobs.scheduler import scheduler
-    if scheduler.running:
-        scheduler.shutdown(wait=False)
+    try:
+        yield
+    finally:
+        try:
+            await routes_loverslab_browser.fetcher.close_login()
+        except Exception:
+            logger.exception("Failed to close the persistent browser")
+
+        from app.jobs.scheduler import scheduler
+
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
 
 
 app = FastAPI(
@@ -121,7 +133,25 @@ app.include_router(routes_system_notifications.router)
 app.include_router(routes_loverslab_browser.router)
 
 
-FRONTEND_DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+FRONTEND_DIST_DIR = build_runtime_paths().frontend_dist_dir
+
+
+@app.get("/api/health")
+async def health() -> dict[str, object]:
+    """Report backend readiness for the desktop bootstrapper and diagnostics."""
+    from app.jobs.scheduler import scheduler
+
+    return {
+        "status": "ok",
+        "version": app.version,
+        "database": "ready" if getattr(app.state, "database_ready", False) else "starting",
+        "scheduler": "running" if scheduler.running else "stopped",
+        "frontend": "ready" if FRONTEND_DIST_DIR.joinpath("index.html").is_file() else "missing",
+        "desktop": parse_bool(os.getenv("MW_DESKTOP_MODE"), default=False),
+        "packaged": is_frozen(),
+    }
+
+
 if FRONTEND_DIST_DIR.exists():
     app.mount(
         "/assets",
