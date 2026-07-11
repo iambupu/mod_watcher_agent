@@ -53,11 +53,15 @@ class EmbeddedBackendServer:
         self._started = False
         self._stop_requested = threading.Event()
         self._state_lock = threading.Lock()
-        self.thread = threading.Thread(
-            target=self._run,
-            name="mod-watcher-backend",
-            daemon=False,
-        )
+        self._thread: threading.Thread | None = None
+
+    @property
+    def thread(self) -> threading.Thread:
+        with self._state_lock:
+            thread = self._thread
+        if thread is None:
+            raise EmbeddedBackendError("Embedded backend server has not been started")
+        return thread
 
     @property
     def error(self) -> BaseException | None:
@@ -68,8 +72,21 @@ class EmbeddedBackendServer:
         with self._state_lock:
             if self._started:
                 raise RuntimeError("Embedded backend server already started")
-            self._started = True
-        self.thread.start()
+            try:
+                thread = threading.Thread(
+                    target=self._run,
+                    name="mod-watcher-backend",
+                    daemon=False,
+                )
+                self._thread = thread
+                self._started = True
+                thread.start()
+            except BaseException as exc:
+                self._started = False
+                self._thread = None
+                raise EmbeddedBackendError(
+                    "Embedded backend server thread failed to start"
+                ) from exc
 
     def wait_ready(self, timeout: float) -> bool:
         deadline = time.monotonic() + max(timeout, 0)
@@ -77,7 +94,10 @@ class EmbeddedBackendServer:
 
         with httpx.Client(trust_env=False) as client:
             while time.monotonic() < deadline:
-                if self.error is not None or not self.thread.is_alive():
+                with self._state_lock:
+                    error = self._error
+                    thread = self._thread
+                if error is not None or thread is None or not thread.is_alive():
                     return False
 
                 remaining = deadline - time.monotonic()
@@ -104,14 +124,17 @@ class EmbeddedBackendServer:
         with self._state_lock:
             if not self._started:
                 return
+            thread = self._thread
+            if thread is None:
+                raise EmbeddedBackendError("Embedded backend server thread is unavailable")
             self._stop_requested.set()
             server = self._server
 
         if server is not None:
             server.should_exit = True
 
-        self.thread.join(max(timeout, 0))
-        if self.thread.is_alive():
+        thread.join(max(timeout, 0))
+        if thread.is_alive():
             raise EmbeddedBackendError(
                 f"Embedded backend server did not stop within {timeout:g} seconds"
             )

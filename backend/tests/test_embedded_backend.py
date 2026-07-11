@@ -43,6 +43,29 @@ class _DelayedFactory:
         return self.instance
 
 
+class _StopAwareLock:
+    def __init__(
+        self,
+        *,
+        release_server_start: threading.Event,
+        stop_observed: threading.Event,
+    ) -> None:
+        self._lock = threading.Lock()
+        self._release_server_start = release_server_start
+        self._stop_observed = stop_observed
+
+    def __enter__(self) -> _StopAwareLock:
+        if threading.current_thread().name == "controlled-stop":
+            if self._lock.locked():
+                self._release_server_start.set()
+            self._stop_observed.set()
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self._lock.release()
+
+
 @pytest.fixture(autouse=True)
 def clear_fake_instances() -> Iterator[None]:
     _FakeUvicornServer.instances.clear()
@@ -95,6 +118,120 @@ def test_server_starts_once_on_a_non_daemon_thread_and_stop_is_idempotent() -> N
     server.stop()
 
     assert _FakeUvicornServer.instances[0].should_exit is True
+    assert not server.thread.is_alive()
+
+
+def test_start_and_concurrent_stop_never_expose_an_unstarted_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release_server_start = threading.Event()
+    server_start_entered = threading.Event()
+    stop_observed = threading.Event()
+    start_errors: list[BaseException] = []
+    stop_errors: list[BaseException] = []
+    real_thread_start = threading.Thread.start
+    real_thread_join = threading.Thread.join
+
+    server = EmbeddedBackendServer(
+        "127.0.0.1",
+        17500,
+        app_factory=_health_app,
+        server_factory=_FakeUvicornServer,
+    )
+    server._state_lock = _StopAwareLock(
+        release_server_start=release_server_start,
+        stop_observed=stop_observed,
+    )
+
+    def controlled_thread_start(thread: threading.Thread) -> None:
+        if thread.name != "mod-watcher-backend":
+            real_thread_start(thread)
+            return
+        server_start_entered.set()
+        assert release_server_start.wait(1)
+        real_thread_start(thread)
+
+    def controlled_thread_join(
+        thread: threading.Thread,
+        timeout: float | None = None,
+    ) -> None:
+        if thread.name != "mod-watcher-backend":
+            real_thread_join(thread, timeout)
+            return
+        try:
+            real_thread_join(thread, timeout)
+        finally:
+            release_server_start.set()
+
+    def call_start() -> None:
+        try:
+            server.start()
+        except BaseException as exc:
+            start_errors.append(exc)
+
+    def call_stop() -> None:
+        try:
+            server.stop(timeout=1)
+        except BaseException as exc:
+            stop_errors.append(exc)
+
+    monkeypatch.setattr(threading.Thread, "start", controlled_thread_start)
+    monkeypatch.setattr(threading.Thread, "join", controlled_thread_join)
+
+    starter = threading.Thread(target=call_start, name="controlled-start")
+    stopper = threading.Thread(target=call_stop, name="controlled-stop")
+    starter.start()
+    assert server_start_entered.wait(1)
+    stopper.start()
+    assert stop_observed.wait(1)
+    starter.join(2)
+    stopper.join(2)
+    release_server_start.set()
+    server.stop()
+
+    assert not starter.is_alive()
+    assert not stopper.is_alive()
+    assert start_errors == []
+    assert stop_errors == []
+    assert not server.thread.is_alive()
+
+
+def test_thread_start_failure_rolls_back_state_and_allows_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_thread_start = threading.Thread.start
+    backend_start_attempts = 0
+    server = EmbeddedBackendServer(
+        "127.0.0.1",
+        17500,
+        app_factory=_health_app,
+        server_factory=_FakeUvicornServer,
+    )
+
+    def fail_first_backend_start(thread: threading.Thread) -> None:
+        nonlocal backend_start_attempts
+        if thread.name == "mod-watcher-backend":
+            backend_start_attempts += 1
+            if backend_start_attempts == 1:
+                raise RuntimeError("synthetic thread start failure")
+        real_thread_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_first_backend_start)
+
+    with pytest.raises(EmbeddedBackendError, match="failed to start") as error:
+        server.start()
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert server._started is False
+    assert server._thread is None
+
+    server.start()
+    try:
+        assert _FakeUvicornServer.created.wait(1)
+    finally:
+        server.stop()
+
+    assert backend_start_attempts == 2
     assert not server.thread.is_alive()
 
 
