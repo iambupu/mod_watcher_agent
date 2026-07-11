@@ -4,9 +4,11 @@ import json
 import os
 import sqlite3
 from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 
@@ -22,17 +24,17 @@ from app.runtime_paths import RuntimePaths, build_runtime_paths
 
 @pytest.fixture
 def runtime_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> RuntimePaths:
-    monkeypatch.setenv("MW_USER_DATA_DIR", str(tmp_path / "current user data"))
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(tmp_path / "当前 用户数据"))
     return build_runtime_paths(
         frozen=True,
         bundle_root=tmp_path / "bundle",
-        executable_dir=tmp_path / "installed app",
+        executable_dir=tmp_path / "安装 目录",
     )
 
 
 @pytest.fixture
 def legacy_db(tmp_path: Path) -> Iterator[Path]:
-    database_path = tmp_path / "legacy install" / "mod_watcher.db"
+    database_path = tmp_path / "旧版 安装" / "mod_watcher.db"
     database_path.parent.mkdir(parents=True)
     database = sqlite3.connect(database_path)
     try:
@@ -53,9 +55,10 @@ def legacy_db(tmp_path: Path) -> Iterator[Path]:
 
 def _create_database(database_path: Path, value: str = "legacy row") -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(database_path) as database:
+    with closing(sqlite3.connect(database_path)) as database:
         database.execute("CREATE TABLE sample (value TEXT NOT NULL)")
         database.execute("INSERT INTO sample VALUES (?)", (value,))
+        database.commit()
 
 
 def _target_artifacts(target: Path) -> list[Path]:
@@ -65,6 +68,47 @@ def _target_artifacts(target: Path) -> list[Path]:
         Path(f"{target}-shm"),
         Path(f"{target}-wal"),
     ]
+
+
+def _lock_file(file: BinaryIO) -> None:
+    file.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_file(file: BinaryIO) -> None:
+    file.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(file.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _held_os_lock(lock_path: Path) -> Iterator[None]:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+        _lock_file(lock_file)
+        try:
+            yield
+        finally:
+            _unlock_file(lock_file)
 
 
 def test_legacy_candidates_are_ordered_deduplicated_and_exclude_target(
@@ -183,6 +227,75 @@ def test_migration_uses_backup_api_preserves_wal_rows_and_records_metadata(
     assert migrated_at.utcoffset() == timedelta(0)
 
 
+def test_migration_supports_unicode_and_space_paths(
+    runtime_paths: RuntimePaths,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "旧 数据库" / "含 空格" / "mod_watcher.db"
+    _create_database(source, "中文路径数据")
+
+    result = migrate_legacy_database(runtime_paths, candidates=[source])
+
+    assert result.migrated is True
+    assert "当前 用户数据" in str(result.target)
+    with sqlite3.connect(result.target) as database:
+        assert database.execute("SELECT value FROM sample").fetchone() == ("中文路径数据",)
+    metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["source"] == str(source)
+    assert metadata["target"] == str(result.target)
+
+
+def test_lock_contention_fails_without_changing_target_or_metadata(
+    runtime_paths: RuntimePaths,
+    legacy_db: Path,
+) -> None:
+    lock_path = runtime_paths.runtime_dir / "database-migration.lock"
+    metadata_path = runtime_paths.backup_dir / "migration.json"
+    metadata_path.parent.mkdir(parents=True)
+    previous_metadata = b"existing metadata before lock contention\n"
+    metadata_path.write_bytes(previous_metadata)
+
+    with (
+        _held_os_lock(lock_path),
+        pytest.raises(DatabaseMigrationError, match="already in progress"),
+    ):
+        migrate_legacy_database(runtime_paths, candidates=[legacy_db])
+
+    assert not runtime_paths.database_path.exists()
+    assert metadata_path.read_bytes() == previous_metadata
+    assert not list(runtime_paths.database_path.parent.glob(".mod_watcher.db.migration-*"))
+
+
+def test_target_created_during_migration_is_preserved(
+    runtime_paths: RuntimePaths,
+    legacy_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_write_metadata = database_migration._write_migration_metadata
+    metadata_path = runtime_paths.backup_dir / "migration.json"
+
+    def write_metadata_then_create_target(
+        path: Path,
+        metadata: dict[str, object],
+    ) -> None:
+        real_write_metadata(path, metadata)
+        _create_database(runtime_paths.database_path, "concurrent target")
+
+    monkeypatch.setattr(
+        database_migration,
+        "_write_migration_metadata",
+        write_metadata_then_create_target,
+    )
+
+    with pytest.raises(DatabaseMigrationError, match="appeared during migration"):
+        migrate_legacy_database(runtime_paths, candidates=[legacy_db])
+
+    with sqlite3.connect(runtime_paths.database_path) as database:
+        assert database.execute("SELECT value FROM sample").fetchone() == ("concurrent target",)
+    assert not metadata_path.exists()
+    assert not list(runtime_paths.database_path.parent.glob(".mod_watcher.db.migration-*"))
+
+
 def test_failed_integrity_check_removes_partial_target_and_preserves_source(
     runtime_paths: RuntimePaths,
     tmp_path: Path,
@@ -245,3 +358,53 @@ def test_final_replace_failure_rolls_back_metadata_and_partial_target(
     assert not metadata_path.exists()
     assert all(not artifact.exists() for artifact in _target_artifacts(runtime_paths.database_path))
     assert not list(runtime_paths.database_path.parent.glob(".mod_watcher.db.migration-*"))
+
+
+def test_final_replace_failure_restores_existing_metadata_bytes(
+    runtime_paths: RuntimePaths,
+    legacy_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_replace = os.replace
+    metadata_path = runtime_paths.backup_dir / "migration.json"
+    metadata_path.parent.mkdir(parents=True)
+    previous_metadata = b"previous metadata bytes\x00\xff\n"
+    metadata_path.write_bytes(previous_metadata)
+
+    def fail_final_replace(source: str | Path, target: str | Path) -> None:
+        if Path(target) == runtime_paths.database_path:
+            raise OSError("target replace failed")
+        real_replace(source, target)
+
+    monkeypatch.setattr(database_migration.os, "replace", fail_final_replace)
+
+    with pytest.raises(DatabaseMigrationError):
+        migrate_legacy_database(runtime_paths, candidates=[legacy_db])
+
+    assert metadata_path.read_bytes() == previous_metadata
+    assert not runtime_paths.database_path.exists()
+
+
+def test_migration_removes_owned_stale_temporary_files(
+    runtime_paths: RuntimePaths,
+    legacy_db: Path,
+) -> None:
+    runtime_paths.database_path.parent.mkdir(parents=True)
+    stale_target = runtime_paths.database_path.parent / ".mod_watcher.db.migration-crashed.tmp"
+    stale_artifacts = [
+        stale_target,
+        Path(f"{stale_target}-journal"),
+        Path(f"{stale_target}-shm"),
+        Path(f"{stale_target}-wal"),
+        runtime_paths.database_path.parent / ".mod_watcher.db.migration-orphan.tmp-wal",
+    ]
+    for artifact in stale_artifacts:
+        artifact.write_bytes(b"stale")
+    unrelated = runtime_paths.database_path.parent / ".mod_watcher.db.migration-keep.txt"
+    unrelated.write_bytes(b"keep")
+
+    result = migrate_legacy_database(runtime_paths, candidates=[legacy_db])
+
+    assert result.migrated is True
+    assert all(not artifact.exists() for artifact in stale_artifacts)
+    assert unrelated.read_bytes() == b"keep"

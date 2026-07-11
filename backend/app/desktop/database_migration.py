@@ -3,19 +3,22 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import tempfile
-from collections.abc import Iterable
-from contextlib import closing, suppress
+from collections.abc import Iterable, Iterator
+from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import BinaryIO
 
 from app.runtime_paths import RuntimePaths
 
 logger = logging.getLogger(__name__)
 
 _DATABASE_NAME = "mod_watcher.db"
+_LOCK_NAME = "database-migration.lock"
 _METADATA_NAME = "migration.json"
 _SQLITE_SIDECAR_SUFFIXES = ("-journal", "-shm", "-wal")
 
@@ -85,6 +88,86 @@ def _remove_sqlite_artifacts(database_path: Path) -> list[str]:
     return failures
 
 
+def _lock_file(file: BinaryIO) -> None:
+    file.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_file(file: BinaryIO) -> None:
+    file.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(file.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _migration_lock(lock_path: Path) -> Iterator[None]:
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = lock_path.open("a+b", buffering=0)
+    except OSError as exc:
+        raise DatabaseMigrationError(f"Unable to prepare database migration lock: {exc}") from exc
+
+    with lock_file:
+        try:
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+        except OSError as exc:
+            raise DatabaseMigrationError(
+                f"Unable to initialize database migration lock: {exc}"
+            ) from exc
+
+        try:
+            _lock_file(lock_file)
+        except OSError as exc:
+            raise DatabaseMigrationError(
+                f"Database migration is already in progress: {lock_path}"
+            ) from exc
+
+        try:
+            yield
+        finally:
+            with suppress(OSError):
+                _unlock_file(lock_file)
+
+
+def _remove_owned_stale_temporary_files(target: Path) -> None:
+    escaped_target = re.escape(target.name)
+    pattern = re.compile(
+        rf"^(?P<base>\.{escaped_target}\.migration-[A-Za-z0-9_-]+\.tmp)"
+        rf"(?:-(?:journal|shm|wal))?$"
+    )
+    stale_bases: set[Path] = set()
+    for artifact in target.parent.iterdir():
+        match = pattern.fullmatch(artifact.name)
+        if match is not None:
+            stale_bases.add(target.parent / match.group("base"))
+
+    cleanup_failures: list[str] = []
+    for stale_base in stale_bases:
+        cleanup_failures.extend(_remove_sqlite_artifacts(stale_base))
+    if cleanup_failures:
+        raise DatabaseMigrationError(
+            "Unable to remove stale database migration files: " + "; ".join(cleanup_failures)
+        )
+
+
 def _write_bytes_atomically(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = _temporary_path(
@@ -149,24 +232,34 @@ def _add_cleanup_note(error: BaseException, failures: list[str]) -> None:
         error.add_note("Cleanup also failed: " + "; ".join(failures))
 
 
-def migrate_legacy_database(
+def _cleanup_failed_attempt(
+    temporary_target: Path | None,
+    *,
+    metadata_path: Path,
+    metadata_published: bool,
+    metadata_existed: bool,
+    previous_metadata: bytes | None,
+) -> list[str]:
+    cleanup_failures: list[str] = []
+    if temporary_target is not None:
+        cleanup_failures.extend(_remove_sqlite_artifacts(temporary_target))
+    if metadata_published:
+        cleanup_failures.extend(
+            _restore_metadata(
+                metadata_path,
+                existed=metadata_existed,
+                previous_content=previous_metadata,
+            )
+        )
+    return cleanup_failures
+
+
+def _migrate_locked_database(
     paths: RuntimePaths,
-    candidates: Iterable[Path] | None = None,
+    *,
+    source: Path,
 ) -> MigrationResult:
-    """Migrate the first existing legacy SQLite database into the runtime path."""
     target = paths.database_path
-    if target.exists():
-        return MigrationResult(False, None, target, None)
-
-    available_candidates = (
-        legacy_database_candidates(paths)
-        if candidates is None
-        else _unique_candidates(candidates, target=target)
-    )
-    source = next((candidate for candidate in available_candidates if candidate.is_file()), None)
-    if source is None:
-        return MigrationResult(False, None, target, None)
-
     metadata_path = paths.backup_dir / _METADATA_NAME
     temporary_target: Path | None = None
     metadata_existed = False
@@ -175,8 +268,7 @@ def migrate_legacy_database(
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        for suffix in _SQLITE_SIDECAR_SUFFIXES:
-            Path(f"{target}{suffix}").unlink(missing_ok=True)
+        _remove_owned_stale_temporary_files(target)
         temporary_target = _temporary_path(
             target.parent,
             prefix=f".{target.name}.migration-",
@@ -204,39 +296,56 @@ def migrate_legacy_database(
         _write_migration_metadata(metadata_path, metadata)
         metadata_published = True
 
+        if target.exists():
+            raise DatabaseMigrationError(f"Target database appeared during migration: {target}")
         os.replace(temporary_target, target)
-        logger.info("Migrated legacy SQLite database from %s to %s", source, target)
-        return MigrationResult(True, source, target, metadata_path)
     except DatabaseMigrationError as exc:
-        cleanup_failures: list[str] = []
-        if temporary_target is not None:
-            cleanup_failures.extend(_remove_sqlite_artifacts(temporary_target))
-        cleanup_failures.extend(_remove_sqlite_artifacts(target))
-        if metadata_published:
-            cleanup_failures.extend(
-                _restore_metadata(
-                    metadata_path,
-                    existed=metadata_existed,
-                    previous_content=previous_metadata,
-                )
-            )
+        cleanup_failures = _cleanup_failed_attempt(
+            temporary_target,
+            metadata_path=metadata_path,
+            metadata_published=metadata_published,
+            metadata_existed=metadata_existed,
+            previous_metadata=previous_metadata,
+        )
         _add_cleanup_note(exc, cleanup_failures)
         raise
     except Exception as exc:
-        cleanup_failures = []
-        if temporary_target is not None:
-            cleanup_failures.extend(_remove_sqlite_artifacts(temporary_target))
-        cleanup_failures.extend(_remove_sqlite_artifacts(target))
-        if metadata_published:
-            cleanup_failures.extend(
-                _restore_metadata(
-                    metadata_path,
-                    existed=metadata_existed,
-                    previous_content=previous_metadata,
-                )
-            )
+        cleanup_failures = _cleanup_failed_attempt(
+            temporary_target,
+            metadata_path=metadata_path,
+            metadata_published=metadata_published,
+            metadata_existed=metadata_existed,
+            previous_metadata=previous_metadata,
+        )
         error = DatabaseMigrationError(
             f"Failed to migrate legacy database from {source} to {target}: {exc}"
         )
         _add_cleanup_note(error, cleanup_failures)
         raise error from exc
+
+    logger.info("Migrated legacy SQLite database from %s to %s", source, target)
+    return MigrationResult(True, source, target, metadata_path)
+
+
+def migrate_legacy_database(
+    paths: RuntimePaths,
+    candidates: Iterable[Path] | None = None,
+) -> MigrationResult:
+    """Migrate the first existing legacy SQLite database into the runtime path."""
+    target = paths.database_path
+    if target.exists():
+        return MigrationResult(False, None, target, None)
+
+    available_candidates = (
+        legacy_database_candidates(paths)
+        if candidates is None
+        else _unique_candidates(candidates, target=target)
+    )
+    source = next((candidate for candidate in available_candidates if candidate.is_file()), None)
+    if source is None:
+        return MigrationResult(False, None, target, None)
+
+    with _migration_lock(paths.runtime_dir / _LOCK_NAME):
+        if target.exists():
+            return MigrationResult(False, None, target, None)
+        return _migrate_locked_database(paths, source=source)
