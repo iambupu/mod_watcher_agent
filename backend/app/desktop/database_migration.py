@@ -201,10 +201,13 @@ def _publish_without_overwrite(source: Path, target: Path) -> None:
     os.link(source, target)
     try:
         source.unlink()
-    except OSError:
-        with suppress(OSError):
-            target.unlink()
-        raise
+    except OSError as exc:
+        logger.warning(
+            "Published migrated database at %s but could not remove temporary file %s: %s",
+            target,
+            source,
+            exc,
+        )
 
 
 def _write_bytes_atomically(path: Path, content: bytes) -> None:

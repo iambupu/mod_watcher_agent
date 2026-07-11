@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from collections.abc import Iterator
@@ -352,6 +353,77 @@ def test_atomic_publish_never_clobbers_target_created_at_primitive_boundary(
         ]
     assert metadata_path.read_bytes() == previous_metadata
     assert not list(runtime_paths.database_path.parent.glob(".mod_watcher.db.migration-*"))
+
+
+def test_posix_unlink_failure_preserves_externally_replaced_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source = tmp_path / ".mod_watcher.db.migration-owned.tmp"
+    target = tmp_path / "mod_watcher.db"
+    external = tmp_path / "external.db"
+    source.write_bytes(b"migrated database")
+    external.write_bytes(b"external database")
+    real_link = os.link
+    real_replace = os.replace
+    real_unlink = Path.unlink
+    target_unlink_calls: list[Path] = []
+
+    def link_then_replace(source_path: Path, target_path: Path) -> None:
+        real_link(source_path, target_path)
+        real_replace(external, target_path)
+
+    def fail_source_unlink(path: Path, *, missing_ok: bool = False) -> None:
+        if path == source:
+            raise OSError("temporary unlink failed")
+        if path == target:
+            target_unlink_calls.append(path)
+        real_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(database_migration.os, "name", "posix")
+    monkeypatch.setattr(database_migration.os, "link", link_then_replace)
+    monkeypatch.setattr(Path, "unlink", fail_source_unlink)
+    caplog.set_level(logging.WARNING, logger=database_migration.__name__)
+
+    database_migration._publish_without_overwrite(source, target)
+
+    assert target.read_bytes() == b"external database"
+    assert source.read_bytes() == b"migrated database"
+    assert target_unlink_calls == []
+    assert "temporary unlink failed" in caplog.text
+
+
+def test_posix_unlink_failure_keeps_published_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source = tmp_path / ".mod_watcher.db.migration-owned.tmp"
+    target = tmp_path / "mod_watcher.db"
+    source.write_bytes(b"migrated database")
+    real_link = os.link
+    real_unlink = Path.unlink
+    target_unlink_calls: list[Path] = []
+
+    def fail_source_unlink(path: Path, *, missing_ok: bool = False) -> None:
+        if path == source:
+            raise OSError("temporary unlink failed")
+        if path == target:
+            target_unlink_calls.append(path)
+        real_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(database_migration.os, "name", "posix")
+    monkeypatch.setattr(database_migration.os, "link", real_link)
+    monkeypatch.setattr(Path, "unlink", fail_source_unlink)
+    caplog.set_level(logging.WARNING, logger=database_migration.__name__)
+
+    database_migration._publish_without_overwrite(source, target)
+
+    assert target.read_bytes() == b"migrated database"
+    assert source.read_bytes() == b"migrated database"
+    assert target_unlink_calls == []
+    assert "temporary unlink failed" in caplog.text
 
 
 def test_failed_integrity_check_removes_partial_target_and_preserves_source(
