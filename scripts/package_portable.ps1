@@ -53,6 +53,7 @@ function Resolve-PortableOutputDirectory {
     param([string]$Path)
 
     $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+    Assert-NoDesktopPathReparsePoints -Path $fullPath -Context "portable output path"
     if (Test-Path -LiteralPath $fullPath) {
         if (-not (Test-Path -LiteralPath $fullPath -PathType Container)) {
             throw "Portable output exists but is not a directory: $fullPath"
@@ -61,6 +62,7 @@ function Resolve-PortableOutputDirectory {
     else {
         New-Item -ItemType Directory -Path $fullPath | Out-Null
     }
+    Assert-NoDesktopPathReparsePoints -Path $fullPath -Context "portable output path"
     $item = Get-Item -LiteralPath $fullPath -Force
     if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
         throw "Portable output directory is a reparse point: $fullPath"
@@ -83,6 +85,10 @@ function Assert-ControlledPortableOutputFile {
     $fullParent = [System.IO.Path]::GetFullPath((Split-Path -Parent $fullPath)).TrimEnd("\", "/")
     $fullExpectedParent = [System.IO.Path]::GetFullPath($ExpectedParent).TrimEnd("\", "/")
     $leaf = Split-Path -Leaf $fullPath
+    Assert-NoDesktopPathReparsePoints `
+        -Path $fullExpectedParent `
+        -Context "portable artifact parent path"
+    Assert-NoDesktopPathReparsePoints -Path $fullPath -Context "portable artifact path"
     if (-not $fullParent.Equals(
         $fullExpectedParent,
         [System.StringComparison]::OrdinalIgnoreCase
@@ -117,6 +123,8 @@ function Remove-ControlledDirectory {
     $fullRoot = [System.IO.Path]::GetFullPath($AllowedRoot).TrimEnd("\", "/")
     $rootPrefix = "$fullRoot$([System.IO.Path]::DirectorySeparatorChar)"
     $leaf = Split-Path -Leaf $fullPath
+    Assert-NoDesktopPathReparsePoints -Path $fullRoot -Context "portable cleanup root"
+    Assert-NoDesktopPathReparsePoints -Path $fullPath -Context "portable cleanup path"
     if (-not $fullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
         -not $leaf.Equals($ExpectedLeaf, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing recursive cleanup outside the portable output root: $fullPath"
@@ -145,8 +153,31 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 }
 $Version = Test-SafeReleaseVersion -Version $Version
 
+$candidateOutputDir = [System.IO.Path]::GetFullPath($OutputDir)
+$candidateStagingRoot = Join-Path $candidateOutputDir ".portable-staging"
+Assert-NoDesktopPathReparsePoints -Path $resolvedExecutableDir -Context "portable source path"
+Assert-NoDesktopPathReparsePoints -Path $candidateOutputDir -Context "portable output path"
+Assert-NoDesktopPathReparsePoints -Path $candidateStagingRoot -Context "portable staging path"
 Assert-X64PortableExecutable -Path $executablePath
 Assert-CleanDesktopBundleTree -Root $resolvedExecutableDir -Context "portable source"
+if (Test-DesktopPathsOverlap `
+    -FirstPath $resolvedExecutableDir `
+    -SecondPath $candidateOutputDir
+) {
+    throw (
+        "Portable source/output path overlap is not allowed: " +
+        "source=$resolvedExecutableDir output=$candidateOutputDir"
+    )
+}
+if (Test-DesktopPathsOverlap `
+    -FirstPath $resolvedExecutableDir `
+    -SecondPath $candidateStagingRoot
+) {
+    throw (
+        "Portable source/staging path overlap is not allowed: " +
+        "source=$resolvedExecutableDir staging=$candidateStagingRoot"
+    )
+}
 $resolvedOutputDir = Resolve-PortableOutputDirectory -Path $OutputDir
 $packageName = "ModWatcherAgent-$Version-win-x64-portable"
 $zipLeaf = "$packageName.zip"
@@ -162,6 +193,7 @@ $hashPath = Assert-ControlledPortableOutputFile `
 $stagingRoot = Join-Path $resolvedOutputDir ".portable-staging"
 
 foreach ($path in @($zipPath, $hashPath)) {
+    Assert-NoDesktopPathReparsePoints -Path $path -Context "portable artifact path"
     if (Test-Path -LiteralPath $path) {
         Remove-Item -LiteralPath $path -Force
     }

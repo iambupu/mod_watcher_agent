@@ -213,11 +213,17 @@ $summary | ConvertTo-Json -Compress -Depth 4
 def _invoke_powershell_predicate(
     path: Path,
     function_name: str,
-    **arguments: str,
+    **arguments: str | bool,
 ) -> bool:
     _required_file(path)
+
+    def powershell_literal(value: str | bool) -> str:
+        if isinstance(value, bool):
+            return "$true" if value else "$false"
+        return "'{}'".format(value.replace("'", "''"))
+
     assignments = "\n".join(
-        "$invokeArguments['{}'] = '{}'".format(key, value.replace("'", "''"))
+        f"$invokeArguments['{key}'] = {powershell_literal(value)}"
         for key, value in arguments.items()
     )
     parser_script = rf"""
@@ -288,12 +294,50 @@ def _create_directory_junction(link: Path, target: Path) -> None:
     assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
-def _write_fake_pe(path: Path, *, machine: int = 0x8664) -> None:
+def _write_fake_pe(
+    path: Path,
+    *,
+    machine: int = 0x8664,
+    number_of_sections: int = 1,
+    size_of_optional_header: int = 0xF0,
+    characteristics: int = 0x0022,
+    optional_magic: int = 0x020B,
+    include_section_table: bool = True,
+    truncate_to: int | None = None,
+) -> None:
+    pe_offset = 0x80
+    optional_header_offset = pe_offset + 24
+    optional_header_end = optional_header_offset + size_of_optional_header
+    section_table_size = 40 * number_of_sections if include_section_table else 0
+    payload = bytearray(max(optional_header_end + section_table_size, 0x9A))
+    payload[:2] = b"MZ"
+    struct.pack_into("<I", payload, 0x3C, pe_offset)
+    payload[pe_offset : pe_offset + 4] = b"PE\0\0"
+    struct.pack_into(
+        "<HHIIIHH",
+        payload,
+        pe_offset + 4,
+        machine,
+        number_of_sections,
+        0,
+        0,
+        0,
+        size_of_optional_header,
+        characteristics,
+    )
+    struct.pack_into("<H", payload, optional_header_offset, optional_magic)
+    if truncate_to is not None:
+        payload = payload[:truncate_to]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+
+
+def _write_truncated_x64_pe_header(path: Path) -> None:
     payload = bytearray(0x86)
     payload[:2] = b"MZ"
     struct.pack_into("<I", payload, 0x3C, 0x80)
     payload[0x80:0x84] = b"PE\0\0"
-    struct.pack_into("<H", payload, 0x84, machine)
+    struct.pack_into("<H", payload, 0x84, 0x8664)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
 
@@ -577,6 +621,17 @@ def test_portable_script_builds_clean_zip_and_matching_sha256(tmp_path: Path) ->
     internal_dir.mkdir(parents=True)
     _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
     (internal_dir / "runtime.txt").write_text("runtime", encoding="utf-8")
+    certifi_bundle = internal_dir / "certifi" / "cacert.pem"
+    certifi_bundle.parent.mkdir(parents=True)
+    certifi_bundle.write_text(
+        "-----BEGIN CERTIFICATE-----\npublic CA bundle\n-----END CERTIFICATE-----\n",
+        encoding="utf-8",
+    )
+    (internal_dir / "monkey.pem").write_text("non-key fixture", encoding="utf-8")
+    (internal_dir / "public-key.pem").write_text(
+        "-----BEGIN PUBLIC KEY-----\npublic key\n-----END PUBLIC KEY-----\n",
+        encoding="utf-8",
+    )
     output_dir = tmp_path / "发布 空间"
 
     completed = _run_script(
@@ -600,6 +655,9 @@ def test_portable_script_builds_clean_zip_and_matching_sha256(tmp_path: Path) ->
         names = {name.replace("\\", "/") for name in archive.namelist()}
     assert "ModWatcherAgent/ModWatcherAgent.exe" in names
     assert "ModWatcherAgent/_internal/runtime.txt" in names
+    assert "ModWatcherAgent/_internal/certifi/cacert.pem" in names
+    assert "ModWatcherAgent/_internal/monkey.pem" in names
+    assert "ModWatcherAgent/_internal/public-key.pem" in names
     assert not (output_dir / ".portable-staging").exists()
 
 
@@ -646,6 +704,117 @@ def test_portable_script_rejects_runtime_data_tests_and_secrets(
     assert "forbidden" in f"{completed.stdout}\n{completed.stderr}".lower()
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "server.key",
+        "server.key_backup",
+        "signing.pfx.bak",
+        "signing.pfx_backup",
+        "test_key.pem",
+        "id_rsa.bak",
+        "id_dsa",
+        "id_ed25519.old",
+        "id_ecdsa",
+        "credentials.json.bak",
+        "secrets.json~",
+        "private.key.old",
+    ],
+)
+def test_portable_script_rejects_key_material_and_backups(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    executable_dir = tmp_path / "bundle" / "ModWatcherAgent"
+    executable_dir.mkdir(parents=True)
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
+    forbidden = executable_dir / relative_path
+    forbidden.write_text("private key material", encoding="utf-8")
+
+    completed = _run_script(
+        PORTABLE_SCRIPT,
+        "-ExecutableDir",
+        str(executable_dir),
+        "-OutputDir",
+        str(tmp_path / "release"),
+        "-Version",
+        "9.8.7",
+    )
+
+    assert completed.returncode != 0
+    assert "forbidden" in f"{completed.stdout}\n{completed.stderr}".casefold()
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "expected"),
+    [
+        ("ModWatcherAgent/server.key", True),
+        ("ModWatcherAgent/server.key_backup", True),
+        ("ModWatcherAgent/signing.pfx.bak", True),
+        ("ModWatcherAgent/signing.pfx_backup", True),
+        ("ModWatcherAgent/test_key.pem", True),
+        ("ModWatcherAgent/id_rsa.bak", True),
+        ("ModWatcherAgent/id_dsa", True),
+        ("ModWatcherAgent/id_ed25519.old", True),
+        ("ModWatcherAgent/id_ecdsa", True),
+        ("ModWatcherAgent/credentials.json.bak", True),
+        ("ModWatcherAgent/secrets.json~", True),
+        ("ModWatcherAgent/private.key.old", True),
+        ("ModWatcherAgent/_internal/certifi/cacert.pem", False),
+        ("ModWatcherAgent/_internal/monkey.pem", False),
+        ("ModWatcherAgent/_internal/public-key.pem", False),
+    ],
+)
+def test_common_zip_path_policy_rejects_key_material_but_allows_ca_bundle(
+    relative_path: str,
+    expected: bool,
+) -> None:
+    assert (
+        _invoke_powershell_predicate(
+            PACKAGING_COMMON_SCRIPT,
+            "Test-ForbiddenDesktopBundlePath",
+            RelativePath=relative_path,
+            IsDirectory=False,
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    "private_key_header",
+    [
+        "PRIVATE KEY",
+        "RSA PRIVATE KEY",
+        "EC PRIVATE KEY",
+        "OPENSSH PRIVATE KEY",
+    ],
+)
+def test_portable_rejects_private_key_pem_content_under_arbitrary_name(
+    tmp_path: Path,
+    private_key_header: str,
+) -> None:
+    executable_dir = tmp_path / "bundle" / "ModWatcherAgent"
+    executable_dir.mkdir(parents=True)
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
+    (executable_dir / "transport.pem").write_text(
+        f"-----BEGIN {private_key_header}-----\nsecret\n",
+        encoding="utf-8",
+    )
+
+    completed = _run_script(
+        PORTABLE_SCRIPT,
+        "-ExecutableDir",
+        str(executable_dir),
+        "-OutputDir",
+        str(tmp_path / "release"),
+        "-Version",
+        "9.8.7",
+    )
+
+    assert completed.returncode != 0
+    assert "private key" in f"{completed.stdout}\n{completed.stderr}".casefold()
+
+
 def test_portable_script_rejects_unsafe_version_without_touching_escaped_files(
     tmp_path: Path,
 ) -> None:
@@ -678,10 +847,209 @@ def test_portable_script_rejects_unsafe_version_without_touching_escaped_files(
     assert escaped_hash.read_bytes() == b"keep-hash"
 
 
+def test_portable_rejects_source_inside_staging_before_deleting_input(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "release"
+    executable_dir = output_dir / ".portable-staging" / "ModWatcherAgent"
+    executable_dir.mkdir(parents=True)
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
+    sentinel = executable_dir / "caller-owned.txt"
+    sentinel.write_text("keep-input", encoding="utf-8")
+
+    completed = _run_script(
+        PORTABLE_SCRIPT,
+        "-ExecutableDir",
+        str(executable_dir),
+        "-OutputDir",
+        str(output_dir),
+        "-Version",
+        "9.8.7",
+    )
+
+    assert completed.returncode != 0
+    assert sentinel.read_text(encoding="utf-8") == "keep-input"
+    assert "overlap" in f"{completed.stdout}\n{completed.stderr}".casefold()
+
+
+def test_portable_rejects_output_with_junction_ancestor_before_deleting_input(
+    tmp_path: Path,
+) -> None:
+    real_output_parent = tmp_path / "real-output-parent"
+    real_output_parent.mkdir()
+    output_alias = tmp_path / "parent-junction-alias"
+    _create_directory_junction(output_alias, real_output_parent)
+    executable_dir = real_output_parent / "release" / ".portable-staging" / "ModWatcherAgent"
+    executable_dir.mkdir(parents=True)
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
+    sentinel = executable_dir / "caller-owned.txt"
+    sentinel.write_text("keep-input", encoding="utf-8")
+
+    try:
+        completed = _run_script(
+            PORTABLE_SCRIPT,
+            "-ExecutableDir",
+            str(executable_dir),
+            "-OutputDir",
+            str(output_alias / "release"),
+            "-Version",
+            "9.8.7",
+        )
+
+        assert completed.returncode != 0
+        assert sentinel.read_text(encoding="utf-8") == "keep-input"
+        assert "reparse point" in f"{completed.stdout}\n{completed.stderr}".casefold()
+    finally:
+        if output_alias.exists():
+            output_alias.rmdir()
+
+
+def test_portable_rejects_missing_output_below_junction_before_creation(
+    tmp_path: Path,
+) -> None:
+    real_output_parent = tmp_path / "real-output-parent"
+    real_output_parent.mkdir()
+    output_alias = tmp_path / "parent-junction-alias"
+    _create_directory_junction(output_alias, real_output_parent)
+    output_dir = output_alias / "new-release"
+    executable_dir = tmp_path / "bundle" / "ModWatcherAgent"
+    executable_dir.mkdir(parents=True)
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
+    sentinel = executable_dir / "caller-owned.txt"
+    sentinel.write_text("keep-input", encoding="utf-8")
+
+    try:
+        completed = _run_script(
+            PORTABLE_SCRIPT,
+            "-ExecutableDir",
+            str(executable_dir),
+            "-OutputDir",
+            str(output_dir),
+            "-Version",
+            "9.8.7",
+        )
+
+        assert completed.returncode != 0
+        assert sentinel.read_text(encoding="utf-8") == "keep-input"
+        assert "reparse point" in f"{completed.stdout}\n{completed.stderr}".casefold()
+        assert not output_dir.exists()
+    finally:
+        if output_alias.exists():
+            output_alias.rmdir()
+
+
+def test_portable_rejects_output_ancestor_before_creating_artifacts(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "release"
+    executable_dir = output_dir / "input" / "ModWatcherAgent"
+    executable_dir.mkdir(parents=True)
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
+    sentinel = executable_dir / "caller-owned.txt"
+    sentinel.write_text("keep-input", encoding="utf-8")
+
+    completed = _run_script(
+        PORTABLE_SCRIPT,
+        "-ExecutableDir",
+        str(executable_dir),
+        "-OutputDir",
+        str(output_dir),
+        "-Version",
+        "9.8.7",
+    )
+
+    assert completed.returncode != 0
+    assert sentinel.read_text(encoding="utf-8") == "keep-input"
+    assert "overlap" in f"{completed.stdout}\n{completed.stderr}".casefold()
+    assert not (output_dir / ".portable-staging").exists()
+
+
+@pytest.mark.parametrize(
+    ("first_parts", "second_parts", "expected"),
+    [
+        (("source",), ("source",), True),
+        (("source",), ("source", "release"), True),
+        (("source", "release"), ("source",), True),
+        (("source", "nested", ".."), ("source",), True),
+        (("source",), ("source-output",), False),
+    ],
+)
+def test_common_path_overlap_policy_is_canonical_and_separator_aware(
+    tmp_path: Path,
+    first_parts: tuple[str, ...],
+    second_parts: tuple[str, ...],
+    expected: bool,
+) -> None:
+    first = tmp_path.joinpath(*first_parts)
+    second = tmp_path.joinpath(*second_parts)
+
+    assert (
+        _invoke_powershell_predicate(
+            PACKAGING_COMMON_SCRIPT,
+            "Test-DesktopPathsOverlap",
+            FirstPath=str(first),
+            SecondPath=str(second),
+        )
+        is expected
+    )
+
+
 def test_portable_script_rejects_non_x64_pe(tmp_path: Path) -> None:
     executable_dir = tmp_path / "bundle" / "ModWatcherAgent"
     executable_dir.mkdir(parents=True)
     _write_fake_pe(executable_dir / "ModWatcherAgent.exe", machine=0x014C)
+
+    completed = _run_script(
+        PORTABLE_SCRIPT,
+        "-ExecutableDir",
+        str(executable_dir),
+        "-OutputDir",
+        str(tmp_path / "release"),
+        "-Version",
+        "9.8.7",
+    )
+
+    assert completed.returncode != 0
+    assert "x64 pe" in f"{completed.stdout}\n{completed.stderr}".casefold()
+
+
+@pytest.mark.parametrize(
+    "malformation",
+    [
+        "truncated-coff-header",
+        "missing-optional-header",
+        "not-an-executable-image",
+        "pe32-not-pe32-plus",
+        "truncated-optional-header",
+        "zero-sections",
+        "missing-section-table",
+        "dll-image",
+    ],
+)
+def test_portable_script_rejects_malformed_x64_pe_headers(
+    tmp_path: Path,
+    malformation: str,
+) -> None:
+    executable_dir = tmp_path / "bundle" / "ModWatcherAgent"
+    executable_path = executable_dir / "ModWatcherAgent.exe"
+    if malformation == "truncated-coff-header":
+        _write_truncated_x64_pe_header(executable_path)
+    elif malformation == "missing-optional-header":
+        _write_fake_pe(executable_path, size_of_optional_header=0)
+    elif malformation == "not-an-executable-image":
+        _write_fake_pe(executable_path, characteristics=0x0020)
+    elif malformation == "pe32-not-pe32-plus":
+        _write_fake_pe(executable_path, optional_magic=0x010B)
+    elif malformation == "truncated-optional-header":
+        _write_fake_pe(executable_path, truncate_to=0xA0)
+    elif malformation == "zero-sections":
+        _write_fake_pe(executable_path, number_of_sections=0)
+    elif malformation == "missing-section-table":
+        _write_fake_pe(executable_path, include_section_table=False)
+    elif malformation == "dll-image":
+        _write_fake_pe(executable_path, characteristics=0x2022)
+    else:  # pragma: no cover - protects the parameter table
+        raise AssertionError(f"Unknown PE malformation: {malformation}")
 
     completed = _run_script(
         PORTABLE_SCRIPT,
@@ -762,6 +1130,65 @@ def test_smoke_rejects_forbidden_bundle_content_before_launch(
     assert completed.returncode != 0
     output = f"{completed.stdout}\n{completed.stderr}".casefold()
     assert "forbidden" in output or "runtime data escaped" in output
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "server.key",
+        "server.key_backup",
+        "signing.pfx.bak",
+        "signing.pfx_backup",
+        "test_key.pem",
+        "id_rsa.bak",
+        "id_dsa",
+        "id_ed25519.old",
+        "id_ecdsa",
+        "credentials.json.bak",
+        "secrets.json~",
+        "private.key.old",
+    ],
+)
+def test_smoke_rejects_key_material_before_launch(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    bundle_root = tmp_path / "ModWatcherAgent"
+    _write_fake_pe(bundle_root / "ModWatcherAgent.exe")
+    _write_required_desktop_runtime_files(bundle_root)
+    (bundle_root / relative_path).write_text("private key material", encoding="utf-8")
+
+    completed = _run_script(
+        SMOKE_SCRIPT,
+        "-ExecutablePath",
+        str(bundle_root / "ModWatcherAgent.exe"),
+        "-TimeoutSeconds",
+        "1",
+    )
+
+    assert completed.returncode != 0
+    assert "forbidden" in f"{completed.stdout}\n{completed.stderr}".casefold()
+
+
+def test_smoke_rejects_private_key_pem_content_before_launch(tmp_path: Path) -> None:
+    bundle_root = tmp_path / "ModWatcherAgent"
+    _write_fake_pe(bundle_root / "ModWatcherAgent.exe")
+    _write_required_desktop_runtime_files(bundle_root)
+    (bundle_root / "transport.pem").write_text(
+        "-----BEGIN ENCRYPTED PRIVATE KEY-----\nsecret\n",
+        encoding="utf-8",
+    )
+
+    completed = _run_script(
+        SMOKE_SCRIPT,
+        "-ExecutablePath",
+        str(bundle_root / "ModWatcherAgent.exe"),
+        "-TimeoutSeconds",
+        "1",
+    )
+
+    assert completed.returncode != 0
+    assert "private key" in f"{completed.stdout}\n{completed.stderr}".casefold()
 
 
 def test_smoke_rejects_non_x64_pe_before_launch(tmp_path: Path) -> None:
