@@ -234,6 +234,146 @@ def test_close_uses_live_tray_health_instead_of_stale_startup_result(
     assert window.hide_calls == 0
 
 
+@pytest.mark.parametrize(
+    ("callback_name", "expected_result"),
+    [
+        ("on_window_minimized", None),
+        ("on_window_closing", False),
+    ],
+)
+def test_tray_loss_restore_cannot_be_overwritten_by_a_late_hide(
+    tmp_path: Path,
+    callback_name: str,
+    expected_result: object,
+) -> None:
+    module = _desktop_controller_module()
+    controller, _server, window, tray, _guard, history = _make_controller(tmp_path)
+    controller.tray_available = True
+    tray.on_unavailable = controller.on_tray_unavailable
+    hide_entered = threading.Event()
+    allow_tray_loss = threading.Event()
+    tray_loss_restored = threading.Event()
+    window_visible = True
+    results: list[object] = []
+
+    def blocking_hide() -> None:
+        nonlocal window_visible
+        window.hide_calls += 1
+        history.append("window.hide.enter")
+        hide_entered.set()
+        assert allow_tray_loss.wait(1)
+        tray.lose_runtime(RuntimeError("native tray loop exited during hide"))
+        assert window.show_calls == 1
+        assert window.restore_calls == 1
+        tray_loss_restored.set()
+        window_visible = False
+        history.append("window.hide.complete")
+
+    def visible_show() -> None:
+        nonlocal window_visible
+        window.show_calls += 1
+        window_visible = True
+        history.append("window.show")
+
+    def visible_restore() -> None:
+        nonlocal window_visible
+        window.restore_calls += 1
+        window_visible = True
+        history.append("window.restore")
+
+    window.hide = blocking_hide  # type: ignore[method-assign]
+    window.show = visible_show  # type: ignore[method-assign]
+    window.restore = visible_restore  # type: ignore[method-assign]
+
+    callback = getattr(controller, callback_name)
+    transition = threading.Thread(target=lambda: results.append(callback()))
+    transition.start()
+    assert hide_entered.wait(1)
+    assert controller.state is module.DesktopState.WINDOW_HIDDEN
+    allow_tray_loss.set()
+    transition.join(1)
+
+    assert not transition.is_alive()
+    assert tray_loss_restored.is_set()
+    assert results == [expected_result]
+    assert window_visible is True
+    assert controller.state is module.DesktopState.WINDOW_VISIBLE
+    assert history[-3:] == ["window.hide.complete", "window.show", "window.restore"]
+
+
+def test_shutdown_serializes_destroy_after_an_in_progress_hide(tmp_path: Path) -> None:
+    controller, _server, window, _tray, _guard, history = _make_controller(tmp_path)
+    controller.tray_available = True
+    hide_entered = threading.Event()
+    release_hide = threading.Event()
+    destroy_entered = threading.Event()
+
+    def blocking_hide() -> None:
+        window.hide_calls += 1
+        history.append("window.hide")
+        hide_entered.set()
+        assert release_hide.wait(1)
+
+    def observed_destroy() -> None:
+        window.destroy_calls += 1
+        history.append("window.destroy")
+        destroy_entered.set()
+
+    window.hide = blocking_hide  # type: ignore[method-assign]
+    window.destroy = observed_destroy  # type: ignore[method-assign]
+    hide = threading.Thread(target=controller.on_window_minimized)
+    shutdown = threading.Thread(target=controller.shutdown, args=("test",))
+    hide.start()
+    assert hide_entered.wait(1)
+    shutdown.start()
+    try:
+        assert not destroy_entered.wait(0.2)
+    finally:
+        release_hide.set()
+        hide.join(1)
+        shutdown.join(1)
+
+    assert not hide.is_alive()
+    assert not shutdown.is_alive()
+    assert destroy_entered.is_set()
+    assert history.index("window.hide") < history.index("window.destroy")
+
+
+@pytest.mark.parametrize(
+    ("callback_name", "expected_result"),
+    [
+        ("on_window_minimized", None),
+        ("on_window_closing", True),
+    ],
+)
+def test_hide_failure_enters_failed_cleanup(
+    tmp_path: Path,
+    callback_name: str,
+    expected_result: object,
+) -> None:
+    module = _desktop_controller_module()
+    controller, server, window, tray, guard, _history = _make_controller(tmp_path)
+    controller.tray_available = True
+
+    def failing_hide() -> None:
+        window.hide_calls += 1
+        raise RuntimeError("native window could not be hidden")
+
+    window.hide = failing_hide  # type: ignore[method-assign]
+
+    result = getattr(controller, callback_name)()
+
+    assert result is expected_result
+    assert controller.state is module.DesktopState.FAILED
+    assert isinstance(controller.error, RuntimeError)
+    assert str(controller.error) == "native window could not be hidden"
+    assert controller.shutdown_complete.is_set()
+    assert server.stop_calls == 1
+    assert tray.stop_calls == 1
+    assert window.destroy_calls == 1
+    assert guard.release_calls == 1
+
+
 def test_tray_callbacks_restore_and_request_the_single_shutdown_path(tmp_path: Path) -> None:
     controller, server, window, tray, guard, _history = _make_controller(tmp_path)
 

@@ -5,7 +5,6 @@ import errno
 import os
 import sys
 import uuid
-from contextlib import suppress
 from pathlib import Path
 from typing import Protocol
 
@@ -15,6 +14,12 @@ _ERROR_ALREADY_EXISTS = 183
 
 class _MutexBackend(Protocol):
     def acquire(self, name: str) -> object | None: ...
+
+    def release(self, handle: object) -> None: ...
+
+
+class _FileLockBackend(Protocol):
+    def acquire(self, path: Path, diagnostic: bytes) -> object | None: ...
 
     def release(self, handle: object) -> None: ...
 
@@ -42,6 +47,93 @@ class _Win32MutexBackend:
             raise ctypes.WinError(ctypes.get_last_error())
 
 
+def _open_lock_file(path: Path) -> int:
+    flags = os.O_CREAT | os.O_RDWR
+    flags |= getattr(os, "O_BINARY", 0)
+    return os.open(path, flags, 0o600)
+
+
+def _write_lock_diagnostic(descriptor: int, diagnostic: bytes) -> None:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    os.write(descriptor, diagnostic)
+    os.ftruncate(descriptor, len(diagnostic))
+
+
+class _FcntlFileLockBackend:
+    def acquire(self, path: Path, diagnostic: bytes) -> object | None:
+        import fcntl
+
+        descriptor = _open_lock_file(path)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            os.close(descriptor)
+            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+                return None
+            raise
+        try:
+            _write_lock_diagnostic(descriptor, diagnostic)
+        except BaseException:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+            raise
+        return descriptor
+
+    def release(self, handle: object) -> None:
+        import fcntl
+
+        descriptor = int(handle)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+class _MsvcrtFileLockBackend:
+    def acquire(self, path: Path, diagnostic: bytes) -> object | None:
+        import msvcrt
+
+        descriptor = _open_lock_file(path)
+        try:
+            if os.fstat(descriptor).st_size == 0:
+                os.write(descriptor, b"\0")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            os.close(descriptor)
+            if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                return None
+            raise
+        try:
+            _write_lock_diagnostic(descriptor, diagnostic)
+        except BaseException:
+            try:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+            finally:
+                os.close(descriptor)
+            raise
+        return descriptor
+
+    def release(self, handle: object) -> None:
+        import msvcrt
+
+        descriptor = int(handle)
+        try:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(descriptor)
+
+
+def _default_file_lock_backend() -> _FileLockBackend:
+    if os.name == "nt":
+        return _MsvcrtFileLockBackend()
+    return _FcntlFileLockBackend()
+
+
 class SingleInstanceGuard:
     """Hold the process-wide desktop instance mutex or a recoverable file lock."""
 
@@ -52,13 +144,15 @@ class SingleInstanceGuard:
         mutex_name: str = _DEFAULT_MUTEX_NAME,
         platform_name: str | None = None,
         mutex_backend: _MutexBackend | None = None,
+        file_lock_backend: _FileLockBackend | None = None,
     ) -> None:
         self.lock_path = Path(lock_path)
         self.mutex_name = mutex_name
         self._platform_name = platform_name or sys.platform
         self._mutex_backend = mutex_backend
+        self._file_lock_backend = file_lock_backend
         self._mutex_handle: object | None = None
-        self._file_token: str | None = None
+        self._file_lock_handle: object | None = None
         self._acquired = False
 
     def acquire(self) -> bool:
@@ -88,18 +182,13 @@ class SingleInstanceGuard:
                 backend.release(handle)
             return
 
-        token = self._file_token
-        self._file_token = None
-        if token is None:
+        handle = self._file_lock_handle
+        self._file_lock_handle = None
+        if handle is None:
             return
-        try:
-            current = self.lock_path.read_text(encoding="ascii")
-        except (FileNotFoundError, OSError, UnicodeError):
-            return
-        if current != token:
-            return
-        with suppress(FileNotFoundError):
-            self.lock_path.unlink()
+        backend = self._file_lock_backend
+        if backend is not None:
+            backend.release(handle)
 
     def __enter__(self) -> SingleInstanceGuard:
         if not self.acquire():
@@ -111,69 +200,12 @@ class SingleInstanceGuard:
 
     def _acquire_file_lock(self) -> bool:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        token = f"{os.getpid()}:{uuid.uuid4().hex}"
-        staging_path = self.lock_path.with_name(f".{self.lock_path.name}.{uuid.uuid4().hex}.tmp")
-        descriptor = os.open(
-            staging_path,
-            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-            0o600,
-        )
-        try:
-            try:
-                os.write(descriptor, token.encode("ascii"))
-            finally:
-                os.close(descriptor)
-
-            for _attempt in range(2):
-                try:
-                    os.link(staging_path, self.lock_path)
-                except FileExistsError:
-                    if not self._remove_stale_file_lock():
-                        return False
-                    continue
-                self._file_token = token
-                self._acquired = True
-                return True
+        backend = self._file_lock_backend or _default_file_lock_backend()
+        self._file_lock_backend = backend
+        diagnostic = f"{os.getpid()}:{uuid.uuid4().hex}".encode("ascii")
+        handle = backend.acquire(self.lock_path, diagnostic)
+        if handle is None:
             return False
-        finally:
-            with suppress(FileNotFoundError):
-                staging_path.unlink()
-
-    def _remove_stale_file_lock(self) -> bool:
-        try:
-            owner = self.lock_path.read_text(encoding="ascii")
-        except FileNotFoundError:
-            return True
-        except (OSError, UnicodeError):
-            owner = ""
-
-        try:
-            pid = int(owner.partition(":")[0])
-        except ValueError:
-            pid = -1
-        if pid > 0 and _process_is_alive(pid):
-            return False
-
-        try:
-            if self.lock_path.read_text(encoding="ascii") != owner:
-                return False
-            self.lock_path.unlink()
-        except FileNotFoundError:
-            pass
-        except (OSError, UnicodeError):
-            return False
+        self._file_lock_handle = handle
+        self._acquired = True
         return True
-
-
-def _process_is_alive(pid: int) -> bool:
-    if pid == os.getpid():
-        return True
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError as exc:
-        return exc.errno == errno.EPERM
-    return True

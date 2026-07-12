@@ -87,6 +87,7 @@ class DesktopController:
         self.error: BaseException | None = None
         self.shutdown_complete = threading.Event()
         self._state_lock = threading.RLock()
+        self._visibility_lock = threading.RLock()
         self._shutdown_started = False
         self._shutdown_owner: int | None = None
 
@@ -152,29 +153,14 @@ class DesktopController:
             raise DesktopStartupError(f"Desktop application failed to start: {exc}") from exc
 
     def on_window_minimized(self, *_args: object) -> None:
-        with self._state_lock:
-            if not self._tray_is_healthy() or self.is_exiting:
-                return
-            self.state = DesktopState.WINDOW_HIDDEN
-        self.window.hide()
+        self._hide_window_to_tray()
 
     def on_window_closing(self, *_args: object) -> bool:
-        with self._state_lock:
-            if self.is_exiting or not self._tray_is_healthy():
-                return True
-            self.state = DesktopState.WINDOW_HIDDEN
-        self.window.hide()
-        return False
+        return not self._hide_window_to_tray()
 
     def restore_window(self, *_args: object) -> None:
-        with self._state_lock:
-            if self.is_exiting:
-                return
-        self.window.show()
-        self.window.restore()
-        with self._state_lock:
-            if not self.is_exiting:
-                self.state = DesktopState.WINDOW_VISIBLE
+        with self._visibility_lock:
+            self._restore_window_locked()
 
     def on_tray_unavailable(
         self,
@@ -188,7 +174,13 @@ class DesktopController:
             return
 
         try:
-            self.restore_window()
+            with self._visibility_lock:
+                with self._state_lock:
+                    restore_hidden_window = (
+                        self.state is DesktopState.WINDOW_HIDDEN and not self.is_exiting
+                    )
+                if restore_hidden_window:
+                    self._restore_window_locked()
         except BaseException as exc:
             with self._state_lock:
                 self.error = exc
@@ -203,6 +195,55 @@ class DesktopController:
         if not live_available:
             self.tray_available = False
         return self.tray_available and live_available
+
+    def _hide_window_to_tray(self) -> bool:
+        transition_error: BaseException | None = None
+        restored = False
+        with self._visibility_lock:
+            with self._state_lock:
+                if self.is_exiting or not self._tray_is_healthy():
+                    return False
+                self.state = DesktopState.WINDOW_HIDDEN
+
+            try:
+                self.window.hide()
+            except BaseException as exc:
+                transition_error = exc
+            else:
+                with self._state_lock:
+                    if self.is_exiting:
+                        return False
+                    tray_healthy = self._tray_is_healthy()
+                if tray_healthy:
+                    return True
+
+                try:
+                    restored = self._restore_window_locked()
+                except BaseException as exc:
+                    transition_error = exc
+
+        if transition_error is not None:
+            with self._state_lock:
+                self.error = transition_error
+                self.state = DesktopState.FAILED
+            self._cleanup(preserve_failure=True)
+        return restored
+
+    def _restore_window_locked(self) -> bool:
+        with self._state_lock:
+            if self.is_exiting:
+                return False
+        self.window.show()
+        self.window.restore()
+        with self._state_lock:
+            if self.is_exiting:
+                return False
+            self.state = DesktopState.WINDOW_VISIBLE
+        return True
+
+    def _destroy_window(self) -> None:
+        with self._visibility_lock:
+            self.window.destroy()
 
     def _cleanup(self, *, preserve_failure: bool) -> None:
         current_thread_id = threading.get_ident()
@@ -230,7 +271,7 @@ class DesktopController:
             for cleanup in (
                 self.tray.stop,
                 self.server.stop,
-                self.window.destroy,
+                self._destroy_window,
                 self.guard.release,
             ):
                 try:
