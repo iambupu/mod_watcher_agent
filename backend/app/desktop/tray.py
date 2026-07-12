@@ -95,7 +95,15 @@ class TrayController:
             self.available = False
             self.stop()
             return False
-        return self._startup_succeeded
+        with self._state_lock:
+            startup_succeeded = self._startup_succeeded
+        if (
+            not startup_succeeded
+            and thread is not threading.current_thread()
+            and thread.ident is not None
+        ):
+            thread.join(max(self.join_timeout, 0))
+        return startup_succeeded
 
     def stop(self) -> None:
         with self._state_lock:

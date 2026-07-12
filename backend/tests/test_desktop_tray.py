@@ -198,6 +198,59 @@ def test_tray_reports_dependency_initialization_failure_without_hanging(
     assert not tray.thread.is_alive()
 
 
+def test_failed_tray_start_waits_for_worker_epilogue_before_returning(
+    tmp_path: Path,
+) -> None:
+    module = _desktop_tray_module()
+    event_published = threading.Event()
+    release_epilogue = threading.Event()
+    start_finished = threading.Event()
+    result: list[bool] = []
+
+    class BlockingSetEvent:
+        def __init__(self) -> None:
+            self._event = threading.Event()
+
+        def set(self) -> None:
+            self._event.set()
+            event_published.set()
+            assert release_epilogue.wait(1)
+
+        def wait(self, timeout: float | None = None) -> bool:
+            return self._event.wait(timeout)
+
+    def fail_dependencies() -> tuple[object, object, object]:
+        raise ImportError("pystray is unavailable")
+
+    tray = module.TrayController(
+        paths=SimpleNamespace(log_dir=tmp_path),
+        base_url="http://127.0.0.1:17500",
+        dependency_loader=fail_dependencies,
+        startup_timeout=0.5,
+        join_timeout=0.5,
+    )
+    tray._startup_complete = BlockingSetEvent()
+
+    def start_tray() -> None:
+        try:
+            result.append(tray.start(on_show=lambda: None, on_exit=lambda *_args: None))
+        finally:
+            start_finished.set()
+
+    starter = threading.Thread(target=start_tray, name="tray-start-caller")
+    starter.start()
+    assert event_published.wait(1)
+    try:
+        assert not start_finished.wait(0.1)
+    finally:
+        release_epilogue.set()
+        starter.join(1)
+
+    assert not starter.is_alive()
+    assert result == [False]
+    assert not tray.thread.is_alive()
+
+
 def test_tray_notifies_when_the_native_loop_exits_after_startup(
     tmp_path: Path,
 ) -> None:
