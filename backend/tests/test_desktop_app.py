@@ -727,6 +727,28 @@ def test_smoke_cli_uses_and_cleans_isolated_temp_data_without_gui(
     ]
 
 
+@pytest.mark.parametrize("original_value", [None, "C:/existing/game_aliases.json"])
+def test_smoke_environment_restores_game_alias_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    original_value: str | None,
+) -> None:
+    module = _desktop_entry_module()
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(tmp_path / "empty-smoke-data"))
+    if original_value is None:
+        monkeypatch.delenv("GAME_ALIAS_FILE", raising=False)
+    else:
+        monkeypatch.setenv("GAME_ALIAS_FILE", original_value)
+
+    with module._isolated_smoke_environment():
+        os.environ["GAME_ALIAS_FILE"] = str(tmp_path / "runtime" / "game_aliases.json")
+
+    if original_value is None:
+        assert "GAME_ALIAS_FILE" not in os.environ
+    else:
+        assert os.environ["GAME_ALIAS_FILE"] == original_value
+
+
 def test_smoke_cli_keeps_desktop_log_open_until_success_and_shutdown_are_written(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

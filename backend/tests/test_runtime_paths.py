@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import app.runtime_paths as runtime_paths_module
 from app.runtime_paths import (
     RuntimePathError,
     RuntimePaths,
@@ -254,6 +255,7 @@ def test_desktop_environment_points_to_runtime_paths_and_is_local_only(
     )
     for name in environment_names:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GAME_ALIAS_FILE", "original-game-alias-file")
     monkeypatch.setenv("MW_USER_DATA_DIR", str(tmp_path / "本地 数据"))
     paths = build_runtime_paths(
         frozen=True,
@@ -273,3 +275,87 @@ def test_desktop_environment_points_to_runtime_paths_and_is_local_only(
     assert os.environ["MW_BIND_HOST"] == "127.0.0.1"
     assert os.environ["MW_ALLOW_LAN"] == "false"
     assert os.environ["LOCAL_ONLY_API"] == "true"
+
+
+def test_desktop_environment_seeds_game_aliases_into_user_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_root = tmp_path / "bundle"
+    seed_path = bundle_root / "backend" / "game_aliases.json"
+    seed_path.parent.mkdir(parents=True)
+    seed_content = '{"aliases":{"天际":["Skyrim Special Edition"]}}\n'
+    seed_path.write_text(seed_content, encoding="utf-8")
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(tmp_path / "用户 数据"))
+    monkeypatch.setenv("GAME_ALIAS_FILE", "original-game-alias-file")
+    paths = build_runtime_paths(
+        frozen=True,
+        bundle_root=bundle_root,
+        executable_dir=tmp_path / "app",
+    )
+    ensure_runtime_directories(paths)
+
+    configure_desktop_environment(paths)
+
+    alias_file = paths.config_dir / "game_aliases.json"
+    assert os.environ["GAME_ALIAS_FILE"] == str(alias_file)
+    assert alias_file.read_text(encoding="utf-8") == seed_content
+    assert list(paths.config_dir.glob(".game_aliases.json.*.tmp")) == []
+
+
+def test_desktop_environment_preserves_existing_user_game_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_root = tmp_path / "bundle"
+    seed_path = bundle_root / "backend" / "game_aliases.json"
+    seed_path.parent.mkdir(parents=True)
+    seed_path.write_text('{"aliases":{"seed":["Skyrim"]}}\n', encoding="utf-8")
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(tmp_path / "用户 数据"))
+    monkeypatch.setenv("GAME_ALIAS_FILE", "original-game-alias-file")
+    paths = build_runtime_paths(
+        frozen=True,
+        bundle_root=bundle_root,
+        executable_dir=tmp_path / "app",
+    )
+    ensure_runtime_directories(paths)
+    alias_file = paths.config_dir / "game_aliases.json"
+    user_content = '{"aliases":{"用户别名":["Stellar Blade"]}}\n'
+    alias_file.write_text(user_content, encoding="utf-8")
+
+    configure_desktop_environment(paths)
+
+    assert os.environ["GAME_ALIAS_FILE"] == str(alias_file)
+    assert alias_file.read_text(encoding="utf-8") == user_content
+
+
+def test_desktop_environment_preserves_alias_file_created_during_seed_race(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_root = tmp_path / "bundle"
+    seed_path = bundle_root / "backend" / "game_aliases.json"
+    seed_path.parent.mkdir(parents=True)
+    seed_path.write_text('{"aliases":{"seed":["Skyrim"]}}\n', encoding="utf-8")
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(tmp_path / "用户 数据"))
+    monkeypatch.setenv("GAME_ALIAS_FILE", "original-game-alias-file")
+    paths = build_runtime_paths(
+        frozen=True,
+        bundle_root=bundle_root,
+        executable_dir=tmp_path / "app",
+    )
+    ensure_runtime_directories(paths)
+    alias_file = paths.config_dir / "game_aliases.json"
+    user_content = b'{"aliases":{"race-winner":["Stellar Blade"]}}\n'
+
+    def publish_collision(_source: object, destination: object) -> None:
+        Path(destination).write_bytes(user_content)  # type: ignore[arg-type]
+        raise FileExistsError("simulated concurrent publication")
+
+    publish_name = "rename" if os.name == "nt" else "link"
+    monkeypatch.setattr(runtime_paths_module.os, publish_name, publish_collision)
+
+    configure_desktop_environment(paths)
+
+    assert alias_file.read_bytes() == user_content
+    assert list(paths.config_dir.glob(".game_aliases.json.*.tmp")) == []

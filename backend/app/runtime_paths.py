@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
 _APPLICATION_DIRECTORY = "ModWatcherAgent"
+_GAME_ALIAS_FILENAME = "game_aliases.json"
 
 
 class RuntimePathError(RuntimeError):
@@ -150,7 +153,57 @@ def ensure_runtime_directories(paths: RuntimePaths) -> None:
             ) from exc
 
 
+def _path_key(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def _publish_seed_without_overwrite(source: Path, target: Path) -> None:
+    if _path_key(source) == _path_key(target) or target.exists():
+        return
+    if not source.is_file():
+        return
+
+    temporary_path: Path | None = None
+    descriptor: int | None = None
+    try:
+        content = source.read_bytes()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.seed-",
+            suffix=".tmp",
+            dir=target.parent,
+        )
+        temporary_path = Path(temporary_name)
+        with os.fdopen(descriptor, "wb") as output:
+            descriptor = None
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+
+        try:
+            if os.name == "nt":
+                os.rename(temporary_path, target)
+            else:
+                os.link(temporary_path, target)
+        except FileExistsError:
+            return
+    except OSError as exc:
+        raise RuntimePathError(
+            f"Unable to seed game aliases from {source} to {target}: {exc}"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            with suppress(OSError):
+                os.close(descriptor)
+        if temporary_path is not None:
+            with suppress(OSError):
+                temporary_path.unlink(missing_ok=True)
+
+
 def configure_desktop_environment(paths: RuntimePaths) -> None:
+    game_alias_file = paths.config_dir / _GAME_ALIAS_FILENAME
+    game_alias_seed = paths.bundle_root / "backend" / _GAME_ALIAS_FILENAME
+    _publish_seed_without_overwrite(game_alias_seed, game_alias_file)
     os.environ.update(
         {
             "MW_DESKTOP_MODE": "true",
@@ -160,6 +213,7 @@ def configure_desktop_environment(paths: RuntimePaths) -> None:
             "MW_BROWSER_PROFILE_ROOT": str(paths.browser_profile_dir),
             "MW_SNAPSHOT_ROOT": str(paths.snapshot_dir),
             "MW_ENV_FILE": str(paths.config_dir / ".env"),
+            "GAME_ALIAS_FILE": str(game_alias_file),
             "MW_BIND_HOST": "127.0.0.1",
             "MW_ALLOW_LAN": "false",
             "LOCAL_ONLY_API": "true",

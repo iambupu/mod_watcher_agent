@@ -1,10 +1,21 @@
 import platform
+import sys
 from pathlib import Path
 
 
 class AutoStartUnsupportedError(Exception):
     status_code = 501
     detail = "/api/settings/auto-start is only supported on Windows"
+
+
+def _auto_start_command() -> str:
+    if bool(getattr(sys, "frozen", False)):
+        executable = Path(sys.executable).resolve()
+        return f'"{executable}"'
+
+    root = Path(__file__).resolve().parent.parent.parent.parent
+    launcher = root / "start.ps1"
+    return f'powershell.exe -WindowStyle Hidden -File "{launcher}" -Tray'
 
 
 def set_windows_auto_start(enabled: bool, *, platform_module=platform) -> dict:
@@ -15,8 +26,6 @@ def set_windows_auto_start(enabled: bool, *, platform_module=platform) -> dict:
     import winreg
 
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    root = Path(__file__).resolve().parent.parent.parent.parent
-    launcher = root / "start.ps1"
 
     try:
         if enabled:
@@ -26,7 +35,7 @@ def set_windows_auto_start(enabled: bool, *, platform_module=platform) -> dict:
                 "ModWatcherAgent",
                 0,
                 winreg.REG_SZ,
-                f'powershell.exe -WindowStyle Hidden -File "{launcher}" -Tray',
+                _auto_start_command(),
             )
             winreg.CloseKey(key)
         else:
