@@ -218,6 +218,12 @@ function Get-BackendDependencyModules {
     if (-not $modules) {
         return $fallbackModules
     }
+    $requiredDesktopModules = @("pystray", "PIL")
+    foreach ($desktopModule in $requiredDesktopModules) {
+        if (-not ($modules -contains $desktopModule)) {
+            $modules += $desktopModule
+        }
+    }
     return $modules
 }
 
@@ -258,7 +264,7 @@ function Ensure-BackendDependencies {
     try {
         $pipCacheDir = Join-Path $root ".runtime\pip-cache"
         New-Item -ItemType Directory -Force -Path $pipCacheDir | Out-Null
-        & $venvPython -m pip install --no-cache-dir --cache-dir $pipCacheDir -e .
+        & $venvPython -m pip install --no-cache-dir --cache-dir $pipCacheDir -e ".[desktop]"
         if ($LASTEXITCODE -ne 0) { throw "Backend install failed" }
     }
     finally {

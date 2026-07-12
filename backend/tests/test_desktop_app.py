@@ -33,6 +33,15 @@ def test_pyproject_separates_desktop_runtime_and_packaging_extras() -> None:
     assert {"pytest>=8.2.0", "ruff>=0.11.0"}.issubset(extras["dev"])
 
 
+def test_source_launcher_installs_and_checks_desktop_tray_extra() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    launcher = (repo_root / "start.ps1").read_text(encoding="utf-8")
+
+    assert '-e ".[desktop]"' in launcher
+    assert '$requiredDesktopModules = @("pystray", "PIL")' in launcher
+    assert "foreach ($desktopModule in $requiredDesktopModules)" in launcher
+
+
 def _desktop_entry_module() -> ModuleType:
     try:
         return importlib.import_module("desktop_app")
