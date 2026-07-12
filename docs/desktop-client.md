@@ -2,7 +2,7 @@
 
 本文面向使用 Mod Watcher Agent Windows 独立客户端的普通用户，也为需要诊断、迁移或源码兼容模式的高级用户提供准确边界。
 
-> 当前状态：桌面代码基线 `5c10a62` 已在本机使用 Python 3.12.13 x64 与 Inno Setup 6.7.3 完整执行 `scripts/build_desktop.ps1`，退出码为 0；backend、Ruff、前端安装/类型检查/测试/构建、PyInstaller onedir、packaged smoke、portable、Setup 和 SHA256 全链均执行完成。本地 `release` 已生成精确 4 件相互匹配的资产；最终 onedir 与静默安装后的 EXE 都通过无 GUI smoke，静默逐用户安装/卸载与默认保留用户数据路径也已实测。以上只证明本机 headless 构建与静默安装路径，不代表 GitHub-hosted workflow、tag Release、Windows 10/11 GUI、DPI/双屏/托盘、缺失 WebView2、升级、交互删除或代码签名已经验收。逐项边界见 [验收记录](./desktop-client-acceptance.md)。
+> 当前状态：桌面代码基线 `de86184` 已在本机使用 Python 3.12.13 x64 与 Inno Setup 6.7.3 完整执行 `scripts/build_desktop.ps1`，退出码为 0；backend、Ruff、前端安装/类型检查/测试/构建、PyInstaller onedir、packaged smoke、portable、Setup 和 SHA256 全链均执行完成。构建脚本已将含陈旧安装器的输入目录自动收敛为精确 4 件相互匹配的当前资产；最终 onedir 与静默安装后的 EXE 都通过强化无 GUI smoke，两轮静默逐用户安装/卸载、默认保留用户数据和开机启动项归属清理也已实测。以上只证明本机 headless 构建与静默安装路径，不代表 GitHub-hosted workflow、tag Release、Windows 10/11 GUI、DPI/双屏/托盘、缺失 WebView2、升级、交互删除或代码签名已经验收。逐项边界见 [验收记录](./desktop-client-acceptance.md)。
 
 ## 1. 客户端形态
 
@@ -74,7 +74,7 @@ $expectedLine
 
 安装器使用 `PrivilegesRequired=lowest`，面向当前用户，不要求管理员权限。升级前应先完整退出客户端；安装器已配置 `AppMutex` 与 `CloseApplications` 来检测并尝试关闭同一应用，但真实升级行为仍待 M14 人工验收。程序文件不会写入用户数据目录。
 
-当前本机验收曾把最终 Setup 静默安装到含中文和空格的临时目录，安装后 EXE smoke 与静默卸载均返回 0，用户数据 sentinel 得到保留，安装文件、HKCU 卸载项、进程和本轮安装/smoke 临时目录均无残留。该证据不包含安装向导、开始菜单/桌面快捷方式、覆盖升级、交互卸载或普通非管理员干净账户测试。
+当前本机验收已把最终 Setup 两次静默安装到含中文和空格的临时目录，安装后 EXE smoke 与静默卸载均返回 0，用户数据 sentinel 得到保留。卸载会删除精确归属当前安装 EXE 的 HKCU Run 值，但保留用户改写为其他命令的同名值；测试后安装文件、Run 值、HKCU 卸载项、进程、数据目录和本轮临时目录均无残留。该证据不包含安装向导、开始菜单/桌面快捷方式、覆盖升级、交互卸载或普通非管理员干净账户测试。
 
 ### 4.2 WebView2 安装策略
 
@@ -132,7 +132,7 @@ $expectedLine
 
 ### 6.3 真正退出
 
-请使用托盘「退出」。正常的统一退出路径会停止托盘、请求 FastAPI/Uvicorn 生命周期结束、销毁窗口并释放单实例锁。FastAPI 生命周期负责停止调度器并关闭持久浏览器资源。
+请使用托盘「退出」。正常的统一退出路径会停止托盘、请求 FastAPI/Uvicorn 生命周期结束、销毁窗口并释放单实例锁。FastAPI 生命周期负责停止调度器并关闭持久浏览器资源。如果非 daemon 后端线程在超时后仍未停止，客户端会保留单实例锁、记录严重错误并刷新日志，然后以非零状态强制结束进程，避免留下一个无窗口的半退出实例。
 
 任务管理器中不再存在 `ModWatcherAgent.exe`，且端口 `17500` 已释放，才表示完全退出。直接结束进程只应作为故障恢复手段。
 
@@ -153,7 +153,7 @@ Local\ModWatcherAgentDesktop
 3. 配置桌面日志与异常钩子。
 4. 获取单实例锁。
 5. 检查旧 SQLite 迁移。
-6. 启动进程内后端并等待 `/api/health`。
+6. 启动进程内后端；只在自有 Uvicorn 实例确认绑定后才接受 `/api/health` 就绪响应。
 7. 后端健康后创建窗口与托盘。
 
 后端未就绪时不会先展示空白 WebView。
@@ -239,7 +239,7 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 "C:\Users\<user>\AppData\Local\Programs\ModWatcherAgent\ModWatcherAgent.exe"
 ```
 
-该功能不创建 Windows 服务或计划任务，也不要求管理员权限；关闭开机启动会删除该 Run 值。安装版路径通常稳定。便携版若在启用后移动或删除解压目录，注册表仍指向旧路径；应先关闭开机启动，移动后从新位置运行客户端并重新启用。源码模式为兼容原入口，仍注册 PowerShell 调用仓库 `start.ps1 -Tray`，不是普通用户的独立 EXE 路径。
+该功能不创建 Windows 服务或计划任务，也不要求管理员权限；关闭开机启动会删除该 Run 值。卸载时，安装器只在该值仍精确指向当前安装目录中的 `ModWatcherAgent.exe` 时删除它；用户或其他工具改写过的同名值会被保留。安装版路径通常稳定。便携版若在启用后移动或删除解压目录，注册表仍指向旧路径；应先关闭开机启动，移动后从新位置运行客户端并重新启用。源码模式为兼容原入口，仍注册 PowerShell 调用仓库 `start.ps1 -Tray`，不是普通用户的独立 EXE 路径。
 
 ## 12. 卸载、备份与重置
 
@@ -247,10 +247,11 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 
 - 默认保留 `%LOCALAPPDATA%\ModWatcherAgent`。
 - 静默卸载始终保留用户数据。
+- 只有仍精确指向当前安装 EXE 的 `HKCU\...\Run\ModWatcherAgent` 值会被删除，用户改写值会被保留。
 - 交互卸载只在卸载主体完成后询问是否删除数据，并要求连续两次确认。
 - 最终删除不可恢复，包含数据库、设置、日志、浏览器资料和快照。
 
-最终 Setup 的本机静默新装、安装后 smoke、静默卸载和默认保留用户数据已执行通过。覆盖升级、安装向导、快捷方式、交互卸载双确认与实际删除用户数据仍未执行，不能由静默路径推断为通过。
+最终 Setup 的两轮本机静默新装/卸载、安装后 smoke、默认保留用户数据、归属开机启动项删除与用户改写项保留已执行通过。覆盖升级、安装向导、快捷方式、交互卸载双确认与实际删除用户数据仍未执行，不能由静默路径推断为通过。
 
 ### 12.2 安全备份
 
@@ -328,7 +329,7 @@ Get-NetTCPConnection -LocalPort 17500 -State Listen
 ### 14.6 安全软件拦截
 
 - 核对 Release 来源和 SHA256。
-- 当前 EXE 没有 Authenticode 签名完成证据，SmartScreen/杀毒软件声誉仍需发布阶段处理。
+- 当前 EXE 与 Setup 均为 `NotSigned`，SmartScreen/杀毒软件声誉仍需发布阶段处理。
 - 不要通过关闭系统安全防护来绕过来源不明的资产。
 
 ## 15. 已验证与尚未验证
@@ -341,10 +342,10 @@ Get-NetTCPConnection -LocalPort 17500 -State Listen
 - 窗口/托盘/单实例适配器的 fake 驱动生命周期测试。
 - 桌面日志与崩溃日志脱敏。
 - PyInstaller onedir 构建、x64 PE 与必需 DLL 检查。
-- 完整本机构建链、精确 4 件本地资产及对应 SHA256。
-- 最终 onedir 和静默安装后 EXE 的真实无 GUI packaged smoke，包括 health、React 根页面、隔离数据库/日志、进程与端口释放。
-- 最终 Setup 的本机静默逐用户安装、静默卸载和默认保留用户数据路径。
-- portable、安装器和 workflow 的静态/动态契约测试。
+- 完整本机构建链、陈旧受控制品自动清理、精确 4 件本地资产及对应 SHA256。
+- 最终 onedir 和静默安装后 EXE 的真实无 GUI packaged smoke，包括 health、React HTML shell、全部引用的本地脚本/样式、隔离数据库/日志、进程与端口释放。
+- 最终 Setup 的两轮本机静默逐用户安装/卸载、默认保留用户数据、归属开机启动项删除和用户改写项保留。
+- portable、安装器和 workflow 的静态/动态契约测试，包括不覆盖已有 Release 二进制和显式 release notes。
 
 尚未取得完成证据的范围包括：
 
@@ -354,6 +355,7 @@ Get-NetTCPConnection -LocalPort 17500 -State Listen
 - 中文用户名和普通非管理员账户的完整 GUI 流程；当前只验证了含中文和空格的静默安装目录。
 - 缺失 WebView2 机器和 Bootstrapper 成功/失败路径。
 - 覆盖升级、交互卸载双确认与删除用户数据。
+- 重新登录开机启动、设置页关闭 Run 值和移动 portable 后重新启用。
 - 真实 pywebview 窗口、系统托盘、LoversLab 登录、通知和完整功能回归。
 - 冷/热启动、内存、CPU、窗口恢复和退出性能目标。
 
