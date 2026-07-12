@@ -170,6 +170,7 @@ Local\ModWatcherAgentDesktop
 | `data\browser_profiles` | LoversLab 登录 profile | 包含 Cookie，按敏感数据保护。 |
 | `data\snapshots` | 页面 HTML 快照 | 排障后可按需清理。 |
 | `config\.env` | 高级环境默认值 | 可能包含密钥，禁止公开。 |
+| `config\game_aliases.json` | 内置游戏别名的用户副本与后续学习结果 | 可备份；已有用户文件不会被启动流程覆盖。 |
 | `logs\mod_watcher.log` | 后端业务日志 | 分享前仍应人工检查。 |
 | `logs\desktop.log` | 桌面启动与整体生命周期日志 | 首选排障文件；当前不保证记录每一次托盘/窗口适配器内部错误。 |
 | `logs\crash.log` | 未捕获异常与生命周期状态 | 首选排障文件。 |
@@ -178,6 +179,8 @@ Local\ModWatcherAgentDesktop
 | `backups\migration.json` | 旧数据库迁移元数据 | 记录源、目标、时间、大小和 integrity。 |
 
 桌面日志使用轮转文件并在写入前脱敏 Authorization、API Key、Token、Webhook、密码、Cookie 和 profile 内容。脱敏是防御措施，不是分享日志的免责保证；提交 Issue 前仍要人工检查。
+
+冻结版首次启动且 `config\game_aliases.json` 不存在时，会把只读 bundle 中的 `backend\game_aliases.json` 原子播种到用户配置目录。若用户文件已经存在，或另一个启动实例在竞态中先创建了它，客户端会保留现有文件并清理自己的临时文件，不会用内置副本覆盖用户学习结果。
 
 ## 9. 旧 SQLite 迁移
 
@@ -219,6 +222,22 @@ Local\ModWatcherAgentDesktop
 - 当前没有内置自动更新器，也没有 Windows 代码签名完成证据。
 
 不要把 `.env`、数据库、浏览器 profile 或未经人工检查的日志上传到公开渠道。
+
+### 11.1 开机启动
+
+在设置页启用开机启动时，Windows 冻结版会在当前用户的以下位置写入名为 `ModWatcherAgent` 的字符串值：
+
+```text
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+```
+
+值数据是带引号的当前 EXE 绝对路径，例如：
+
+```text
+"C:\Users\<user>\AppData\Local\Programs\ModWatcherAgent\ModWatcherAgent.exe"
+```
+
+该功能不创建 Windows 服务或计划任务，也不要求管理员权限；关闭开机启动会删除该 Run 值。安装版路径通常稳定。便携版若在启用后移动或删除解压目录，注册表仍指向旧路径；应先关闭开机启动，移动后从新位置运行客户端并重新启用。源码模式为兼容原入口，仍注册 PowerShell 调用仓库 `start.ps1 -Tray`，不是普通用户的独立 EXE 路径。
 
 ## 12. 卸载、备份与重置
 

@@ -13,6 +13,7 @@
 - 官方 Inno Setup 6.7.3 资产已在本机通过固定 tag attestation、SHA256、Authenticode `Valid` 与签名者 `Pyrsys B.V.` 校验，并以 portable 模式安装到临时目录。
 - 首次真实编译发现并修复了数组行 `Invalid section tag` 与 HKEY 类型错误；修复后以最小 x64 源树分别编译不带和带已验签官方 Evergreen Bootstrapper 的两个预处理分支，ISCC 均以退出码 0 生成 Setup。
 - 上述证据证明两个 Inno 分支可编译，不代表最终正式 onedir → Setup → SHA256 全链、真实安装、升级或卸载已经通过。
+- 冻结版游戏别名首次原子播种、环境恢复和 HKCU Run 绝对 EXE 命令已有自动测试；本机现有 onedir 早于这些兼容修复，不能作为其 packaged 运行证据。
 - 没有 GitHub-hosted `workflow_dispatch` 或 tag Release 的执行证据。
 - 没有完成 Windows 10/11、DPI、双屏、缺失 WebView2 和真实 GUI/托盘人工矩阵。
 
@@ -47,9 +48,10 @@
 - `backend/tests/test_desktop_logging.py`
 - `backend/tests/test_packaging_contract.py`
 - `backend/tests/test_desktop_release_workflow.py`
+- `backend/app/tests/test_windows_autostart_service.py`
 - 浏览器与 LoversLab 相关测试。
 
-Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结果。本文件提交前又在当前共享工作树执行上述桌面、打包、workflow、浏览器、别名与自动启动相关 focused suite，结果为 `212 passed in 20.85s`。这不是全 backend/frontend 回归；历史报告和 focused suite 都不能替代 Task 11 的最终全量验证。
+Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结果。兼容修复提交后，又在当前共享工作树执行上述桌面、打包、workflow、浏览器、别名与自动启动相关 focused suite，结果为 `214 passed in 23.34s`。这不是全 backend/frontend 回归；历史报告和 focused suite 都不能替代 Task 11 的最终全量验证。
 
 ### 3.2 本机真实产物
 
@@ -109,7 +111,7 @@ Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结
 | Task 7：onedir/portable | spec、构建脚本、x64/DLL/禁入、portable/SHA256 | packaging contract；本机 onedir smoke | 部分通过 | 当前 portable 需由当前源码重建，见 R03。 |
 | Task 8：Inno/WebView2 | 逐用户安装器、条件 Bootstrapper、默认保留数据 | packaging contract；官方 ISCC 6.7.3 两个预处理分支以最小 x64 源树真实编译通过 | 部分通过 | 最终正式 onedir 全链与安装生命周期；见 R02、M06、M07、M14。 |
 | Task 9：发布 workflow | 供应链校验、质量门、4 件资产、tag Release | workflow tests、YAML/PowerShell 解析 | 静态通过 | GitHub-hosted 运行见 R01–R04。 |
-| Task 10：用户文档 | README、依赖、用户指南、验收与风险 | placeholder/link/path/UTF-8/尾空格/diff 检查；focused suite 212 passed；packaged smoke 通过 | 自动通过 | Task 11 仍需按最终资产更新发布证据。 |
+| Task 10：用户文档 | README、依赖、用户指南、验收与风险 | placeholder/link/path/UTF-8/尾空格/diff 检查；focused suite 214 passed；packaged smoke 通过 | 自动通过 | Task 11 仍需按最终资产更新发布证据。 |
 | Task 11：最终发布检查 | 全量测试、前端、完整构建、人工矩阵 | 尚未执行 | 未执行 | 完成下方所有远端/人工项目。 |
 
 ## 5. 逐项需求映射
@@ -164,6 +166,8 @@ Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结
 | D12 | 桌面/崩溃日志写入用户目录 | logging tests；packaged smoke | 本机产物通过 | M08/M09 长时日志 |
 | D13 | 日志脱敏 Authorization/密钥/Token/Webhook/Cookie/profile | `test_desktop_logging.py` | 自动通过 | 分享前人工复核仍必需 |
 | D14 | `startup.log` 独立文件 | 当前实现主要使用 `desktop.log` 与 `crash.log` | 未执行 | 决定是否仍需要独立文件 |
+| D15 | 缺失时把 bundle 游戏别名原子播种到 `config\game_aliases.json` | 首次播种、已有文件保护与发布碰撞测试 | 自动通过 | 现有 onedir 早于修复；最终产物见 M05/M12 |
+| D16 | smoke 退出恢复原有 `GAME_ALIAS_FILE`，原先未设时删除临时值 | 两态参数化 context 测试 | 自动通过 | 无 |
 
 ### 5.4 浏览器与安全
 
@@ -222,6 +226,7 @@ Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结
 | F06 | 空闲内存 ≤250 MB、CPU 接近 0% | 未测量 | 未执行 | M13 |
 | F07 | 正常退出 ≤10 秒 | 自动测试有超时边界，非性能测量 | 部分通过 | M13 |
 | F08 | onefile、自动更新、Service、MSIX、跨平台桌面 | 技术设计明确排除 | 非首版范围 | 后续路线 |
+| F09 | 冻结版开机启动写入带引号的绝对 EXE；源码模式保留 `start.ps1 -Tray` | autostart 精确命令测试 | 自动通过 | 真实 HKCU/登录启动见 M16 |
 
 ## 6. 远端验收矩阵
 
@@ -253,6 +258,7 @@ Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结
 | M13 | 性能 | 记录冷/热启动、恢复、退出、空闲内存与 CPU | 未执行 |
 | M14 | 安装器生命周期 | 新装、覆盖升级、silent uninstall 保留、交互双确认删除 | 未执行 |
 | M15 | SmartScreen/杀毒软件 | 记录 NotSigned 行为、误报、代码签名与声誉处理决定 | 未执行 |
+| M16 | 冻结版开机启动 | 启用后 HKCU Run 指向当前绝对 EXE；重新登录可启动；关闭后删除；移动 portable 后重新启用可修正路径 | 未执行 |
 
 ## 8. 风险矩阵
 
@@ -272,6 +278,8 @@ Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结
 | 端口 17500 被占用 | 中 | health 超时、原生错误与日志 | 正常模式不自动换端口；用户需释放 |
 | SmartScreen/杀软误报 | 中 | onedir、版本资源、SHA256 | EXE 当前 NotSigned；M15 |
 | 当前 portable 与当前源码不一致 | 高 | 文档明确禁止把旧资产视为发布证据 | 必须 R03 全量重建 |
+| 游戏别名首次播种覆盖用户文件或留下半文件 | 高 | 目标目录临时文件、flush/fsync、原子 no-clobber 发布与竞态测试 | 现有 onedir 早于修复；M05/M12 |
+| 移动 portable 后开机启动仍指向旧 EXE | 中 | HKCU Run 使用带引号绝对路径；用户指南要求移动后重新启用 | M16 |
 | GitHub workflow 仅静态通过 | 高 | YAML/AST/动态契约测试、固定 SHA | 必须 R01/R04 真实执行 |
 | Inno 商业许可不合规 | 高 | DEPENDENCIES/README 明示官方当前政策 | 商业发布者自行采购并留存记录 |
 | 性能未达目标 | 中 | onedir、无 Vite、延迟浏览器 | M13 未执行 |
@@ -281,7 +289,7 @@ Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结
 只有满足以下条件，才能把当前版本称为完成 Windows 独立客户端验收：
 
 1. R01–R04 全部有可追溯证据。
-2. M01–M14 全部通过；M15 有明确签名/风险接受决定。
+2. M01–M14 与 M16 全部通过；M15 有明确签名/风险接受决定。
 3. 当前源码重新生成精确 4 件 Release 资产，不能复用旧 portable。
 4. 所有 SHA256 与对应资产双向匹配，最终资产禁入扫描通过。
 5. 当前版本全 backend、frontend 和桌面 focused tests 通过。
