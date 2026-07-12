@@ -1,6 +1,6 @@
 # Mod Watcher Agent Windows 独立客户端技术设计
 
-> - 文档状态：待实施设计
+> - 文档状态：已实施；远端发布与 Windows GUI/人工矩阵待验收
 > - 目标仓库：`iambupu/mod_watcher_agent`
 > - 基线版本：`0.2.2`
 > - 目标平台：Windows 10/11 x64

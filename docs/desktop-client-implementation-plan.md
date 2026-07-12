@@ -1,6 +1,8 @@
 # Mod Watcher Agent Windows Desktop Client Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use GitHub checkbox syntax for tracking.
+
+> **Implementation status:** Task 1–11 已在桌面代码基线 `ec5dedb` 完成；未完成的 GitHub-hosted、GUI 和 Windows 人工矩阵继续由 [验收记录](./desktop-client-acceptance.md) 跟踪。
 
 **Goal:** Deliver a Windows 10/11 x64 desktop client that runs FastAPI in-process, renders the existing React application in pywebview/WebView2, remains available in the system tray, stores writable state under `%LOCALAPPDATA%`, migrates legacy SQLite data safely, and ships as PyInstaller onedir portable and Inno Setup artifacts from GitHub Actions.
 
@@ -32,7 +34,7 @@
 - Produces: `RuntimePaths`, `is_frozen()`, `build_runtime_paths()`, `ensure_runtime_directories()`, and `configure_desktop_environment()`.
 - `configure_desktop_environment(paths)` sets `MW_DESKTOP_MODE`, `MW_USER_DATA_DIR`, `DATABASE_URL`, `LOG_DIR`, `MW_BROWSER_PROFILE_ROOT`, `MW_SNAPSHOT_ROOT`, `MW_ENV_FILE`, and safe local access variables before backend imports.
 
-- [ ] **Step 1: Write failing source/frozen/override path tests**
+- [x] **Step 1: Write failing source/frozen/override path tests**
 
 ```python
 def test_frozen_paths_use_local_app_data(monkeypatch, tmp_path):
@@ -48,13 +50,13 @@ def test_desktop_environment_is_local_only(monkeypatch, tmp_path):
     assert os.environ["MW_ALLOW_LAN"] == "false"
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_runtime_paths.py -q`
 
 Expected: import failure for `app.runtime_paths`.
 
-- [ ] **Step 3: Implement the immutable path model**
+- [x] **Step 3: Implement the immutable path model**
 
 ```python
 @dataclass(frozen=True)
@@ -90,7 +92,7 @@ def configure_desktop_environment(paths: RuntimePaths) -> None:
     })
 ```
 
-- [ ] **Step 4: Verify GREEN and path creation errors**
+- [x] **Step 4: Verify GREEN and path creation errors**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_runtime_paths.py -q`
 
@@ -113,7 +115,7 @@ Expected: all runtime path tests pass, including Chinese/space paths and missing
 - Consumes: `build_runtime_paths()` from Task 1.
 - Produces: `GET /api/health` with `status`, `version`, `database`, `scheduler`, `frontend`, `desktop`, and `packaged` fields.
 
-- [ ] **Step 1: Write failing integration tests**
+- [x] **Step 1: Write failing integration tests**
 
 ```python
 def test_health_reports_desktop_runtime(client, monkeypatch):
@@ -129,13 +131,13 @@ def test_browser_paths_follow_runtime_environment(monkeypatch, tmp_path):
     assert snapshot_root() == tmp_path / "snapshots"
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_desktop_runtime_integration.py -q`
 
 Expected: `/api/health` or runtime path accessors are missing.
 
-- [ ] **Step 3: Route resource lookups through runtime paths**
+- [x] **Step 3: Route resource lookups through runtime paths**
 
 ```python
 env_file = os.getenv("MW_ENV_FILE")
@@ -148,7 +150,7 @@ alembic_ini = runtime_paths.alembic_ini_path
 
 The browser module must expose accessors instead of import-time fixed relative paths so tests and desktop bootstrapping can override them safely.
 
-- [ ] **Step 4: Add health state and close the persistent browser during lifespan shutdown**
+- [x] **Step 4: Add health state and close the persistent browser during lifespan shutdown**
 
 ```python
 @app.get("/api/health")
@@ -165,7 +167,7 @@ async def health() -> dict[str, object]:
     }
 ```
 
-- [ ] **Step 5: Verify GREEN and existing local-security tests**
+- [x] **Step 5: Verify GREEN and existing local-security tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_desktop_runtime_integration.py backend\tests\test_local_first_routes.py backend\tests\test_security_local_first.py -q`
 
@@ -181,7 +183,7 @@ Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_desktop_runtime_in
 - Produces: `MigrationResult`, `legacy_database_candidates(paths, cwd=None)`, and `migrate_legacy_database(paths, candidates=None)`.
 - Migration uses `sqlite3.Connection.backup`, runs `PRAGMA integrity_check`, writes `backups/migration.json`, never deletes the source, and removes an incomplete target on failure.
 
-- [ ] **Step 1: Write failing WAL-aware migration and rollback tests**
+- [x] **Step 1: Write failing WAL-aware migration and rollback tests**
 
 ```python
 def test_migration_uses_backup_api_and_preserves_wal_rows(runtime_paths, legacy_db):
@@ -198,11 +200,11 @@ def test_failed_integrity_check_removes_partial_target(runtime_paths, corrupt_db
     assert not runtime_paths.database_path.exists()
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_database_migration.py -q`
 
-- [ ] **Step 3: Implement backup, integrity validation, metadata, and rollback**
+- [x] **Step 3: Implement backup, integrity validation, metadata, and rollback**
 
 ```python
 with sqlite3.connect(source_uri, uri=True) as source, sqlite3.connect(target_path) as target:
@@ -212,7 +214,7 @@ with sqlite3.connect(source_uri, uri=True) as source, sqlite3.connect(target_pat
         raise DatabaseMigrationError(f"integrity_check failed: {integrity!r}")
 ```
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_database_migration.py -q`
 
@@ -228,7 +230,7 @@ Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_database_migration
 **Interfaces:**
 - Produces: `EmbeddedBackendServer(host, port, app_factory=None, health_path="/api/health")` with `start()`, `wait_ready(timeout)`, `stop(timeout=10)`, and `error`.
 
-- [ ] **Step 1: Write failing lifecycle tests with a fake Uvicorn server**
+- [x] **Step 1: Write failing lifecycle tests with a fake Uvicorn server**
 
 ```python
 def test_server_starts_once_and_stop_is_idempotent(fake_uvicorn):
@@ -247,11 +249,11 @@ def test_thread_error_is_exposed(fake_uvicorn_that_raises):
     assert isinstance(server.error, RuntimeError)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_embedded_backend.py -q`
 
-- [ ] **Step 3: Implement direct app import and non-daemon server thread**
+- [x] **Step 3: Implement direct app import and non-daemon server thread**
 
 ```python
 def _run(self) -> None:
@@ -264,7 +266,7 @@ def _run(self) -> None:
         self._error = exc
 ```
 
-- [ ] **Step 4: Verify GREEN and a real temporary-port integration start/stop**
+- [x] **Step 4: Verify GREEN and a real temporary-port integration start/stop**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_embedded_backend.py -q`
 
@@ -288,7 +290,7 @@ Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_embedded_backend.p
 - `TrayController` calls controller callbacks and reports startup failure before the window is allowed to hide.
 - `SingleInstanceGuard` uses `Local\ModWatcherAgentDesktop` on Windows and a lock file in tests/non-Windows environments.
 
-- [ ] **Step 1: Write failing close/minimize/restore/degraded/shutdown tests**
+- [x] **Step 1: Write failing close/minimize/restore/degraded/shutdown tests**
 
 ```python
 def test_close_hides_when_tray_is_available(controller, window):
@@ -307,11 +309,11 @@ def test_shutdown_is_idempotent(controller):
     controller.guard.release.assert_called_once()
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_desktop_controller.py backend\tests\test_single_instance.py -q`
 
-- [ ] **Step 3: Implement lifecycle states and adapters**
+- [x] **Step 3: Implement lifecycle states and adapters**
 
 ```python
 class DesktopState(StrEnum):
@@ -327,7 +329,7 @@ class DesktopState(StrEnum):
 
 `window.events.minimized` hides only when the tray is healthy. `window.events.closing` returns `False` to cancel ordinary close-to-tray and `True` during a real exit. The tray default menu action restores the window; “退出” invokes one idempotent shutdown path.
 
-- [ ] **Step 4: Implement the executable entry order**
+- [x] **Step 4: Implement the executable entry order**
 
 ```python
 paths = build_runtime_paths()
@@ -343,7 +345,7 @@ controller = build_desktop_controller(paths=paths, guard=guard)
 return controller.start()
 ```
 
-- [ ] **Step 5: Verify GREEN and pywebview API contract tests**
+- [x] **Step 5: Verify GREEN and pywebview API contract tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_desktop_controller.py backend\tests\test_single_instance.py -q`
 
@@ -363,7 +365,7 @@ Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_desktop_controller
 - `desktop_app.py --smoke-test` initializes isolated user data, starts the embedded server, verifies `/api/health` and `/`, then shuts down without opening a GUI.
 - Frozen `/install-chromium` returns a structured unsupported response instead of recursively launching the desktop EXE.
 
-- [ ] **Step 1: Write failing frozen Chromium and crash-log tests**
+- [x] **Step 1: Write failing frozen Chromium and crash-log tests**
 
 ```python
 def test_frozen_chromium_install_is_disabled(monkeypatch):
@@ -376,7 +378,7 @@ def test_crash_log_redacts_secrets(tmp_path):
     assert "secret-token" not in (tmp_path / "crash.log").read_text(encoding="utf-8")
 ```
 
-- [ ] **Step 2: Verify RED, implement, then verify GREEN**
+- [x] **Step 2: Verify RED, implement, then verify GREEN**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_desktop_entry.py backend\app\tests\test_browser_page_fetcher.py -q`
 
@@ -397,7 +399,7 @@ Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_desktop_entry.py b
 - Datas preserve `frontend/dist`, `backend/alembic.ini`, `backend/alembic`, `backend/game_aliases.json`, `docs/mwlogo.png`, `README.md`, and `LICENSE` at runtime-expected destinations.
 - Hidden imports include Uvicorn protocols/lifespan, `sqlalchemy.dialects.sqlite`, `pystray._win32`, `webview.platforms.edgechromium`, and `clr`; Qt/GTK/CEF backends are excluded.
 
-- [ ] **Step 1: Write a failing static packaging contract test**
+- [x] **Step 1: Write a failing static packaging contract test**
 
 ```python
 def test_spec_contains_required_runtime_resources(repo_root):
@@ -406,11 +408,11 @@ def test_spec_contains_required_runtime_resources(repo_root):
         assert required in spec
 ```
 
-- [ ] **Step 2: Verify RED, add the spec/scripts, then verify GREEN**
+- [x] **Step 2: Verify RED, add the spec/scripts, then verify GREEN**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_packaging_contract.py -q`
 
-- [ ] **Step 3: Build frontend and onedir from a clean build environment**
+- [x] **Step 3: Build frontend and onedir from a clean build environment**
 
 Run: `.\scripts\build_desktop.ps1 -SkipInstaller`
 
@@ -431,7 +433,7 @@ Expected: `dist-desktop\ModWatcherAgent\ModWatcherAgent.exe` exists, `--smoke-te
 - Includes/runs a Microsoft-signed WebView2 Evergreen bootstrapper only when supplied by the build; otherwise startup provides a clear native error and official installation link.
 - Uninstall defaults to retaining `%LOCALAPPDATA%\ModWatcherAgent`; an explicit confirmation is required to remove it.
 
-- [ ] **Step 1: Add failing installer-policy assertions**
+- [x] **Step 1: Add failing installer-policy assertions**
 
 ```python
 def test_installer_is_per_user_and_preserves_data(repo_root):
@@ -441,7 +443,7 @@ def test_installer_is_per_user_and_preserves_data(repo_root):
     assert "DeleteUserData" in iss
 ```
 
-- [ ] **Step 2: Verify RED, implement `.iss`, then compile when `ISCC.exe` is available**
+- [x] **Step 2: Verify RED, implement `.iss`, then compile when `ISCC.exe` is available**
 
 Run: `.\scripts\build_desktop.ps1 -SkipTests`
 
@@ -460,7 +462,7 @@ Expected: `release\ModWatcherAgent-Setup-<version>-win-x64.exe` and SHA256 exist
 - Windows job uses Python 3.12, Node 24, `npm ci`, backend lint/tests, desktop build/smoke, artifact upload, and tag release upload through `gh`.
 - Build output excludes `.env`, databases, WAL/SHM, logs, profiles, snapshots, and secrets; SHA256 files accompany each artifact.
 
-- [ ] **Step 1: Add failing workflow contract assertions**
+- [x] **Step 1: Add failing workflow contract assertions**
 
 ```python
 def test_desktop_release_workflow_has_tag_and_artifact_steps(repo_root):
@@ -470,7 +472,7 @@ def test_desktop_release_workflow_has_tag_and_artifact_steps(repo_root):
     assert "scripts/build_desktop.ps1" in workflow
 ```
 
-- [ ] **Step 2: Verify RED, implement workflow, then verify GREEN**
+- [x] **Step 2: Verify RED, implement workflow, then verify GREEN**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_packaging_contract.py -q`
 
@@ -489,11 +491,11 @@ Run: `.\.venv\Scripts\python.exe -m pytest backend\tests\test_packaging_contract
 - User guide covers installer/portable startup, close-to-tray behavior, full exit, data/log locations, migration, WebView2/browser requirements, uninstall behavior, troubleshooting, and source-mode compatibility.
 - Acceptance document maps every requirement in the technical design to an automated test, build check, or explicit manual Windows matrix item.
 
-- [ ] **Step 1: Update docs without presenting scripts as the end-user launch path**
+- [x] **Step 1: Update docs without presenting scripts as the end-user launch path**
 
-- [ ] **Step 2: Include the risk matrix with current mitigation and residual manual checks**
+- [x] **Step 2: Include the risk matrix with current mitigation and residual manual checks**
 
-- [ ] **Step 3: Run link/placeholder/diff checks**
+- [x] **Step 3: Run link/placeholder/diff checks**
 
 Run: `$patterns = @('T' + 'BD', 'T' + 'ODO', '待' + '定'); rg -n ($patterns -join '|') README.md DEPENDENCIES.md docs\desktop-client*.md`
 
@@ -506,13 +508,13 @@ Expected: no unresolved placeholders.
 **Files:**
 - Verify all touched files; do not stage or commit unrelated dirty-worktree changes.
 
-- [ ] **Step 1: Backend test and lint suite**
+- [x] **Step 1: Backend test and lint suite**
 
 Run: `.\.venv\Scripts\python.exe -m pytest backend -q`
 
 Run: `.\.venv\Scripts\python.exe -m ruff check backend`
 
-- [ ] **Step 2: Frontend typecheck, tests, and production build**
+- [x] **Step 2: Frontend typecheck, tests, and production build**
 
 Run: `npm --prefix frontend run typecheck`
 
@@ -520,25 +522,25 @@ Run: `npm --prefix frontend test -- --run`
 
 Run: `npm --prefix frontend run build`
 
-- [ ] **Step 3: Desktop onedir/portable/installer build**
+- [x] **Step 3: Desktop onedir/portable/installer build**
 
 Run: `.\scripts\build_desktop.ps1`
 
-- [ ] **Step 4: Inspect artifacts for forbidden runtime data**
+- [x] **Step 4: Inspect artifacts for forbidden runtime data**
 
 Assert no artifact contains: `.env`, `*.db`, `*.db-wal`, `*.db-shm`, `logs`, `browser_profiles`, `snapshots`, or API-key fixtures.
 
-- [ ] **Step 5: Smoke test packaged executable**
+- [x] **Step 5: Smoke test packaged executable**
 
 Run: `.\scripts\smoke_test_desktop.ps1 -ExecutablePath .\dist-desktop\ModWatcherAgent\ModWatcherAgent.exe`
 
 Expected: health, React index, Alembic resource, local database creation, and graceful port release checks pass.
 
-- [ ] **Step 6: Manual acceptance matrix**
+- [x] **Step 6: Manual acceptance matrix**
 
 Record remaining manual-only checks for Windows 10/11, 100/125/150% DPI, one/two displays, Chinese username, path with spaces, non-admin install, WebView2 missing, close/minimize to tray, tray restore, and full exit.
 
-- [ ] **Step 7: Final worktree and whitespace review**
+- [x] **Step 7: Final worktree and whitespace review**
 
 Run: `git status --short`
 
