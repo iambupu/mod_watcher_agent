@@ -263,6 +263,50 @@ $invokeArguments = @{{}}
     return bool(json.loads(completed.stdout.strip()))
 
 
+def _run_powershell_functions(
+    path: Path,
+    function_names: tuple[str, ...],
+    statements: str,
+) -> subprocess.CompletedProcess[str]:
+    _required_file(path)
+    names = ", ".join(f"'{name.replace(chr(39), chr(39) * 2)}'" for name in function_names)
+    parser_script = rf"""
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    '{str(path).replace("'", "''")}',
+    [ref]$tokens,
+    [ref]$errors
+)
+if ($errors.Count -gt 0) {{ throw ($errors.Message -join '; ') }}
+foreach ($functionName in @({names})) {{
+    $definitions = @($ast.FindAll(
+        {{
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq $functionName
+        }},
+        $true
+    ))
+    if ($definitions.Count -ne 1) {{
+        throw "Expected exactly one $functionName function definition."
+    }}
+    . ([ScriptBlock]::Create($definitions[0].Extent.Text))
+}}
+{statements}
+"""
+    encoded = base64.b64encode(parser_script.encode("utf-16-le")).decode("ascii")
+    return subprocess.run(
+        ["powershell.exe", "-NoProfile", "-EncodedCommand", encoded],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+
 def _run_script(path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -1465,6 +1509,191 @@ def test_build_script_compiles_installer_without_network_downloads_and_hashes_it
         "curl.exe",
     ):
         assert forbidden_download not in lowered
+
+
+@pytest.mark.parametrize(
+    ("portable", "installer", "preserved_families"),
+    [
+        (True, True, set()),
+        (True, False, {"installer"}),
+        (False, True, {"portable"}),
+    ],
+)
+def test_release_cleanup_removes_only_artifact_families_being_rebuilt(
+    tmp_path: Path,
+    portable: bool,
+    installer: bool,
+    preserved_families: set[str],
+) -> None:
+    repo = tmp_path / "repo"
+    release = repo / "release"
+    release.mkdir(parents=True)
+    artifacts = {
+        "ModWatcherAgent-0.0.0-win-x64-portable.zip": "portable",
+        "ModWatcherAgent-0.0.0-win-x64-portable.zip.sha256": "portable",
+        "ModWatcherAgent-1.2.3-win-x64-portable.zip": "portable",
+        "ModWatcherAgent-1.2.3-win-x64-portable.zip.sha256": "portable",
+        "ModWatcherAgent-Setup-0.0.0-win-x64.exe": "installer",
+        "ModWatcherAgent-Setup-0.0.0-win-x64.exe.sha256": "installer",
+        "ModWatcherAgent-Setup-1.2.3-win-x64.exe": "installer",
+        "ModWatcherAgent-Setup-1.2.3-win-x64.exe.sha256": "installer",
+    }
+    for leaf in artifacts:
+        (release / leaf).write_bytes(b"stale")
+    unknown = release / "release-notes.txt"
+    unknown.write_text("keep", encoding="utf-8")
+
+    repo_literal = str(repo).replace("'", "''")
+    release_literal = str(release).replace("'", "''")
+    completed = _run_powershell_functions(
+        BUILD_SCRIPT,
+        (
+            "Resolve-ControlledReleaseRoot",
+            "Assert-ControlledOutputFile",
+            "Remove-ControlledFile",
+            "Clear-ControlledReleaseArtifactFamilies",
+        ),
+        rf"""
+Clear-ControlledReleaseArtifactFamilies `
+    -RepoRoot '{repo_literal}' `
+    -ReleaseRoot '{release_literal}' `
+    -Portable:${str(portable).lower()} `
+    -Installer:${str(installer).lower()}
+""",
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    expected = {"release-notes.txt"} | {
+        leaf for leaf, family in artifacts.items() if family in preserved_families
+    }
+    assert {path.name for path in release.iterdir()} == expected
+    assert unknown.read_text(encoding="utf-8") == "keep"
+
+
+def test_release_cleanup_rejects_matching_reparse_point_before_deleting_files(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    release = repo / "release"
+    release.mkdir(parents=True)
+    stale_file = release / "ModWatcherAgent-0.0.0-win-x64-portable.zip.sha256"
+    stale_file.write_bytes(b"keep-until-preflight-passes")
+    external = tmp_path / "external"
+    external.mkdir()
+    external_secret = external / "secret.txt"
+    external_secret.write_text("keep-secret", encoding="utf-8")
+    junction = release / "ModWatcherAgent-Setup-0.0.0-win-x64.exe"
+    _create_directory_junction(junction, external)
+
+    repo_literal = str(repo).replace("'", "''")
+    release_literal = str(release).replace("'", "''")
+    try:
+        completed = _run_powershell_functions(
+            BUILD_SCRIPT,
+            (
+                "Resolve-ControlledReleaseRoot",
+                "Assert-ControlledOutputFile",
+                "Remove-ControlledFile",
+                "Clear-ControlledReleaseArtifactFamilies",
+            ),
+            rf"""
+Clear-ControlledReleaseArtifactFamilies `
+    -RepoRoot '{repo_literal}' `
+    -ReleaseRoot '{release_literal}' `
+    -Portable:$true `
+    -Installer:$true
+""",
+        )
+
+        assert completed.returncode != 0
+        output = f"{completed.stdout}\n{completed.stderr}".casefold()
+        assert "reparse point" in output
+        assert stale_file.read_bytes() == b"keep-until-preflight-passes"
+        assert external_secret.read_text(encoding="utf-8") == "keep-secret"
+    finally:
+        if junction.exists():
+            junction.rmdir()
+
+
+def test_full_build_rejects_unknown_release_entry_before_running_tooling(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    copied_script = _copy_build_script_fixture(repo)
+    pyproject = repo / "backend" / "pyproject.toml"
+    pyproject.parent.mkdir(parents=True)
+    pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+    release = repo / "release"
+    release.mkdir()
+    stale_installer = release / "ModWatcherAgent-Setup-0.0.0-win-x64.exe"
+    stale_installer.write_bytes(b"stale")
+    unknown = release / "caller-owned.txt"
+    unknown.write_text("keep", encoding="utf-8")
+    fake_iscc = tmp_path / "ISCC.exe"
+    fake_iscc.write_bytes(b"not executed")
+    fake_python = tmp_path / "python.cmd"
+    fake_python.write_text("@exit /b 99\r\n", encoding="ascii")
+
+    completed = _run_script(
+        copied_script,
+        "-SkipTests",
+        "-SkipFrontendBuild",
+        "-SkipSmokeTest",
+        "-IsccPath",
+        str(fake_iscc),
+        "-PythonExecutable",
+        str(fake_python),
+    )
+
+    assert completed.returncode != 0
+    output = f"{completed.stdout}\n{completed.stderr}".casefold()
+    assert "unexpected release entries" in output
+    assert not stale_installer.exists()
+    assert unknown.read_text(encoding="utf-8") == "keep"
+    assert not (repo / ".venv-desktop-build").exists()
+
+
+def test_full_build_release_gate_requires_exact_current_four_artifacts(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    release = repo / "release"
+    release.mkdir(parents=True)
+    expected = (
+        "ModWatcherAgent-1.2.3-win-x64-portable.zip",
+        "ModWatcherAgent-1.2.3-win-x64-portable.zip.sha256",
+        "ModWatcherAgent-Setup-1.2.3-win-x64.exe",
+        "ModWatcherAgent-Setup-1.2.3-win-x64.exe.sha256",
+    )
+    for leaf in expected:
+        (release / leaf).write_bytes(b"artifact")
+    unknown = release / "unexpected.txt"
+    unknown.write_text("keep", encoding="utf-8")
+    repo_literal = str(repo).replace("'", "''")
+    release_literal = str(release).replace("'", "''")
+    expected_literals = ", ".join(f"'{leaf}'" for leaf in expected)
+    statements = rf"""
+Assert-ExactReleaseArtifactSet `
+    -RepoRoot '{repo_literal}' `
+    -ReleaseRoot '{release_literal}' `
+    -ExpectedLeaves @({expected_literals})
+"""
+    functions = (
+        "Resolve-ControlledReleaseRoot",
+        "Assert-ControlledOutputFile",
+        "Assert-ExactReleaseArtifactSet",
+    )
+
+    rejected = _run_powershell_functions(BUILD_SCRIPT, functions, statements)
+    assert rejected.returncode != 0
+    assert "exact release artifact set" in f"{rejected.stdout}\n{rejected.stderr}".casefold()
+    assert unknown.read_text(encoding="utf-8") == "keep"
+
+    unknown.unlink()
+    accepted = _run_powershell_functions(BUILD_SCRIPT, functions, statements)
+    assert accepted.returncode == 0, accepted.stderr or accepted.stdout
+    build_text = BUILD_SCRIPT.read_text(encoding="utf-8")
+    assert build_text.count("Assert-ExactReleaseArtifactSet") >= 2
 
 
 def test_build_script_rejects_unsafe_installer_version_before_tooling(tmp_path: Path) -> None:

@@ -304,7 +304,144 @@ function Remove-ControlledFile {
         -ExpectedParent $ExpectedParent `
         -ExpectedLeaf $ExpectedLeaf
     if (Test-Path -LiteralPath $controlledPath) {
+        $item = Get-Item -LiteralPath $controlledPath -Force
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw "Controlled release artifact is a reparse point: $controlledPath"
+        }
+        if ($item.PSIsContainer) {
+            throw "Controlled release artifact is not a file: $controlledPath"
+        }
+        $resolvedPath = (Resolve-Path -LiteralPath $controlledPath).Path
+        if (-not $resolvedPath.Equals(
+            $controlledPath,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "Resolved release artifact changed unexpectedly: $resolvedPath"
+        }
         Remove-Item -LiteralPath $controlledPath -Force
+    }
+}
+
+function Clear-ControlledReleaseArtifactFamilies {
+    param(
+        [string]$RepoRoot,
+        [string]$ReleaseRoot,
+        [switch]$Portable,
+        [switch]$Installer
+    )
+
+    if (-not $Portable -and -not $Installer) {
+        return
+    }
+    $resolvedReleaseRoot = Resolve-ControlledReleaseRoot `
+        -RepoRoot $RepoRoot `
+        -ReleaseRoot $ReleaseRoot
+    $semanticVersion = '(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
+    $portablePattern = "^ModWatcherAgent-$semanticVersion-win-x64-portable\.zip(?:\.sha256)?$"
+    $installerPattern = "^ModWatcherAgent-Setup-$semanticVersion-win-x64\.exe(?:\.sha256)?$"
+    $artifactsToRemove = @(
+        Get-ChildItem -LiteralPath $resolvedReleaseRoot -Force |
+            Where-Object {
+                ($Portable -and $_.Name -match $portablePattern) -or
+                ($Installer -and $_.Name -match $installerPattern)
+            }
+    )
+
+    # Validate the complete removal set before deleting anything. This keeps a
+    # matching junction or other reparse point from causing a partial cleanup.
+    foreach ($artifact in $artifactsToRemove) {
+        if ($artifact.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw "Controlled release artifact is a reparse point: $($artifact.FullName)"
+        }
+        if ($artifact.PSIsContainer) {
+            throw "Controlled release artifact is not a file: $($artifact.FullName)"
+        }
+        $controlledPath = Assert-ControlledOutputFile `
+            -Path $artifact.FullName `
+            -ExpectedParent $resolvedReleaseRoot `
+            -ExpectedLeaf $artifact.Name
+        $resolvedArtifactPath = (Resolve-Path -LiteralPath $controlledPath).Path
+        if (-not $resolvedArtifactPath.Equals(
+            $controlledPath,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "Resolved release artifact changed unexpectedly: $resolvedArtifactPath"
+        }
+    }
+
+    foreach ($artifact in $artifactsToRemove) {
+        Remove-ControlledFile `
+            -Path $artifact.FullName `
+            -ExpectedParent $resolvedReleaseRoot `
+            -ExpectedLeaf $artifact.Name
+    }
+}
+
+function Assert-ExactReleaseArtifactSet {
+    param(
+        [string]$RepoRoot,
+        [string]$ReleaseRoot,
+        [string[]]$ExpectedLeaves
+    )
+
+    $resolvedReleaseRoot = Resolve-ControlledReleaseRoot `
+        -RepoRoot $RepoRoot `
+        -ReleaseRoot $ReleaseRoot
+    $expected = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($leaf in @($ExpectedLeaves)) {
+        if ([string]::IsNullOrWhiteSpace($leaf) -or -not $expected.Add($leaf)) {
+            throw "Invalid or duplicate expected release artifact name: $leaf"
+        }
+        $null = Assert-ControlledOutputFile `
+            -Path (Join-Path $resolvedReleaseRoot $leaf) `
+            -ExpectedParent $resolvedReleaseRoot `
+            -ExpectedLeaf $leaf
+    }
+
+    $actualItems = @(Get-ChildItem -LiteralPath $resolvedReleaseRoot -Force)
+    $actual = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($item in $actualItems) {
+        $null = $actual.Add($item.Name)
+    }
+    $missing = @($expected | Where-Object { -not $actual.Contains($_) } | Sort-Object)
+    $unexpected = @($actual | Where-Object { -not $expected.Contains($_) } | Sort-Object)
+    if ($missing.Count -gt 0 -or $unexpected.Count -gt 0 -or
+        $actualItems.Count -ne $expected.Count) {
+        $missingText = if ($missing.Count -eq 0) { "<none>" } else { $missing -join ", " }
+        $unexpectedText = if ($unexpected.Count -eq 0) {
+            "<none>"
+        }
+        else {
+            $unexpected -join ", "
+        }
+        throw (
+            "Exact release artifact set mismatch. Missing: $missingText. " +
+            "Unexpected release entries: $unexpectedText."
+        )
+    }
+
+    foreach ($item in $actualItems) {
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw "Exact release artifact set contains a reparse point: $($item.FullName)"
+        }
+        if ($item.PSIsContainer) {
+            throw "Exact release artifact set contains a non-file entry: $($item.FullName)"
+        }
+        $controlledPath = Assert-ControlledOutputFile `
+            -Path $item.FullName `
+            -ExpectedParent $resolvedReleaseRoot `
+            -ExpectedLeaf $item.Name
+        $resolvedArtifactPath = (Resolve-Path -LiteralPath $controlledPath).Path
+        if (-not $resolvedArtifactPath.Equals(
+            $controlledPath,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "Resolved release artifact changed unexpectedly: $resolvedArtifactPath"
+        }
     }
 }
 
@@ -402,6 +539,17 @@ function Assert-RequiredDesktopRuntimeFiles {
 $appVersion = Test-SafeReleaseVersion `
     -Version (Get-ProjectVersion -PyprojectPath (Join-Path $backendRoot "pyproject.toml")) `
     -Label "project"
+$portableLeaf = "ModWatcherAgent-$appVersion-win-x64-portable.zip"
+$portableHashLeaf = "$portableLeaf.sha256"
+$installerLeaf = "ModWatcherAgent-Setup-$appVersion-win-x64.exe"
+$installerHashLeaf = "$installerLeaf.sha256"
+$expectedReleaseArtifactLeaves = @(
+    $portableLeaf,
+    $portableHashLeaf,
+    $installerLeaf,
+    $installerHashLeaf
+)
+$fullReleaseBuild = -not $SkipPortable -and -not $SkipInstaller
 $resolvedReleaseRoot = $null
 if (-not $SkipPortable -or -not $SkipInstaller) {
     $resolvedReleaseRoot = Resolve-ControlledReleaseRoot `
@@ -417,6 +565,17 @@ if (-not $SkipInstaller) {
 }
 elseif (-not [string]::IsNullOrWhiteSpace($WebView2BootstrapperPath)) {
     throw "-WebView2BootstrapperPath cannot be used together with -SkipInstaller."
+}
+if ($fullReleaseBuild) {
+    Clear-ControlledReleaseArtifactFamilies `
+        -RepoRoot $repoRoot `
+        -ReleaseRoot $resolvedReleaseRoot `
+        -Portable `
+        -Installer
+    Assert-ExactReleaseArtifactSet `
+        -RepoRoot $repoRoot `
+        -ReleaseRoot $resolvedReleaseRoot `
+        -ExpectedLeaves @()
 }
 
 if ([string]::IsNullOrWhiteSpace($PythonExecutable)) {
@@ -569,6 +728,14 @@ if (-not $SkipSmokeTest) {
         -DisplayName "packaged smoke_test_desktop.ps1"
 }
 
+if (-not $fullReleaseBuild -and $null -ne $resolvedReleaseRoot) {
+    Clear-ControlledReleaseArtifactFamilies `
+        -RepoRoot $repoRoot `
+        -ReleaseRoot $resolvedReleaseRoot `
+        -Portable:(-not $SkipPortable) `
+        -Installer:(-not $SkipInstaller)
+}
+
 if (-not $SkipPortable) {
     Invoke-ExternalCommand `
         -FilePath $powershellExecutable `
@@ -588,9 +755,7 @@ if (-not $SkipPortable) {
         -WorkingDirectory $repoRoot `
         -DisplayName "package_portable.ps1"
 
-    $portablePath = Join-Path `
-        $resolvedReleaseRoot `
-        "ModWatcherAgent-$appVersion-win-x64-portable.zip"
+    $portablePath = Join-Path $resolvedReleaseRoot $portableLeaf
     if (-not (Test-Path -LiteralPath $portablePath -PathType Leaf)) {
         throw "Portable packaging did not produce the expected archive: $portablePath"
     }
@@ -609,12 +774,10 @@ else {
     $resolvedReleaseRoot = Resolve-ControlledReleaseRoot `
         -RepoRoot $repoRoot `
         -ReleaseRoot $releaseRoot
-    $installerLeaf = "ModWatcherAgent-Setup-$appVersion-win-x64.exe"
     $installerPath = Assert-ControlledOutputFile `
         -Path (Join-Path $resolvedReleaseRoot $installerLeaf) `
         -ExpectedParent $resolvedReleaseRoot `
         -ExpectedLeaf $installerLeaf
-    $installerHashLeaf = "$installerLeaf.sha256"
     $installerHashPath = Assert-ControlledOutputFile `
         -Path (Join-Path $resolvedReleaseRoot $installerHashLeaf) `
         -ExpectedParent $resolvedReleaseRoot `
@@ -665,6 +828,13 @@ else {
 
     Write-Host "Installer:    $installerPath" -ForegroundColor Green
     Write-Host "SHA256:       $installerHashPath" -ForegroundColor Green
+}
+
+if ($fullReleaseBuild) {
+    Assert-ExactReleaseArtifactSet `
+        -RepoRoot $repoRoot `
+        -ReleaseRoot $resolvedReleaseRoot `
+        -ExpectedLeaves $expectedReleaseArtifactLeaves
 }
 
 Write-Host "Desktop onedir build: $executableDir" -ForegroundColor Green
