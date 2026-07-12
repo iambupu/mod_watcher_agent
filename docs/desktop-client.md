@@ -2,7 +2,7 @@
 
 本文面向使用 Mod Watcher Agent Windows 独立客户端的普通用户，也为需要诊断、迁移或源码兼容模式的高级用户提供准确边界。
 
-> 当前状态：桌面 EXE、portable、Inno 安装器脚本和 GitHub Actions workflow 已实现；本机已经构建并 smoke 过 onedir EXE。官方 Inno 6.7.3 已用最小 x64 源树真实编译通过不带和带 WebView2 Bootstrapper 的两个预处理分支，但最终 onedir → Setup → SHA256 全链、安装/卸载、GitHub-hosted workflow 和完整 Windows 10/11 GUI 矩阵仍无完成证据。请同时查看 [验收记录](./desktop-client-acceptance.md)，不要把“已实现”理解为“所有发布验收均已通过”。
+> 当前状态：桌面代码基线 `5c10a62` 已在本机使用 Python 3.12.13 x64 与 Inno Setup 6.7.3 完整执行 `scripts/build_desktop.ps1`，退出码为 0；backend、Ruff、前端安装/类型检查/测试/构建、PyInstaller onedir、packaged smoke、portable、Setup 和 SHA256 全链均执行完成。本地 `release` 已生成精确 4 件相互匹配的资产；最终 onedir 与静默安装后的 EXE 都通过无 GUI smoke，静默逐用户安装/卸载与默认保留用户数据路径也已实测。以上只证明本机 headless 构建与静默安装路径，不代表 GitHub-hosted workflow、tag Release、Windows 10/11 GUI、DPI/双屏/托盘、缺失 WebView2、升级、交互删除或代码签名已经验收。逐项边界见 [验收记录](./desktop-client-acceptance.md)。
 
 ## 1. 客户端形态
 
@@ -73,6 +73,8 @@ $expectedLine
 ```
 
 安装器使用 `PrivilegesRequired=lowest`，面向当前用户，不要求管理员权限。升级前应先完整退出客户端；安装器已配置 `AppMutex` 与 `CloseApplications` 来检测并尝试关闭同一应用，但真实升级行为仍待 M14 人工验收。程序文件不会写入用户数据目录。
+
+当前本机验收曾把最终 Setup 静默安装到含中文和空格的临时目录，安装后 EXE smoke 与静默卸载均返回 0，用户数据 sentinel 得到保留，安装文件、HKCU 卸载项、进程和本轮安装/smoke 临时目录均无残留。该证据不包含安装向导、开始菜单/桌面快捷方式、覆盖升级、交互卸载或普通非管理员干净账户测试。
 
 ### 4.2 WebView2 安装策略
 
@@ -248,7 +250,7 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 - 交互卸载只在卸载主体完成后询问是否删除数据，并要求连续两次确认。
 - 最终删除不可恢复，包含数据库、设置、日志、浏览器资料和快照。
 
-真实安装/升级/静默卸载/交互删除仍需要 Windows 人工验收；两个 Inno 预处理分支的本机编译通过，不等于这些路径已经在干净机器上执行。
+最终 Setup 的本机静默新装、安装后 smoke、静默卸载和默认保留用户数据已执行通过。覆盖升级、安装向导、快捷方式、交互卸载双确认与实际删除用户数据仍未执行，不能由静默路径推断为通过。
 
 ### 12.2 安全备份
 
@@ -339,18 +341,19 @@ Get-NetTCPConnection -LocalPort 17500 -State Listen
 - 窗口/托盘/单实例适配器的 fake 驱动生命周期测试。
 - 桌面日志与崩溃日志脱敏。
 - PyInstaller onedir 构建、x64 PE 与必需 DLL 检查。
-- 不启动 GUI 的真实 packaged smoke。
+- 完整本机构建链、精确 4 件本地资产及对应 SHA256。
+- 最终 onedir 和静默安装后 EXE 的真实无 GUI packaged smoke，包括 health、React 根页面、隔离数据库/日志、进程与端口释放。
+- 最终 Setup 的本机静默逐用户安装、静默卸载和默认保留用户数据路径。
 - portable、安装器和 workflow 的静态/动态契约测试。
 
 尚未取得完成证据的范围包括：
 
 - GitHub-hosted `workflow_dispatch` 和 tag Release。
-- 当前源码对应的完整 4 件 Release 资产。
-- 最终正式 onedir 对应的 Setup/SHA256 全链，以及真实安装、升级、静默卸载和交互删除。
 - 干净 Windows 10/11 x64、无 Python/Node 环境。
 - 100% / 125% / 150% DPI、单/双显示器。
-- 中文用户名、含空格安装路径和普通用户权限的完整 GUI 流程。
+- 中文用户名和普通非管理员账户的完整 GUI 流程；当前只验证了含中文和空格的静默安装目录。
 - 缺失 WebView2 机器和 Bootstrapper 成功/失败路径。
+- 覆盖升级、交互卸载双确认与删除用户数据。
 - 真实 pywebview 窗口、系统托盘、LoversLab 登录、通知和完整功能回归。
 - 冷/热启动、内存、CPU、窗口恢复和退出性能目标。
 
