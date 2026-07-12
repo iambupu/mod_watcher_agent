@@ -1,10 +1,12 @@
 # 中文注释：说明 backend/app/tests/test_browser_page_fetcher.py 的模块职责，便于后续维护定位。
 
 import asyncio
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from app import runtime_paths
 from app.services.browser import page_fetcher
 from app.services.browser.page_fetcher import (
     BrowserLaunchChoice,
@@ -18,10 +20,31 @@ def reset_browser_lock(monkeypatch):
 
 
 def test_profile_exists_accepts_browser_specific_profile_dirs(monkeypatch):
-    monkeypatch.setattr(BrowserPageFetcher, "_profile_dir", staticmethod(lambda profile_name: Path("loverslab")))
+    monkeypatch.setattr(
+        BrowserPageFetcher, "_profile_dir", staticmethod(lambda profile_name: Path("loverslab"))
+    )
     monkeypatch.setattr(Path, "exists", lambda self: self.name == "loverslab-chrome")
 
     assert BrowserPageFetcher.profile_exists("loverslab") is True
+
+
+def test_install_chromium_is_disabled_in_frozen_runtime(monkeypatch):
+    monkeypatch.setattr(runtime_paths, "is_frozen", lambda: True)
+
+    def fail_subprocess(*_args, **_kwargs):
+        pytest.fail("frozen desktop must not launch the Playwright installer")
+
+    monkeypatch.setattr(subprocess, "run", fail_subprocess)
+
+    result = BrowserPageFetcher.install_chromium()
+
+    assert result == {
+        "success": False,
+        "status": "unsupported_in_packaged_app",
+        "message": "打包版不支持在线安装 Chromium，请使用系统 Edge 或 Chrome。",
+        "stdout": "",
+        "stderr": "",
+    }
 
 
 class _FakeAsyncPlaywrightFactory:
@@ -51,7 +74,9 @@ class _FakePlaywright:
 @pytest.mark.asyncio
 async def test_open_login_cleans_partial_playwright_on_launch_failure(monkeypatch):
     fake_playwright = _FakePlaywright()
-    monkeypatch.setattr(BrowserPageFetcher, "_profile_dir", staticmethod(lambda profile_name: Path("profile")))
+    monkeypatch.setattr(
+        BrowserPageFetcher, "_profile_dir", staticmethod(lambda profile_name: Path("profile"))
+    )
     monkeypatch.setattr(Path, "mkdir", lambda self, **kwargs: None)
     monkeypatch.setattr(
         BrowserPageFetcher,
@@ -109,7 +134,9 @@ async def test_open_login_waits_for_browser_lock(monkeypatch):
         launched = True
         return _SuccessfulContext()
 
-    monkeypatch.setattr(BrowserPageFetcher, "_profile_dir", staticmethod(lambda profile_name: Path("profile")))
+    monkeypatch.setattr(
+        BrowserPageFetcher, "_profile_dir", staticmethod(lambda profile_name: Path("profile"))
+    )
     monkeypatch.setattr(BrowserPageFetcher, "_launch_persistent_context", fake_launch)
     monkeypatch.setattr(
         BrowserPageFetcher,

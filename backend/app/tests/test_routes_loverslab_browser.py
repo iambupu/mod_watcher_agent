@@ -165,6 +165,42 @@ def test_install_chromium_returns_busy_when_install_lock_is_held(monkeypatch):
     assert data["message"] == "Chromium install is already running."
 
 
+def test_install_chromium_passes_through_packaged_result_and_releases_lock(monkeypatch):
+    result = {
+        "success": False,
+        "status": "unsupported_in_packaged_app",
+        "message": "打包版不支持在线安装 Chromium，请使用系统 Edge 或 Chrome。",
+        "stdout": "",
+        "stderr": "",
+    }
+
+    class _RecordingLock:
+        def __init__(self):
+            self.release_calls = 0
+
+        def acquire(self, blocking=True):
+            assert blocking is False
+            return True
+
+        def release(self):
+            self.release_calls += 1
+
+    lock = _RecordingLock()
+    monkeypatch.setattr(routes_loverslab_browser, "INSTALL_CHROMIUM_LOCK", lock)
+    monkeypatch.setattr(
+        routes_loverslab_browser.BrowserPageFetcher,
+        "install_chromium",
+        lambda: result,
+    )
+
+    client = TestClient(fastapi_app)
+    response = client.post("/api/loverslab/browser/install-chromium")
+
+    assert response.status_code == 200
+    assert response.json() == result
+    assert lock.release_calls == 1
+
+
 def test_check_session_closes_login_browser_after_ok(monkeypatch):
     fake = _FakeFetcher(
         BrowserFetchResult(

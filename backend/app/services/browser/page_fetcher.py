@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from app import runtime_paths
 from app.runtime_paths import build_runtime_paths
 
 BrowserFetchStatus = Literal[
@@ -244,6 +245,14 @@ class BrowserPageFetcher:
     @classmethod
     def install_chromium(cls, timeout_seconds: int = 600) -> dict:
         """通过 Playwright CLI 安装 Chromium，并裁剪过长输出给 API 返回。"""
+        if runtime_paths.is_frozen():
+            return {
+                "success": False,
+                "status": "unsupported_in_packaged_app",
+                "message": "打包版不支持在线安装 Chromium，请使用系统 Edge 或 Chrome。",
+                "stdout": "",
+                "stderr": "",
+            }
         try:
             completed = subprocess.run(
                 [sys.executable, "-m", "playwright", "install", "chromium"],
@@ -323,7 +332,9 @@ class BrowserPageFetcher:
                 "Executable doesn't exist. Tried system Microsoft Edge, system Google Chrome, "
                 f"and Playwright Chromium. {detail}"
             )
-        raise RuntimeError(f"Browser launch failed. Tried system Edge/Chrome before Chromium. {detail}")
+        raise RuntimeError(
+            f"Browser launch failed. Tried system Edge/Chrome before Chromium. {detail}"
+        )
 
     @classmethod
     def _browser_launch_choice(cls, playwright) -> BrowserLaunchChoice | None:
@@ -387,8 +398,16 @@ class BrowserPageFetcher:
             choices.append(BrowserLaunchChoice("Google Chrome", "chrome", "system"))
 
         unix_paths = [
-            (Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"), "Microsoft Edge", "msedge"),
-            (Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"), "Google Chrome", "chrome"),
+            (
+                Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+                "Microsoft Edge",
+                "msedge",
+            ),
+            (
+                Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                "Google Chrome",
+                "chrome",
+            ),
             (Path("/usr/bin/microsoft-edge"), "Microsoft Edge", "msedge"),
             (Path("/usr/bin/microsoft-edge-stable"), "Microsoft Edge", "msedge"),
             (Path("/usr/bin/google-chrome"), "Google Chrome", "chrome"),
