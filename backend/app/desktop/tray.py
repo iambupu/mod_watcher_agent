@@ -51,8 +51,10 @@ class TrayController:
         self._thread: threading.Thread | None = None
         self._icon: Any | None = None
         self._stop_started = False
+        self._exit_started = False
         self._on_show: Callable[..., object] | None = None
         self._on_exit: Callable[..., object] | None = None
+        self._on_unavailable: Callable[..., object] | None = None
 
     @property
     def thread(self) -> threading.Thread:
@@ -66,12 +68,14 @@ class TrayController:
         *,
         on_show: Callable[..., object],
         on_exit: Callable[..., object],
+        on_unavailable: Callable[..., object] | None = None,
     ) -> bool:
         with self._state_lock:
             if self._thread is not None:
                 return self._startup_succeeded
             self._on_show = on_show
             self._on_exit = on_exit
+            self._on_unavailable = on_unavailable
             thread = threading.Thread(
                 target=self._run,
                 name="mod-watcher-tray",
@@ -141,6 +145,7 @@ class TrayController:
         return self._post("/api/logs/open-dir")
 
     def _run(self) -> None:
+        runtime_error: BaseException | None = None
         try:
             pystray, image_module, image_draw_module = self._load_dependencies()
             image = self._create_icon_image(image_module, image_draw_module)
@@ -163,11 +168,18 @@ class TrayController:
                 return
             icon.run(setup=self._mark_ready)
         except BaseException as exc:
-            self.startup_error = exc
-            self.available = False
-            self._startup_complete.set()
+            runtime_error = exc
+            with self._state_lock:
+                if not self._startup_succeeded:
+                    self.startup_error = exc
+                    self._startup_complete.set()
         finally:
-            self.available = False
+            with self._state_lock:
+                notify_unavailable = self._startup_succeeded and not self._stop_started
+                callback = self._on_unavailable if notify_unavailable else None
+                self.available = False
+            if callback is not None:
+                callback(runtime_error)
 
     def _mark_ready(self, icon: Any) -> None:
         with self._state_lock:
@@ -244,6 +256,23 @@ class TrayController:
         self.open_logs()
 
     def _exit(self, *_args: object) -> None:
-        callback = self._on_exit
-        if callback is not None:
+        with self._state_lock:
+            if self._exit_started:
+                return
+            self._exit_started = True
+            callback = self._on_exit
+
+        self.stop()
+        if callback is None:
+            return
+        shutdown_worker = threading.Thread(
+            target=callback,
+            args=("tray",),
+            name="mod-watcher-shutdown",
+            daemon=False,
+        )
+        try:
+            shutdown_worker.start()
+        except BaseException as exc:
+            self.last_action_error = exc
             callback("tray")

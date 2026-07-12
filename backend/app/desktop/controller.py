@@ -47,7 +47,13 @@ class _Window(Protocol):
 
 
 class _Tray(Protocol):
-    def start(self, *, on_show: object, on_exit: object) -> bool: ...
+    def start(
+        self,
+        *,
+        on_show: object,
+        on_exit: object,
+        on_unavailable: object | None = None,
+    ) -> bool: ...
 
     def stop(self) -> None: ...
 
@@ -82,6 +88,7 @@ class DesktopController:
         self.shutdown_complete = threading.Event()
         self._state_lock = threading.RLock()
         self._shutdown_started = False
+        self._shutdown_owner: int | None = None
 
     @property
     def is_exiting(self) -> bool:
@@ -118,6 +125,7 @@ class DesktopController:
             tray_available = self.tray.start(
                 on_show=self.restore_window,
                 on_exit=self.shutdown,
+                on_unavailable=self.on_tray_unavailable,
             )
 
             with self._state_lock:
@@ -132,6 +140,7 @@ class DesktopController:
 
             if not self.shutdown_complete.is_set():
                 self.shutdown("window")
+            self.shutdown_complete.wait()
             return 1 if self.state is DesktopState.FAILED else 0
         except BaseException as exc:
             with self._state_lock:
@@ -167,6 +176,25 @@ class DesktopController:
             if not self.is_exiting:
                 self.state = DesktopState.WINDOW_VISIBLE
 
+    def on_tray_unavailable(
+        self,
+        _error: BaseException | None = None,
+        *_args: object,
+    ) -> None:
+        with self._state_lock:
+            self.tray_available = False
+            restore_hidden_window = self.state is DesktopState.WINDOW_HIDDEN
+        if not restore_hidden_window:
+            return
+
+        try:
+            self.restore_window()
+        except BaseException as exc:
+            with self._state_lock:
+                self.error = exc
+                self.state = DesktopState.FAILED
+            self._cleanup(preserve_failure=True)
+
     def shutdown(self, _reason: str = "unknown", *_args: object) -> None:
         self._cleanup(preserve_failure=False)
 
@@ -177,19 +205,31 @@ class DesktopController:
         return self.tray_available and live_available
 
     def _cleanup(self, *, preserve_failure: bool) -> None:
+        current_thread_id = threading.get_ident()
         with self._state_lock:
             if self._shutdown_started:
-                return
-            self._shutdown_started = True
-            failed_before_cleanup = preserve_failure or self.state is DesktopState.FAILED
-            if not failed_before_cleanup:
-                self.state = DesktopState.EXITING
+                start_cleanup = False
+                wait_for_cleanup = self._shutdown_owner != current_thread_id
+            else:
+                self._shutdown_started = True
+                self._shutdown_owner = current_thread_id
+                start_cleanup = True
+                wait_for_cleanup = False
+                failed_before_cleanup = preserve_failure or self.state is DesktopState.FAILED
+                if not failed_before_cleanup:
+                    self.state = DesktopState.EXITING
+
+        if wait_for_cleanup:
+            self.shutdown_complete.wait()
+            return
+        if not start_cleanup:
+            return
 
         cleanup_error: BaseException | None = None
         try:
             for cleanup in (
-                self.server.stop,
                 self.tray.stop,
+                self.server.stop,
                 self.window.destroy,
                 self.guard.release,
             ):
@@ -204,8 +244,9 @@ class DesktopController:
                     if self.error is None:
                         self.error = cleanup_error
                     self.state = DesktopState.FAILED
-                elif failed_before_cleanup:
+                elif failed_before_cleanup or self.state is DesktopState.FAILED:
                     self.state = DesktopState.FAILED
                 else:
                     self.state = DesktopState.STOPPED
+                self._shutdown_owner = None
                 self.shutdown_complete.set()
