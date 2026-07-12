@@ -7,6 +7,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+$packagingCommonScript = Join-Path $PSScriptRoot "desktop_packaging_common.ps1"
+. $packagingCommonScript
 if ([string]::IsNullOrWhiteSpace($ExecutableDir)) {
     $ExecutableDir = Join-Path $repoRoot "dist-desktop\ModWatcherAgent"
 }
@@ -47,6 +49,63 @@ function Get-Sha256Hex {
     return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
 }
 
+function Resolve-PortableOutputDirectory {
+    param([string]$Path)
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+    if (Test-Path -LiteralPath $fullPath) {
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Container)) {
+            throw "Portable output exists but is not a directory: $fullPath"
+        }
+    }
+    else {
+        New-Item -ItemType Directory -Path $fullPath | Out-Null
+    }
+    $item = Get-Item -LiteralPath $fullPath -Force
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Portable output directory is a reparse point: $fullPath"
+    }
+    $resolvedPath = (Resolve-Path -LiteralPath $fullPath).Path.TrimEnd("\", "/")
+    if (-not $resolvedPath.Equals($fullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Resolved portable output directory changed unexpectedly: $resolvedPath"
+    }
+    return $resolvedPath
+}
+
+function Assert-ControlledPortableOutputFile {
+    param(
+        [string]$Path,
+        [string]$ExpectedParent,
+        [string]$ExpectedLeaf
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $fullParent = [System.IO.Path]::GetFullPath((Split-Path -Parent $fullPath)).TrimEnd("\", "/")
+    $fullExpectedParent = [System.IO.Path]::GetFullPath($ExpectedParent).TrimEnd("\", "/")
+    $leaf = Split-Path -Leaf $fullPath
+    if (-not $fullParent.Equals(
+        $fullExpectedParent,
+        [System.StringComparison]::OrdinalIgnoreCase
+    ) -or -not $leaf.Equals(
+        $ExpectedLeaf,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Refusing portable artifact outside the controlled output directory: $fullPath"
+    }
+    $parentItem = Get-Item -LiteralPath $fullExpectedParent -Force
+    if ($parentItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Portable output directory is a reparse point: $fullExpectedParent"
+    }
+    $resolvedParent = (Resolve-Path -LiteralPath $fullExpectedParent).Path.TrimEnd("\", "/")
+    if (-not $resolvedParent.Equals(
+        $fullExpectedParent,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Resolved portable output directory changed unexpectedly: $resolvedParent"
+    }
+    return $fullPath
+}
+
 function Remove-ControlledDirectory {
     param(
         [string]$Path,
@@ -76,70 +135,6 @@ function Remove-ControlledDirectory {
     Remove-Item -LiteralPath $resolvedPath -Recurse -Force
 }
 
-function Test-ForbiddenPortablePath {
-    param(
-        [string]$RelativePath,
-        [bool]$IsDirectory
-    )
-
-    $normalized = $RelativePath.Replace("\", "/").Trim("/")
-    if ([string]::IsNullOrWhiteSpace($normalized)) {
-        return $false
-    }
-    $parts = @($normalized.Split("/") | Where-Object { $_ })
-    $directoryCount = if ($IsDirectory) { $parts.Count } else { [Math]::Max(0, $parts.Count - 1) }
-    $forbiddenDirectories = @(
-        "browser_profiles",
-        "snapshots",
-        "cache",
-        "tests",
-        "test",
-        ".pytest_cache",
-        "__pycache__"
-    )
-    for ($index = 0; $index -lt $directoryCount; $index++) {
-        if ($forbiddenDirectories -contains $parts[$index].ToLowerInvariant()) {
-            return $true
-        }
-    }
-    if ($IsDirectory) {
-        return $false
-    }
-
-    $fileName = $parts[-1]
-    $fileNameLower = $fileName.ToLowerInvariant()
-    if ($fileNameLower -eq ".env" -or $fileNameLower.StartsWith(".env.")) {
-        return $true
-    }
-    if ($fileNameLower -match '\.(db|sqlite|sqlite3)(-.+)?$' -or $fileNameLower.EndsWith(".log")) {
-        return $true
-    }
-    if ($fileNameLower -match '^(id_rsa|id_ed25519|credentials\.json|secrets?\.json|private\.key)$') {
-        return $true
-    }
-    return $false
-}
-
-function Assert-CleanPortableTree {
-    param([string]$Root)
-
-    $resolvedRoot = (Resolve-Path -LiteralPath $Root).Path.TrimEnd("\", "/")
-    $forbidden = @(
-        Get-ChildItem -LiteralPath $resolvedRoot -Recurse -Force | Where-Object {
-            $relative = $_.FullName.Substring($resolvedRoot.Length).TrimStart("\", "/")
-            Test-ForbiddenPortablePath -RelativePath $relative -IsDirectory $_.PSIsContainer
-        }
-    )
-    if ($forbidden.Count -gt 0) {
-        $relativeNames = @(
-            $forbidden | ForEach-Object {
-                $_.FullName.Substring($resolvedRoot.Length).TrimStart("\", "/")
-            }
-        )
-        throw "Forbidden portable content detected: $($relativeNames -join ', ')"
-    }
-}
-
 $resolvedExecutableDir = (Resolve-Path -LiteralPath $ExecutableDir).Path
 $executablePath = Join-Path $resolvedExecutableDir "ModWatcherAgent.exe"
 if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
@@ -148,13 +143,22 @@ if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = Get-ProjectVersion -PyprojectPath (Join-Path $repoRoot "backend\pyproject.toml")
 }
+$Version = Test-SafeReleaseVersion -Version $Version
 
-Assert-CleanPortableTree -Root $resolvedExecutableDir
-New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-$resolvedOutputDir = (Resolve-Path -LiteralPath $OutputDir).Path
+Assert-X64PortableExecutable -Path $executablePath
+Assert-CleanDesktopBundleTree -Root $resolvedExecutableDir -Context "portable source"
+$resolvedOutputDir = Resolve-PortableOutputDirectory -Path $OutputDir
 $packageName = "ModWatcherAgent-$Version-win-x64-portable"
-$zipPath = Join-Path $resolvedOutputDir "$packageName.zip"
-$hashPath = "$zipPath.sha256"
+$zipLeaf = "$packageName.zip"
+$hashLeaf = "$zipLeaf.sha256"
+$zipPath = Assert-ControlledPortableOutputFile `
+    -Path (Join-Path $resolvedOutputDir $zipLeaf) `
+    -ExpectedParent $resolvedOutputDir `
+    -ExpectedLeaf $zipLeaf
+$hashPath = Assert-ControlledPortableOutputFile `
+    -Path (Join-Path $resolvedOutputDir $hashLeaf) `
+    -ExpectedParent $resolvedOutputDir `
+    -ExpectedLeaf $hashLeaf
 $stagingRoot = Join-Path $resolvedOutputDir ".portable-staging"
 
 foreach ($path in @($zipPath, $hashPath)) {
@@ -171,7 +175,8 @@ try {
     New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
     Copy-Item -LiteralPath $resolvedExecutableDir -Destination $stagingRoot -Recurse -Force
     $stagedBundle = Join-Path $stagingRoot "ModWatcherAgent"
-    Assert-CleanPortableTree -Root $stagedBundle
+    Assert-CleanDesktopBundleTree -Root $stagedBundle -Context "portable staging"
+    Assert-X64PortableExecutable -Path (Join-Path $stagedBundle "ModWatcherAgent.exe")
 
     Compress-Archive -LiteralPath $stagedBundle -DestinationPath $zipPath -CompressionLevel Optimal
 
@@ -180,7 +185,7 @@ try {
     try {
         $forbiddenEntries = @(
             $archive.Entries | Where-Object {
-                Test-ForbiddenPortablePath `
+                Test-ForbiddenDesktopBundlePath `
                     -RelativePath $_.FullName `
                     -IsDirectory ([string]::IsNullOrEmpty($_.Name))
             }
@@ -193,6 +198,14 @@ try {
         $archive.Dispose()
     }
 
+    $zipPath = Assert-ControlledPortableOutputFile `
+        -Path $zipPath `
+        -ExpectedParent $resolvedOutputDir `
+        -ExpectedLeaf $zipLeaf
+    $hashPath = Assert-ControlledPortableOutputFile `
+        -Path $hashPath `
+        -ExpectedParent $resolvedOutputDir `
+        -ExpectedLeaf $hashLeaf
     $hash = Get-Sha256Hex -Path $zipPath
     "$hash  $([System.IO.Path]::GetFileName($zipPath))" | Set-Content `
         -LiteralPath $hashPath `

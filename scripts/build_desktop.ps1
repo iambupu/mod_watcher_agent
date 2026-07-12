@@ -19,8 +19,10 @@ $distRoot = Join-Path $repoRoot "dist-desktop"
 $workRoot = Join-Path $repoRoot "build-desktop"
 $smokeScript = Join-Path $PSScriptRoot "smoke_test_desktop.ps1"
 $portableScript = Join-Path $PSScriptRoot "package_portable.ps1"
+$packagingCommonScript = Join-Path $PSScriptRoot "desktop_packaging_common.ps1"
 $installerScript = Join-Path $repoRoot "packaging\installer\ModWatcherAgent.iss"
 $releaseRoot = Join-Path $repoRoot "release"
+. $packagingCommonScript
 $requiredDesktopRuntimeFiles = @(
     "_internal\webview\lib\Microsoft.Web.WebView2.Core.dll",
     "_internal\webview\lib\Microsoft.Web.WebView2.WinForms.dll",
@@ -47,15 +49,6 @@ function Get-ProjectVersion {
         }
     }
     throw "Unable to read the project version from $PyprojectPath"
-}
-
-function Test-SafeReleaseVersion {
-    param([string]$Version)
-
-    if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-        throw "Unsafe project version for release artifact names: $Version"
-    }
-    return $Version
 }
 
 function Resolve-IsccPath {
@@ -315,70 +308,10 @@ function Remove-ControlledFile {
     }
 }
 
-function Test-ForbiddenInstallerPath {
-    param(
-        [string]$RelativePath,
-        [bool]$IsDirectory
-    )
-
-    $normalized = $RelativePath.Replace("\", "/").Trim("/")
-    if ([string]::IsNullOrWhiteSpace($normalized)) {
-        return $false
-    }
-    $parts = @($normalized.Split("/") | Where-Object { $_ })
-    $directoryCount = if ($IsDirectory) { $parts.Count } else { [Math]::Max(0, $parts.Count - 1) }
-    $forbiddenDirectories = @(
-        "data",
-        "logs",
-        "browser_profiles",
-        "snapshots",
-        "cache",
-        "tests",
-        "test",
-        ".pytest_cache",
-        "__pycache__"
-    )
-    for ($index = 0; $index -lt $directoryCount; $index++) {
-        if ($forbiddenDirectories -contains $parts[$index].ToLowerInvariant()) {
-            return $true
-        }
-    }
-    if ($IsDirectory) {
-        return $false
-    }
-
-    $fileNameLower = $parts[-1].ToLowerInvariant()
-    if ($fileNameLower -eq ".env" -or $fileNameLower.StartsWith(".env.")) {
-        return $true
-    }
-    if ($fileNameLower -match '\.(db|sqlite|sqlite3)([-.].*)?$' -or
-        $fileNameLower -match '\.log([-.].*)?$') {
-        return $true
-    }
-    if ($fileNameLower -match '^(id_rsa|id_ed25519|credentials\.json|secrets?\.json|private\.key)$') {
-        return $true
-    }
-    return $false
-}
-
 function Assert-CleanInstallerSource {
     param([string]$Root)
 
-    $resolvedRoot = (Resolve-Path -LiteralPath $Root).Path.TrimEnd("\", "/")
-    $forbidden = @(
-        Get-ChildItem -LiteralPath $resolvedRoot -Recurse -Force | Where-Object {
-            $relative = $_.FullName.Substring($resolvedRoot.Length).TrimStart("\", "/")
-            Test-ForbiddenInstallerPath -RelativePath $relative -IsDirectory $_.PSIsContainer
-        }
-    )
-    if ($forbidden.Count -gt 0) {
-        $relativeNames = @(
-            $forbidden | ForEach-Object {
-                $_.FullName.Substring($resolvedRoot.Length).TrimStart("\", "/")
-            }
-        )
-        throw "Forbidden installer source content detected: $($relativeNames -join ', ')"
-    }
+    Assert-CleanDesktopBundleTree -Root $Root -Context "installer source"
 }
 
 function Assert-CleanPortableArchive {
@@ -389,7 +322,7 @@ function Assert-CleanPortableArchive {
     try {
         $forbiddenEntries = @(
             $archive.Entries | Where-Object {
-                Test-ForbiddenInstallerPath `
+                Test-ForbiddenDesktopBundlePath `
                     -RelativePath $_.FullName `
                     -IsDirectory ([string]::IsNullOrEmpty($_.Name))
             }
@@ -466,9 +399,9 @@ function Assert-RequiredDesktopRuntimeFiles {
     }
 }
 
-$appVersion = Test-SafeReleaseVersion -Version (
-    Get-ProjectVersion -PyprojectPath (Join-Path $backendRoot "pyproject.toml")
-)
+$appVersion = Test-SafeReleaseVersion `
+    -Version (Get-ProjectVersion -PyprojectPath (Join-Path $backendRoot "pyproject.toml")) `
+    -Label "project"
 $resolvedReleaseRoot = $null
 if (-not $SkipPortable -or -not $SkipInstaller) {
     $resolvedReleaseRoot = Resolve-ControlledReleaseRoot `
@@ -508,7 +441,10 @@ else {
 
 Invoke-ExternalCommand `
     -FilePath $PythonExecutable `
-    -Arguments @("-c", "import sys; assert sys.version_info >= (3, 11); print(sys.version)") `
+    -Arguments @(
+        "-c",
+        "import struct, sys; assert sys.platform == 'win32'; assert struct.calcsize('P') == 8; assert sys.version_info >= (3, 11); print(sys.version)"
+    ) `
     -WorkingDirectory $repoRoot `
     -DisplayName "python version"
 
@@ -613,6 +549,7 @@ if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
     throw "PyInstaller did not produce the expected executable: $executablePath"
 }
 $executableDir = Split-Path -Parent $executablePath
+Assert-X64PortableExecutable -Path $executablePath
 Assert-RequiredDesktopRuntimeFiles -BundleRoot $executableDir
 
 $powershellExecutable = Resolve-CommandPath -CommandOrPath "powershell.exe"

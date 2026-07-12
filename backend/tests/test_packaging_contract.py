@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shutil
+import struct
 import subprocess
 import tomllib
 import zipfile
@@ -19,9 +20,16 @@ SPEC_PATH = REPO_ROOT / "packaging" / "mod_watcher_agent.spec"
 BUILD_SCRIPT = REPO_ROOT / "scripts" / "build_desktop.ps1"
 SMOKE_SCRIPT = REPO_ROOT / "scripts" / "smoke_test_desktop.ps1"
 PORTABLE_SCRIPT = REPO_ROOT / "scripts" / "package_portable.ps1"
+PACKAGING_COMMON_SCRIPT = REPO_ROOT / "scripts" / "desktop_packaging_common.ps1"
 INSTALLER_SCRIPT = REPO_ROOT / "packaging" / "installer" / "ModWatcherAgent.iss"
 EXPECTED_INSTALLER_APP_ID = "{{B20CFDE2-9822-4BB7-94A7-7B661ACF7FF5}"
 WEBVIEW2_DOWNLOAD_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
+REQUIRED_DESKTOP_RUNTIME_FILES = (
+    "_internal/webview/lib/Microsoft.Web.WebView2.Core.dll",
+    "_internal/webview/lib/Microsoft.Web.WebView2.WinForms.dll",
+    "_internal/webview/lib/runtimes/win-x64/native/WebView2Loader.dll",
+    "_internal/pythonnet/runtime/Python.Runtime.dll",
+)
 
 
 def _required_file(path: Path) -> Path:
@@ -280,6 +288,36 @@ def _create_directory_junction(link: Path, target: Path) -> None:
     assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
+def _write_fake_pe(path: Path, *, machine: int = 0x8664) -> None:
+    payload = bytearray(0x86)
+    payload[:2] = b"MZ"
+    struct.pack_into("<I", payload, 0x3C, 0x80)
+    payload[0x80:0x84] = b"PE\0\0"
+    struct.pack_into("<H", payload, 0x84, machine)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+
+
+def _write_required_desktop_runtime_files(bundle_root: Path) -> None:
+    for relative_path in REQUIRED_DESKTOP_RUNTIME_FILES:
+        runtime_file = bundle_root / relative_path
+        runtime_file.parent.mkdir(parents=True, exist_ok=True)
+        runtime_file.write_bytes(b"runtime")
+
+
+def _copy_build_script_fixture(repo: Path) -> Path:
+    scripts_dir = repo / "scripts"
+    scripts_dir.mkdir(parents=True)
+    copied_script = scripts_dir / BUILD_SCRIPT.name
+    copied_script.write_text(BUILD_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    copied_common = scripts_dir / PACKAGING_COMMON_SCRIPT.name
+    copied_common.write_text(
+        PACKAGING_COMMON_SCRIPT.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return copied_script
+
+
 def test_spec_semantically_defines_required_onedir_bundle() -> None:
     tree, datas = _parse_spec()
     assert datas == {
@@ -477,16 +515,12 @@ def test_smoke_script_is_isolated_bounded_and_checks_cleanup() -> None:
 def test_build_and_smoke_require_edgechromium_and_pythonnet_runtime_files(
     tmp_path: Path,
 ) -> None:
-    required_files = {
-        "_internal/webview/lib/Microsoft.Web.WebView2.Core.dll",
-        "_internal/webview/lib/Microsoft.Web.WebView2.WinForms.dll",
-        "_internal/webview/lib/runtimes/win-x64/native/WebView2Loader.dll",
-        "_internal/pythonnet/runtime/Python.Runtime.dll",
-    }
     for script_path in (BUILD_SCRIPT, SMOKE_SCRIPT):
         text = script_path.read_text(encoding="utf-8").replace("\\", "/")
         assert "Assert-RequiredDesktopRuntimeFiles" in text
-        assert required_files.issubset(set(re.findall(r'"([^"\r\n]+\.dll)"', text)))
+        assert set(REQUIRED_DESKTOP_RUNTIME_FILES).issubset(
+            set(re.findall(r'"([^"\r\n]+\.dll)"', text))
+        )
 
     fake_bundle = tmp_path / "missing runtime" / "ModWatcherAgent"
     fake_bundle.mkdir(parents=True)
@@ -541,7 +575,7 @@ def test_portable_script_builds_clean_zip_and_matching_sha256(tmp_path: Path) ->
     executable_dir = tmp_path / "便携 输入" / "ModWatcherAgent"
     internal_dir = executable_dir / "_internal"
     internal_dir.mkdir(parents=True)
-    (executable_dir / "ModWatcherAgent.exe").write_bytes(b"fake-executable")
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
     (internal_dir / "runtime.txt").write_text("runtime", encoding="utf-8")
     output_dir = tmp_path / "发布 空间"
 
@@ -574,11 +608,16 @@ def test_portable_script_builds_clean_zip_and_matching_sha256(tmp_path: Path) ->
     [
         ".env",
         "data/mod_watcher.db-wal",
+        "data/mod_watcher.db.backup-20260712",
+        "data/mod_watcher.sqlite.bak",
+        "data/runtime-private.bin",
         "logs/desktop.log",
+        "logs/runtime-private.bin",
         "browser_profiles/profile.json",
         "snapshots/snapshot.json",
         "cache/cache.bin",
         "tests/test_key.pem",
+        "private.key",
     ],
 )
 def test_portable_script_rejects_runtime_data_tests_and_secrets(
@@ -588,7 +627,7 @@ def test_portable_script_rejects_runtime_data_tests_and_secrets(
     _required_file(PORTABLE_SCRIPT)
     executable_dir = tmp_path / "bundle" / "ModWatcherAgent"
     executable_dir.mkdir(parents=True)
-    (executable_dir / "ModWatcherAgent.exe").write_bytes(b"fake-executable")
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
     forbidden = executable_dir / relative_path
     forbidden.parent.mkdir(parents=True, exist_ok=True)
     forbidden.write_text("forbidden", encoding="utf-8")
@@ -605,6 +644,169 @@ def test_portable_script_rejects_runtime_data_tests_and_secrets(
 
     assert completed.returncode != 0
     assert "forbidden" in f"{completed.stdout}\n{completed.stderr}".lower()
+
+
+def test_portable_script_rejects_unsafe_version_without_touching_escaped_files(
+    tmp_path: Path,
+) -> None:
+    executable_dir = tmp_path / "bundle" / "ModWatcherAgent"
+    executable_dir.mkdir(parents=True)
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
+    output_dir = tmp_path / "release"
+    output_dir.mkdir()
+    unsafe_version = r"..\..\..\victim"
+    escaped_zip = (output_dir / f"ModWatcherAgent-{unsafe_version}-win-x64-portable.zip").resolve()
+    escaped_hash = Path(f"{escaped_zip}.sha256")
+    assert escaped_zip.parent != output_dir.resolve()
+    escaped_zip.parent.mkdir(parents=True, exist_ok=True)
+    escaped_zip.write_bytes(b"keep-zip")
+    escaped_hash.write_bytes(b"keep-hash")
+
+    completed = _run_script(
+        PORTABLE_SCRIPT,
+        "-ExecutableDir",
+        str(executable_dir),
+        "-OutputDir",
+        str(output_dir),
+        "-Version",
+        unsafe_version,
+    )
+
+    assert completed.returncode != 0
+    assert "unsafe release version" in f"{completed.stdout}\n{completed.stderr}".casefold()
+    assert escaped_zip.read_bytes() == b"keep-zip"
+    assert escaped_hash.read_bytes() == b"keep-hash"
+
+
+def test_portable_script_rejects_non_x64_pe(tmp_path: Path) -> None:
+    executable_dir = tmp_path / "bundle" / "ModWatcherAgent"
+    executable_dir.mkdir(parents=True)
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe", machine=0x014C)
+
+    completed = _run_script(
+        PORTABLE_SCRIPT,
+        "-ExecutableDir",
+        str(executable_dir),
+        "-OutputDir",
+        str(tmp_path / "release"),
+        "-Version",
+        "9.8.7",
+    )
+
+    assert completed.returncode != 0
+    assert "x64 pe" in f"{completed.stdout}\n{completed.stderr}".casefold()
+
+
+def test_portable_script_rejects_source_junction_without_copying_external_file(
+    tmp_path: Path,
+) -> None:
+    executable_dir = tmp_path / "bundle" / "ModWatcherAgent"
+    executable_dir.mkdir(parents=True)
+    _write_fake_pe(executable_dir / "ModWatcherAgent.exe")
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    external_secret = external_dir / "external-secret.txt"
+    external_secret.write_text("keep-secret", encoding="utf-8")
+    junction = executable_dir / "assets-link"
+    _create_directory_junction(junction, external_dir)
+    try:
+        completed = _run_script(
+            PORTABLE_SCRIPT,
+            "-ExecutableDir",
+            str(executable_dir),
+            "-OutputDir",
+            str(tmp_path / "release"),
+            "-Version",
+            "9.8.7",
+        )
+
+        assert completed.returncode != 0
+        assert "reparse point" in f"{completed.stdout}\n{completed.stderr}".casefold()
+        assert external_secret.read_text(encoding="utf-8") == "keep-secret"
+    finally:
+        if junction.exists():
+            junction.rmdir()
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "data/private-runtime.bin",
+        "logs/private-runtime.bin",
+        "cache/private-runtime.bin",
+        "browser_profiles/profile.json",
+        "snapshots/snapshot.json",
+        "tests/test_key.pem",
+        "private.key",
+    ],
+)
+def test_smoke_rejects_forbidden_bundle_content_before_launch(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    bundle_root = tmp_path / "ModWatcherAgent"
+    _write_fake_pe(bundle_root / "ModWatcherAgent.exe")
+    _write_required_desktop_runtime_files(bundle_root)
+    forbidden = bundle_root / relative_path
+    forbidden.parent.mkdir(parents=True, exist_ok=True)
+    forbidden.write_text("forbidden", encoding="utf-8")
+
+    completed = _run_script(
+        SMOKE_SCRIPT,
+        "-ExecutablePath",
+        str(bundle_root / "ModWatcherAgent.exe"),
+        "-TimeoutSeconds",
+        "1",
+    )
+
+    assert completed.returncode != 0
+    output = f"{completed.stdout}\n{completed.stderr}".casefold()
+    assert "forbidden" in output or "runtime data escaped" in output
+
+
+def test_smoke_rejects_non_x64_pe_before_launch(tmp_path: Path) -> None:
+    bundle_root = tmp_path / "ModWatcherAgent"
+    _write_fake_pe(bundle_root / "ModWatcherAgent.exe", machine=0x014C)
+    _write_required_desktop_runtime_files(bundle_root)
+
+    completed = _run_script(
+        SMOKE_SCRIPT,
+        "-ExecutablePath",
+        str(bundle_root / "ModWatcherAgent.exe"),
+        "-TimeoutSeconds",
+        "1",
+    )
+
+    assert completed.returncode != 0
+    assert "x64 pe" in f"{completed.stdout}\n{completed.stderr}".casefold()
+
+
+def test_build_portable_and_smoke_enforce_windows_x64_pe_contract() -> None:
+    common_text = _required_file(PACKAGING_COMMON_SCRIPT).read_text(encoding="utf-8")
+    _powershell_ast(PACKAGING_COMMON_SCRIPT)
+    assert "function Assert-X64PortableExecutable" in common_text
+    assert "0x8664" in common_text
+    for script_path in (BUILD_SCRIPT, PORTABLE_SCRIPT, SMOKE_SCRIPT):
+        text = script_path.read_text(encoding="utf-8")
+        assert "Assert-X64PortableExecutable" in text
+        assert "desktop_packaging_common.ps1" in text
+
+    build_text = BUILD_SCRIPT.read_text(encoding="utf-8")
+    assert "sys.platform == 'win32'" in build_text
+    assert "struct.calcsize('P') == 8" in build_text
+
+
+def test_installer_source_scan_rejects_reparse_points() -> None:
+    build_text = BUILD_SCRIPT.read_text(encoding="utf-8")
+    assert "Assert-CleanDesktopBundleTree" in build_text
+    text = _required_file(PACKAGING_COMMON_SCRIPT).read_text(encoding="utf-8")
+    function_match = re.search(
+        r"function\s+Assert-CleanDesktopBundleTree\b(?P<body>.*?)(?=\nfunction\s|\Z)",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert function_match is not None
+    assert "ReparsePoint" in function_match.group("body")
 
 
 def test_inno_installer_is_stable_per_user_and_installs_only_onedir() -> None:
@@ -787,9 +989,7 @@ def test_build_script_compiles_installer_without_network_downloads_and_hashes_it
 
 
 def test_build_script_rejects_unsafe_installer_version_before_tooling(tmp_path: Path) -> None:
-    copied_script = tmp_path / "scripts" / BUILD_SCRIPT.name
-    copied_script.parent.mkdir(parents=True)
-    copied_script.write_text(BUILD_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    copied_script = _copy_build_script_fixture(tmp_path)
     pyproject = tmp_path / "backend" / "pyproject.toml"
     pyproject.parent.mkdir(parents=True)
     pyproject.write_text('[project]\nversion = "1.2.3/../../escaped"\n', encoding="utf-8")
@@ -810,9 +1010,7 @@ def test_build_script_rejects_unsafe_installer_version_before_tooling(tmp_path: 
 
 def test_build_script_rejects_release_junction_before_any_tool_runs(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    copied_script = repo / "scripts" / BUILD_SCRIPT.name
-    copied_script.parent.mkdir(parents=True)
-    copied_script.write_text(BUILD_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    copied_script = _copy_build_script_fixture(repo)
     pyproject = repo / "backend" / "pyproject.toml"
     pyproject.parent.mkdir(parents=True)
     pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
@@ -855,9 +1053,7 @@ def test_build_script_rejects_release_junction_before_any_tool_runs(tmp_path: Pa
 
 def test_build_script_preserves_native_tool_exit_code(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    copied_script = repo / "scripts" / BUILD_SCRIPT.name
-    copied_script.parent.mkdir(parents=True)
-    copied_script.write_text(BUILD_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    copied_script = _copy_build_script_fixture(repo)
     pyproject = repo / "backend" / "pyproject.toml"
     pyproject.parent.mkdir(parents=True)
     pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
@@ -883,9 +1079,7 @@ def test_build_script_rejects_renamed_microsoft_binary_as_webview2(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
-    copied_script = repo / "scripts" / BUILD_SCRIPT.name
-    copied_script.parent.mkdir(parents=True)
-    copied_script.write_text(BUILD_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    copied_script = _copy_build_script_fixture(repo)
     pyproject = repo / "backend" / "pyproject.toml"
     pyproject.parent.mkdir(parents=True)
     pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")

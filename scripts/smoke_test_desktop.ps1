@@ -6,6 +6,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+$packagingCommonScript = Join-Path $PSScriptRoot "desktop_packaging_common.ps1"
+. $packagingCommonScript
 if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
     $ExecutablePath = Join-Path $repoRoot "dist-desktop\ModWatcherAgent\ModWatcherAgent.exe"
 }
@@ -38,18 +40,7 @@ function Get-PackagedDesktopProcesses {
 function Assert-NoRuntimeDataInBundle {
     param([string]$BundleRoot)
 
-    $forbidden = @(
-        Get-ChildItem -LiteralPath $BundleRoot -Recurse -Force -File | Where-Object {
-            $name = $_.Name.ToLowerInvariant()
-            $name -eq ".env" -or
-            $name.StartsWith(".env.") -or
-            $name -match '\.(db|sqlite|sqlite3)(-.+)?$' -or
-            $name.EndsWith(".log")
-        }
-    )
-    if ($forbidden.Count -gt 0) {
-        throw "Runtime data escaped into the packaged bundle: $($forbidden.FullName -join ', ')"
-    }
+    Assert-CleanDesktopBundleTree -Root $BundleRoot -Context "packaged bundle"
 }
 
 function Remove-SmokeDirectory {
@@ -92,6 +83,8 @@ function Assert-RequiredDesktopRuntimeFiles {
 }
 
 Assert-RequiredDesktopRuntimeFiles -BundleRoot $executableDir
+Assert-NoRuntimeDataInBundle -BundleRoot $executableDir
+Assert-X64PortableExecutable -Path $resolvedExecutablePath
 if ((Get-PackagedDesktopProcesses -TargetPath $resolvedExecutablePath).Count -gt 0) {
     throw "Packaged desktop is already running: $resolvedExecutablePath"
 }
