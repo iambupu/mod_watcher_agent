@@ -31,6 +31,8 @@ _SMOKE_HOST = "127.0.0.1"
 _SMOKE_READY_TIMEOUT_SECONDS = 30.0
 _SMOKE_HTTP_TIMEOUT_SECONDS = 5.0
 _SMOKE_STOP_TIMEOUT_SECONDS = 10
+_SMOKE_PORT_ENVIRONMENT_VARIABLE = "MW_SMOKE_PORT"
+_SMOKE_PORT_MARKER_NAME = "smoke-port-used.txt"
 _DESKTOP_ENVIRONMENT_KEYS = (
     "MW_DESKTOP_MODE",
     "MW_USER_DATA_DIR",
@@ -40,6 +42,7 @@ _DESKTOP_ENVIRONMENT_KEYS = (
     "MW_SNAPSHOT_ROOT",
     "MW_ENV_FILE",
     "GAME_ALIAS_FILE",
+    _SMOKE_PORT_ENVIRONMENT_VARIABLE,
     "MW_BIND_HOST",
     "MW_ALLOW_LAN",
     "LOCAL_ONLY_API",
@@ -91,10 +94,38 @@ def select_available_loopback_port() -> int:
         return int(listener.getsockname()[1])
 
 
+def select_smoke_port() -> int:
+    """Use the explicit packaged-smoke port when supplied, otherwise pick one."""
+    raw_port = os.getenv(_SMOKE_PORT_ENVIRONMENT_VARIABLE)
+    if raw_port is None:
+        return select_available_loopback_port()
+    if not raw_port or not raw_port.isascii() or not raw_port.isdecimal():
+        raise DesktopSmokeError(
+            "MW_SMOKE_PORT must be an ASCII decimal integer between 1 and 65535"
+        )
+    port = int(raw_port, 10)
+    if not 1 <= port <= 65535:
+        raise DesktopSmokeError("MW_SMOKE_PORT must be between 1 and 65535")
+    return port
+
+
 def build_smoke_server(host: str, port: int) -> Any:
     from app.desktop.backend_server import EmbeddedBackendServer
 
     return EmbeddedBackendServer(host=host, port=port)
+
+
+def _record_smoke_port(paths: RuntimePaths, port: int) -> None:
+    marker = f"MW_SMOKE_PORT_USED={port}"
+    runtime_dir = Path(getattr(paths, "runtime_dir", Path(paths.user_root) / "runtime"))
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / _SMOKE_PORT_MARKER_NAME).write_text(
+        f"{marker}\n",
+        encoding="ascii",
+    )
+    stdout = getattr(sys, "stdout", None)
+    if stdout is not None:
+        print(marker, file=stdout, flush=True)
 
 
 def release_smoke_runtime_resources(paths: RuntimePaths) -> None:
@@ -149,7 +180,7 @@ def run_smoke_test(
 ) -> int:
     """Start the real embedded backend and verify health plus the SPA root."""
 
-    choose_port = port_selector or select_available_loopback_port
+    choose_port = port_selector or select_smoke_port
     make_server = server_factory or build_smoke_server
     make_client = client_factory or httpx.Client
     port = choose_port()
@@ -184,6 +215,7 @@ def run_smoke_test(
             root_response = client.get("/")
             if root_response.status_code != 200:
                 raise DesktopSmokeError("Desktop smoke root check failed")
+        _record_smoke_port(paths, port)
         return 0
     except BaseException as exc:
         primary_error = exc

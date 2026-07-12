@@ -82,6 +82,20 @@ function Assert-RequiredDesktopRuntimeFiles {
     }
 }
 
+function Get-AvailableSmokePort {
+    $listener = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        0
+    )
+    try {
+        $listener.Start()
+        return [int]$listener.LocalEndpoint.Port
+    }
+    finally {
+        $listener.Stop()
+    }
+}
+
 Assert-RequiredDesktopRuntimeFiles -BundleRoot $executableDir
 Assert-NoRuntimeDataInBundle -BundleRoot $executableDir
 Assert-X64PortableExecutable -Path $resolvedExecutablePath
@@ -94,13 +108,14 @@ $smokeRoot = Join-Path $systemTemp "ModWatcherAgent-smoke-$([guid]::NewGuid().To
 $userDataRoot = Join-Path $smokeRoot "user-data"
 $stdoutPath = Join-Path $smokeRoot "stdout.txt"
 $stderrPath = Join-Path $smokeRoot "stderr.txt"
+$smokePort = Get-AvailableSmokePort
+$portMarkerPath = Join-Path $userDataRoot "runtime\smoke-port-used.txt"
 $previousUserData = $env:MW_USER_DATA_DIR
 $hadPreviousUserData = Test-Path Env:MW_USER_DATA_DIR
 $process = $null
 $processStarted = $false
 $stdoutTask = $null
 $stderrTask = $null
-$observedPorts = [System.Collections.Generic.HashSet[int]]::new()
 
 try {
     New-Item -ItemType Directory -Force -Path $userDataRoot | Out-Null
@@ -114,6 +129,7 @@ try {
     $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.EnvironmentVariables["MW_SMOKE_PORT"] = [string]$smokePort
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     if (-not $process.Start()) {
@@ -128,15 +144,6 @@ try {
         if ($stopwatch.Elapsed.TotalSeconds -gt $TimeoutSeconds) {
             throw "Packaged smoke test timed out after $TimeoutSeconds seconds"
         }
-        $targetPids = @(
-            Get-PackagedDesktopProcesses -TargetPath $resolvedExecutablePath |
-                ForEach-Object { [int]$_.ProcessId }
-        )
-        if ($targetPids.Count -gt 0) {
-            Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-                Where-Object { $_.OwningProcess -in $targetPids } |
-                ForEach-Object { $null = $observedPorts.Add([int]$_.LocalPort) }
-        }
         Start-Sleep -Milliseconds 50
         $process.Refresh()
     }
@@ -150,27 +157,36 @@ try {
         throw "Packaged smoke test failed with exit code ${exitCode}: $capturedStderr"
     }
 
+    $expectedPortMarker = "MW_SMOKE_PORT_USED=$smokePort"
+    $stdoutMarkerMatches = @(
+        $capturedStdout -split "\r?\n" | Where-Object { $_ -eq $expectedPortMarker }
+    ).Count -gt 0
+    $fileMarkerMatches = $false
+    if (Test-Path -LiteralPath $portMarkerPath -PathType Leaf) {
+        $fileMarkerMatches = (
+            (Get-Content -LiteralPath $portMarkerPath -Raw).Trim() -eq $expectedPortMarker
+        )
+    }
+    if (-not $stdoutMarkerMatches -and -not $fileMarkerMatches) {
+        throw "Packaged smoke test did not report the expected port marker: $expectedPortMarker"
+    }
+
     $remainingProcesses = @(Get-PackagedDesktopProcesses -TargetPath $resolvedExecutablePath)
     if ($remainingProcesses.Count -gt 0) {
         throw "Packaged smoke process residue detected: $($remainingProcesses.ProcessId -join ', ')"
     }
-    if ($observedPorts.Count -eq 0) {
-        throw "Packaged smoke test did not expose an observable loopback port"
+    $listener = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        $smokePort
+    )
+    try {
+        $listener.Start()
     }
-    foreach ($port in $observedPorts) {
-        $listener = [System.Net.Sockets.TcpListener]::new(
-            [System.Net.IPAddress]::Loopback,
-            $port
-        )
-        try {
-            $listener.Start()
-        }
-        catch {
-            throw "Packaged smoke loopback port was not released: $port"
-        }
-        finally {
-            $listener.Stop()
-        }
+    catch {
+        throw "Packaged smoke loopback port was not released: $smokePort"
+    }
+    finally {
+        $listener.Stop()
     }
 
     $databasePath = Join-Path $userDataRoot "data\mod_watcher.db"
@@ -189,7 +205,7 @@ try {
     Assert-NoRuntimeDataInBundle -BundleRoot $executableDir
 
     Write-Host "Packaged smoke test passed." -ForegroundColor Green
-    Write-Host "Observed ports: $(@($observedPorts) -join ', ')" -ForegroundColor Gray
+    Write-Host "Smoke port: $smokePort" -ForegroundColor Gray
     Write-Host "Isolated database: $databasePath" -ForegroundColor Gray
     Write-Host "Isolated desktop log: $desktopLogPath" -ForegroundColor Gray
 }

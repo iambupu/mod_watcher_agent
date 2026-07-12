@@ -531,10 +531,11 @@ def test_build_script_has_safe_parameters_quality_gates_and_clean_build() -> Non
     assert "installer" in lowered and "not" in lowered
 
 
-def test_smoke_script_is_isolated_bounded_and_checks_cleanup() -> None:
+def test_smoke_script_uses_explicit_port_handshake_and_checks_cleanup() -> None:
     summary = _powershell_ast(SMOKE_SCRIPT)
     assert {"ExecutablePath", "TimeoutSeconds"}.issubset(set(summary["parameters"]))
-    assert {"Get-NetTCPConnection", "Remove-Item"}.issubset(set(summary["commands"]))
+    assert "Remove-Item" in set(summary["commands"])
+    assert "Get-NetTCPConnection" not in set(summary["commands"])
     text = SMOKE_SCRIPT.read_text(encoding="utf-8")
     lowered = text.lower()
     assert re.search(r'\$ErrorActionPreference\s*=\s*["\']Stop["\']', text)
@@ -543,14 +544,20 @@ def test_smoke_script_is_isolated_bounded_and_checks_cleanup() -> None:
     assert "--smoke-test" in text
     assert "System.Diagnostics.ProcessStartInfo" in text
     assert "CreateNoWindow" in text
+    assert "System.Net.Sockets.TcpListener" in text
+    assert 'EnvironmentVariables["MW_SMOKE_PORT"]' in text
+    assert "MW_SMOKE_PORT_USED=" in text
+    assert "smoke-port-used.txt" in text
     assert "ReadToEndAsync" in text
     assert "$exitCode = $process.ExitCode" in text
     assert "Start-Process" not in text
     assert "exitcode" in lowered
     assert "mod_watcher.db" in lowered
     assert "desktop.log" in lowered
-    assert "get-nettcpconnection" in lowered
-    assert "localport" in lowered
+    assert "get-nettcpconnection" not in lowered
+    assert "observedports" not in lowered
+    assert "localendpoint" in lowered
+    assert "loopback port was not released" in lowered
     assert "finally" in lowered
     assert "remove-item" in lowered
     assert "node" not in lowered

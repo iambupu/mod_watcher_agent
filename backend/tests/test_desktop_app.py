@@ -587,6 +587,86 @@ def test_smoke_runner_uses_available_port_trust_env_false_and_stops_server(
     assert servers[0][2].thread.is_alive() is False
 
 
+def test_smoke_runner_uses_explicit_environment_port(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _desktop_entry_module()
+    history: list[str] = []
+    server_addresses: list[tuple[str, int]] = []
+    paths = SimpleNamespace(user_root=tmp_path, log_dir=tmp_path / "logs")
+    monkeypatch.setenv("MW_SMOKE_PORT", "25432")
+    monkeypatch.setattr(module, "select_available_loopback_port", lambda: 12345)
+
+    def server_factory(host: str, port: int) -> FakeSmokeServer:
+        server_addresses.append((host, port))
+        return FakeSmokeServer(history)
+
+    assert (
+        module.run_smoke_test(
+            paths,
+            server_factory=server_factory,
+            client_factory=lambda **options: FakeSmokeClient(history, **options),
+        )
+        == 0
+    )
+
+    assert server_addresses == [("127.0.0.1", 25432)]
+
+
+@pytest.mark.parametrize(
+    "invalid_port",
+    ["", " ", "0", "65536", "1.5", "+123", "-1", "１２３"],
+)
+def test_smoke_runner_rejects_invalid_environment_port_before_server_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    invalid_port: str,
+) -> None:
+    module = _desktop_entry_module()
+    server_addresses: list[tuple[str, int]] = []
+    paths = SimpleNamespace(user_root=tmp_path, log_dir=tmp_path / "logs")
+    monkeypatch.setenv("MW_SMOKE_PORT", invalid_port)
+
+    def server_factory(host: str, port: int) -> FakeSmokeServer:
+        server_addresses.append((host, port))
+        return FakeSmokeServer([])
+
+    with pytest.raises(module.DesktopSmokeError, match="MW_SMOKE_PORT"):
+        module.run_smoke_test(
+            paths,
+            server_factory=server_factory,
+            client_factory=lambda **options: FakeSmokeClient([], **options),
+        )
+
+    assert server_addresses == []
+
+
+def test_smoke_runner_records_machine_readable_used_port_marker(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    module = _desktop_entry_module()
+    history: list[str] = []
+    paths = SimpleNamespace(user_root=tmp_path, log_dir=tmp_path / "logs")
+
+    assert (
+        module.run_smoke_test(
+            paths,
+            server_factory=lambda _host, _port: FakeSmokeServer(history),
+            client_factory=lambda **options: FakeSmokeClient(history, **options),
+            port_selector=lambda: 24680,
+        )
+        == 0
+    )
+
+    marker = "MW_SMOKE_PORT_USED=24680"
+    assert marker in capsys.readouterr().out.splitlines()
+    assert (tmp_path / "runtime" / "smoke-port-used.txt").read_text(
+        encoding="ascii"
+    ).strip() == marker
+
+
 def test_smoke_runner_failure_still_stops_and_joins_backend(tmp_path: Path) -> None:
     module = _desktop_entry_module()
     history: list[str] = []
