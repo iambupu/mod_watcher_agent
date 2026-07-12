@@ -53,6 +53,7 @@ def init_db() -> None:
         from alembic import command
 
         cfg = AlembicConfig(str(alembic_ini))
+        cfg.attributes["configure_logger"] = False
         cfg.set_main_option("script_location", str(alembic_ini.parent / "alembic"))
         inspector = inspect(engine)
         has_alembic_version = inspector.has_table("alembic_version")
