@@ -155,6 +155,32 @@ def test_file_release_error_still_makes_subsequent_release_a_noop(
     assert len(backend.released) == 1
 
 
+def test_file_lock_diagnostic_retries_short_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _single_instance_module()
+    lock_path = tmp_path / "desktop.lock"
+    diagnostic = b"12345:abcdef"
+    descriptor = module.os.open(
+        lock_path,
+        module.os.O_CREAT | module.os.O_RDWR,
+        0o600,
+    )
+    real_write = module.os.write
+
+    def write_one_byte(target: int, data: bytes | memoryview) -> int:
+        return real_write(target, bytes(data[:1]))
+
+    monkeypatch.setattr(module.os, "write", write_one_byte)
+    try:
+        module._write_lock_diagnostic(descriptor, diagnostic)
+    finally:
+        module.os.close(descriptor)
+
+    assert lock_path.read_bytes() == diagnostic
+
+
 def test_file_fallback_holds_the_backend_lock_until_release(tmp_path: Path) -> None:
     module = _single_instance_module()
     lock_path = tmp_path / "desktop.lock"

@@ -55,7 +55,12 @@ def _open_lock_file(path: Path) -> int:
 
 def _write_lock_diagnostic(descriptor: int, diagnostic: bytes) -> None:
     os.lseek(descriptor, 0, os.SEEK_SET)
-    os.write(descriptor, diagnostic)
+    remaining = memoryview(diagnostic)
+    while remaining:
+        written = os.write(descriptor, remaining)
+        if written <= 0:
+            raise OSError(errno.EIO, "Unable to write the desktop lock diagnostic")
+        remaining = remaining[written:]
     os.ftruncate(descriptor, len(diagnostic))
 
 
