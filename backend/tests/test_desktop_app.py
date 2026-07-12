@@ -380,6 +380,8 @@ def test_entry_start_failure_shows_native_error_and_releases_everything(
     assert guard.release_calls == 1
     assert messages and messages[0][0] == "Mod Watcher Agent"
     assert "WebView2 unavailable" in messages[0][1]
+    assert "未检测到可用的 Microsoft Edge WebView2 Runtime" in messages[0][1]
+    assert "https://developer.microsoft.com/microsoft-edge/webview2/" in messages[0][1]
 
 
 def test_entry_migration_failure_releases_guard_without_building_controller(
@@ -455,6 +457,28 @@ def test_native_error_adapter_uses_injected_windows_message_box() -> None:
     assert len(calls) == 1
     assert calls[0][:2] == ("Mod Watcher Agent", "WebView2 Runtime 缺失")
     assert calls[0][2] & 0x10
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "WebView2 Runtime unavailable",
+        "EdgeChromium backend could not start",
+    ],
+)
+def test_webview2_startup_error_formatter_is_native_actionable_and_gui_free(
+    detail: str,
+) -> None:
+    module = _desktop_errors_module()
+
+    message = module.format_desktop_startup_error(RuntimeError(detail))
+
+    assert message.startswith("桌面客户端启动失败：")
+    assert "未检测到可用的 Microsoft Edge WebView2 Runtime" in message
+    assert "请从 Microsoft 官方页面安装" in message
+    assert "https://developer.microsoft.com/microsoft-edge/webview2/" in message
+    assert detail in message
+    assert "webview" not in sys.modules
 
 
 class FakeSmokeThread:

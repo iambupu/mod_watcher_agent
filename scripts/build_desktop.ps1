@@ -4,7 +4,9 @@ param(
     [switch]$SkipSmokeTest,
     [switch]$SkipPortable,
     [switch]$SkipInstaller,
-    [string]$PythonExecutable = ""
+    [string]$PythonExecutable = "",
+    [string]$IsccPath = "",
+    [string]$WebView2BootstrapperPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +19,8 @@ $distRoot = Join-Path $repoRoot "dist-desktop"
 $workRoot = Join-Path $repoRoot "build-desktop"
 $smokeScript = Join-Path $PSScriptRoot "smoke_test_desktop.ps1"
 $portableScript = Join-Path $PSScriptRoot "package_portable.ps1"
+$installerScript = Join-Path $repoRoot "packaging\installer\ModWatcherAgent.iss"
+$releaseRoot = Join-Path $repoRoot "release"
 $requiredDesktopRuntimeFiles = @(
     "_internal\webview\lib\Microsoft.Web.WebView2.Core.dll",
     "_internal\webview\lib\Microsoft.Web.WebView2.WinForms.dll",
@@ -32,6 +36,371 @@ function Resolve-CommandPath {
     }
     $command = Get-Command $CommandOrPath -ErrorAction Stop
     return $command.Source
+}
+
+function Get-ProjectVersion {
+    param([string]$PyprojectPath)
+
+    foreach ($line in Get-Content -LiteralPath $PyprojectPath) {
+        if ($line -match '^\s*version\s*=\s*"([^"]+)"\s*$') {
+            return $Matches[1]
+        }
+    }
+    throw "Unable to read the project version from $PyprojectPath"
+}
+
+function Test-SafeReleaseVersion {
+    param([string]$Version)
+
+    if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+        throw "Unsafe project version for release artifact names: $Version"
+    }
+    return $Version
+}
+
+function Resolve-IsccPath {
+    param([string]$ExplicitPath)
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        if (-not (Test-Path -LiteralPath $ExplicitPath -PathType Leaf)) {
+            throw "The explicit ISCC path does not exist: $ExplicitPath"
+        }
+        $resolvedExplicitPath = (Resolve-Path -LiteralPath $ExplicitPath).Path
+        if (-not (Split-Path -Leaf $resolvedExplicitPath).Equals(
+            "ISCC.exe",
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "The explicit compiler path must point to ISCC.exe: $resolvedExplicitPath"
+        }
+        return $resolvedExplicitPath
+    }
+
+    $pathCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($null -ne $pathCommand) {
+        return $pathCommand.Source
+    }
+
+    $candidatePaths = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $candidatePaths += Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+        $candidatePaths += Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"
+    }
+    $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
+        $candidatePaths += Join-Path $programFilesX86 "Inno Setup 6\ISCC.exe"
+    }
+    foreach ($candidatePath in $candidatePaths) {
+        if (Test-Path -LiteralPath $candidatePath -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidatePath).Path
+        }
+    }
+
+    throw (
+        "ISCC.exe was not found. Install Inno Setup 6 from " +
+        "https://jrsoftware.org/isdl.php, pass -IsccPath, or use -SkipInstaller."
+    )
+}
+
+function Test-WebView2BootstrapperIdentity {
+    param(
+        [string]$OriginalFilename,
+        [string]$ProductName
+    )
+
+    if ($OriginalFilename.Equals(
+        "MicrosoftEdgeUpdateSetup.exe",
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        return $ProductName.Equals(
+            "Microsoft Edge Update",
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    }
+    if ($OriginalFilename.Equals(
+        "MicrosoftEdgeWebview2Setup.exe",
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        return $ProductName -match '(?i)WebView2'
+    }
+    return $false
+}
+
+function Resolve-WebView2BootstrapperPath {
+    param([string]$ExplicitPath)
+
+    if ([string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        return $null
+    }
+    if (-not (Test-Path -LiteralPath $ExplicitPath -PathType Leaf)) {
+        throw "The WebView2 bootstrapper does not exist: $ExplicitPath"
+    }
+    $resolvedPath = (Resolve-Path -LiteralPath $ExplicitPath).Path
+    $leaf = Split-Path -Leaf $resolvedPath
+    if (-not $leaf.Equals(
+        "MicrosoftEdgeWebview2Setup.exe",
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "The bootstrapper must be named MicrosoftEdgeWebview2Setup.exe: $resolvedPath"
+    }
+
+    $securityModulePath = Join-Path `
+        $PSHOME `
+        "Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
+    Import-Module -Name $securityModulePath -ErrorAction Stop
+    $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature `
+        -LiteralPath $resolvedPath
+    $signerSubject = if ($null -ne $signature.SignerCertificate) {
+        $signature.SignerCertificate.Subject
+    }
+    else {
+        ""
+    }
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        $signerSubject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
+        throw "The WebView2 bootstrapper must have a valid Microsoft Corporation signature."
+    }
+
+    $fileVersionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($resolvedPath)
+    $originalFilename = [string]$fileVersionInfo.OriginalFilename
+    $productName = [string]$fileVersionInfo.ProductName
+    if (-not (Test-WebView2BootstrapperIdentity `
+        -OriginalFilename $originalFilename `
+        -ProductName $productName
+    )) {
+        throw (
+            "WebView2 bootstrapper identity mismatch: " +
+            "OriginalFilename='$originalFilename', ProductName='$productName'."
+        )
+    }
+    return $resolvedPath
+}
+
+function Get-Sha256Hex {
+    param([string]$Path)
+
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $hashBytes = $sha256.ComputeHash($stream)
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
+    finally {
+        $sha256.Dispose()
+    }
+    return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
+}
+
+function Resolve-ControlledReleaseRoot {
+    param(
+        [string]$RepoRoot,
+        [string]$ReleaseRoot
+    )
+
+    $fullRepoRoot = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd("\", "/")
+    $fullReleaseRoot = [System.IO.Path]::GetFullPath($ReleaseRoot).TrimEnd("\", "/")
+    $expectedReleaseRoot = [System.IO.Path]::GetFullPath(
+        (Join-Path $fullRepoRoot "release")
+    ).TrimEnd("\", "/")
+    if (-not $fullReleaseRoot.Equals(
+        $expectedReleaseRoot,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Release output must be the repository's direct release directory: $fullReleaseRoot"
+    }
+    if (-not (Test-Path -LiteralPath $fullRepoRoot -PathType Container)) {
+        throw "Repository root does not exist: $fullRepoRoot"
+    }
+
+    $repoItem = Get-Item -LiteralPath $fullRepoRoot -Force
+    if ($repoItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Repository root is a reparse point and cannot anchor release output: $fullRepoRoot"
+    }
+    $resolvedRepoRoot = (Resolve-Path -LiteralPath $fullRepoRoot).Path.TrimEnd("\", "/")
+    if (-not $resolvedRepoRoot.Equals(
+        $fullRepoRoot,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Resolved repository root changed unexpectedly: $resolvedRepoRoot"
+    }
+
+    if (Test-Path -LiteralPath $fullReleaseRoot) {
+        if (-not (Test-Path -LiteralPath $fullReleaseRoot -PathType Container)) {
+            throw "Release output exists but is not a directory: $fullReleaseRoot"
+        }
+    }
+    else {
+        New-Item -ItemType Directory -Path $fullReleaseRoot | Out-Null
+    }
+
+    $releaseItem = Get-Item -LiteralPath $fullReleaseRoot -Force
+    if ($releaseItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Release output directory is a reparse point: $fullReleaseRoot"
+    }
+    $resolvedReleaseRoot = (Resolve-Path -LiteralPath $fullReleaseRoot).Path.TrimEnd("\", "/")
+    $resolvedReleaseParent = (Split-Path -Parent $resolvedReleaseRoot).TrimEnd("\", "/")
+    if (-not $resolvedReleaseRoot.Equals(
+        $fullReleaseRoot,
+        [System.StringComparison]::OrdinalIgnoreCase
+    ) -or -not $resolvedReleaseParent.Equals(
+        $resolvedRepoRoot,
+        [System.StringComparison]::OrdinalIgnoreCase
+    ) -or -not (Split-Path -Leaf $resolvedReleaseRoot).Equals(
+        "release",
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Resolved release output is not the repository's direct release directory."
+    }
+    return $resolvedReleaseRoot
+}
+
+function Assert-ControlledOutputFile {
+    param(
+        [string]$Path,
+        [string]$ExpectedParent,
+        [string]$ExpectedLeaf
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $fullParent = [System.IO.Path]::GetFullPath((Split-Path -Parent $fullPath)).TrimEnd("\", "/")
+    $fullExpectedParent = [System.IO.Path]::GetFullPath($ExpectedParent).TrimEnd("\", "/")
+    $leaf = Split-Path -Leaf $fullPath
+    if (-not $fullParent.Equals(
+        $fullExpectedParent,
+        [System.StringComparison]::OrdinalIgnoreCase
+    ) -or -not $leaf.Equals(
+        $ExpectedLeaf,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Refusing release file outside the controlled output directory: $fullPath"
+    }
+    if (-not (Test-Path -LiteralPath $fullExpectedParent -PathType Container)) {
+        throw "Controlled release output directory does not exist: $fullExpectedParent"
+    }
+    $parentItem = Get-Item -LiteralPath $fullExpectedParent -Force
+    if ($parentItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Controlled release output directory is a reparse point: $fullExpectedParent"
+    }
+    $resolvedParent = (Resolve-Path -LiteralPath $fullExpectedParent).Path.TrimEnd("\", "/")
+    if (-not $resolvedParent.Equals(
+        $fullExpectedParent,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Resolved release output directory changed unexpectedly: $resolvedParent"
+    }
+    return $fullPath
+}
+
+function Remove-ControlledFile {
+    param(
+        [string]$Path,
+        [string]$ExpectedParent,
+        [string]$ExpectedLeaf
+    )
+
+    $controlledPath = Assert-ControlledOutputFile `
+        -Path $Path `
+        -ExpectedParent $ExpectedParent `
+        -ExpectedLeaf $ExpectedLeaf
+    if (Test-Path -LiteralPath $controlledPath) {
+        Remove-Item -LiteralPath $controlledPath -Force
+    }
+}
+
+function Test-ForbiddenInstallerPath {
+    param(
+        [string]$RelativePath,
+        [bool]$IsDirectory
+    )
+
+    $normalized = $RelativePath.Replace("\", "/").Trim("/")
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return $false
+    }
+    $parts = @($normalized.Split("/") | Where-Object { $_ })
+    $directoryCount = if ($IsDirectory) { $parts.Count } else { [Math]::Max(0, $parts.Count - 1) }
+    $forbiddenDirectories = @(
+        "data",
+        "logs",
+        "browser_profiles",
+        "snapshots",
+        "cache",
+        "tests",
+        "test",
+        ".pytest_cache",
+        "__pycache__"
+    )
+    for ($index = 0; $index -lt $directoryCount; $index++) {
+        if ($forbiddenDirectories -contains $parts[$index].ToLowerInvariant()) {
+            return $true
+        }
+    }
+    if ($IsDirectory) {
+        return $false
+    }
+
+    $fileNameLower = $parts[-1].ToLowerInvariant()
+    if ($fileNameLower -eq ".env" -or $fileNameLower.StartsWith(".env.")) {
+        return $true
+    }
+    if ($fileNameLower -match '\.(db|sqlite|sqlite3)([-.].*)?$' -or
+        $fileNameLower -match '\.log([-.].*)?$') {
+        return $true
+    }
+    if ($fileNameLower -match '^(id_rsa|id_ed25519|credentials\.json|secrets?\.json|private\.key)$') {
+        return $true
+    }
+    return $false
+}
+
+function Assert-CleanInstallerSource {
+    param([string]$Root)
+
+    $resolvedRoot = (Resolve-Path -LiteralPath $Root).Path.TrimEnd("\", "/")
+    $forbidden = @(
+        Get-ChildItem -LiteralPath $resolvedRoot -Recurse -Force | Where-Object {
+            $relative = $_.FullName.Substring($resolvedRoot.Length).TrimStart("\", "/")
+            Test-ForbiddenInstallerPath -RelativePath $relative -IsDirectory $_.PSIsContainer
+        }
+    )
+    if ($forbidden.Count -gt 0) {
+        $relativeNames = @(
+            $forbidden | ForEach-Object {
+                $_.FullName.Substring($resolvedRoot.Length).TrimStart("\", "/")
+            }
+        )
+        throw "Forbidden installer source content detected: $($relativeNames -join ', ')"
+    }
+}
+
+function Assert-CleanPortableArchive {
+    param([string]$ArchivePath)
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+    try {
+        $forbiddenEntries = @(
+            $archive.Entries | Where-Object {
+                Test-ForbiddenInstallerPath `
+                    -RelativePath $_.FullName `
+                    -IsDirectory ([string]::IsNullOrEmpty($_.Name))
+            }
+        )
+        if ($forbiddenEntries.Count -gt 0) {
+            throw "Forbidden portable ZIP content detected: $($forbiddenEntries.FullName -join ', ')"
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
 }
 
 function Invoke-ExternalCommand {
@@ -52,7 +421,7 @@ function Invoke-ExternalCommand {
         Pop-Location
     }
     if ($exitCode -ne 0) {
-        Write-Error "$DisplayName failed with exit code $exitCode"
+        [Console]::Error.WriteLine("$DisplayName failed with exit code $exitCode")
         exit $exitCode
     }
 }
@@ -95,6 +464,26 @@ function Assert-RequiredDesktopRuntimeFiles {
             throw "Missing required desktop runtime file: $requiredPath"
         }
     }
+}
+
+$appVersion = Test-SafeReleaseVersion -Version (
+    Get-ProjectVersion -PyprojectPath (Join-Path $backendRoot "pyproject.toml")
+)
+$resolvedReleaseRoot = $null
+if (-not $SkipPortable -or -not $SkipInstaller) {
+    $resolvedReleaseRoot = Resolve-ControlledReleaseRoot `
+        -RepoRoot $repoRoot `
+        -ReleaseRoot $releaseRoot
+}
+$resolvedIsccPath = $null
+$resolvedWebView2BootstrapperPath = $null
+if (-not $SkipInstaller) {
+    $resolvedIsccPath = Resolve-IsccPath -ExplicitPath $IsccPath
+    $resolvedWebView2BootstrapperPath = Resolve-WebView2BootstrapperPath `
+        -ExplicitPath $WebView2BootstrapperPath
+}
+elseif (-not [string]::IsNullOrWhiteSpace($WebView2BootstrapperPath)) {
+    throw "-WebView2BootstrapperPath cannot be used together with -SkipInstaller."
 }
 
 if ([string]::IsNullOrWhiteSpace($PythonExecutable)) {
@@ -253,17 +642,92 @@ if (-not $SkipPortable) {
             "-File",
             $portableScript,
             "-ExecutableDir",
-            $executableDir
+            $executableDir,
+            "-OutputDir",
+            $resolvedReleaseRoot,
+            "-Version",
+            $appVersion
         ) `
         -WorkingDirectory $repoRoot `
         -DisplayName "package_portable.ps1"
+
+    $portablePath = Join-Path `
+        $resolvedReleaseRoot `
+        "ModWatcherAgent-$appVersion-win-x64-portable.zip"
+    if (-not (Test-Path -LiteralPath $portablePath -PathType Leaf)) {
+        throw "Portable packaging did not produce the expected archive: $portablePath"
+    }
+    Assert-CleanPortableArchive -ArchivePath $portablePath
 }
 
 if ($SkipInstaller) {
     Write-Host "[installer] Skipped by -SkipInstaller." -ForegroundColor Gray
 }
 else {
-    Write-Host "[installer] Not produced: installer work belongs to Task 8." -ForegroundColor Yellow
+    if (-not (Test-Path -LiteralPath $installerScript -PathType Leaf)) {
+        throw "Missing Inno Setup script: $installerScript"
+    }
+    Assert-CleanInstallerSource -Root $executableDir
+
+    $resolvedReleaseRoot = Resolve-ControlledReleaseRoot `
+        -RepoRoot $repoRoot `
+        -ReleaseRoot $releaseRoot
+    $installerLeaf = "ModWatcherAgent-Setup-$appVersion-win-x64.exe"
+    $installerPath = Assert-ControlledOutputFile `
+        -Path (Join-Path $resolvedReleaseRoot $installerLeaf) `
+        -ExpectedParent $resolvedReleaseRoot `
+        -ExpectedLeaf $installerLeaf
+    $installerHashLeaf = "$installerLeaf.sha256"
+    $installerHashPath = Assert-ControlledOutputFile `
+        -Path (Join-Path $resolvedReleaseRoot $installerHashLeaf) `
+        -ExpectedParent $resolvedReleaseRoot `
+        -ExpectedLeaf $installerHashLeaf
+    Remove-ControlledFile `
+        -Path $installerPath `
+        -ExpectedParent $resolvedReleaseRoot `
+        -ExpectedLeaf $installerLeaf
+    Remove-ControlledFile `
+        -Path $installerHashPath `
+        -ExpectedParent $resolvedReleaseRoot `
+        -ExpectedLeaf $installerHashLeaf
+
+    $isccArguments = @(
+        "/DAppVersion=$appVersion",
+        "/DSourceDir=$executableDir",
+        "/DOutputDir=$resolvedReleaseRoot"
+    )
+    if ($null -ne $resolvedWebView2BootstrapperPath) {
+        $isccArguments += "/DWebView2BootstrapperPath=$resolvedWebView2BootstrapperPath"
+    }
+    $isccArguments += $installerScript
+    Invoke-ExternalCommand `
+        -FilePath $resolvedIsccPath `
+        -Arguments $isccArguments `
+        -WorkingDirectory $repoRoot `
+        -DisplayName "ISCC.exe ModWatcherAgent.iss"
+
+    $resolvedReleaseRoot = Resolve-ControlledReleaseRoot `
+        -RepoRoot $repoRoot `
+        -ReleaseRoot $releaseRoot
+    $installerPath = Assert-ControlledOutputFile `
+        -Path (Join-Path $resolvedReleaseRoot $installerLeaf) `
+        -ExpectedParent $resolvedReleaseRoot `
+        -ExpectedLeaf $installerLeaf
+    if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+        throw "Inno Setup did not produce the expected installer: $installerPath"
+    }
+    Assert-CleanInstallerSource -Root $executableDir
+    $installerHash = Get-Sha256Hex -Path $installerPath
+    $installerHashPath = Assert-ControlledOutputFile `
+        -Path (Join-Path $resolvedReleaseRoot $installerHashLeaf) `
+        -ExpectedParent $resolvedReleaseRoot `
+        -ExpectedLeaf $installerHashLeaf
+    "$installerHash  $installerLeaf" | Set-Content `
+        -LiteralPath $installerHashPath `
+        -Encoding ascii
+
+    Write-Host "Installer:    $installerPath" -ForegroundColor Green
+    Write-Host "SHA256:       $installerHashPath" -ForegroundColor Green
 }
 
 Write-Host "Desktop onedir build: $executableDir" -ForegroundColor Green

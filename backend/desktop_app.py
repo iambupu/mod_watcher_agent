@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 
 from app.desktop.database_migration import migrate_legacy_database
-from app.desktop.errors import show_native_error
+from app.desktop.errors import format_desktop_startup_error, show_native_error
 from app.desktop.single_instance import SingleInstanceGuard
 from app.runtime_paths import (
     RuntimePaths,
@@ -311,7 +311,7 @@ def _run_normal_desktop() -> int:
             detail = str(error) if error is not None else "桌面生命周期未正常结束"
             show_native_error(
                 _APPLICATION_TITLE,
-                f"桌面客户端启动失败：{detail}",
+                format_desktop_startup_error(detail),
             )
             desktop_logger.error("Desktop controller reported failure: %s", detail)
         return result
@@ -326,7 +326,7 @@ def _run_normal_desktop() -> int:
             desktop_logger.exception("Desktop application failed")
         show_native_error(
             _APPLICATION_TITLE,
-            f"桌面客户端启动失败：{exc}",
+            format_desktop_startup_error(exc),
         )
         return 1
     finally:

@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import tomllib
 import zipfile
@@ -18,11 +19,69 @@ SPEC_PATH = REPO_ROOT / "packaging" / "mod_watcher_agent.spec"
 BUILD_SCRIPT = REPO_ROOT / "scripts" / "build_desktop.ps1"
 SMOKE_SCRIPT = REPO_ROOT / "scripts" / "smoke_test_desktop.ps1"
 PORTABLE_SCRIPT = REPO_ROOT / "scripts" / "package_portable.ps1"
+INSTALLER_SCRIPT = REPO_ROOT / "packaging" / "installer" / "ModWatcherAgent.iss"
+EXPECTED_INSTALLER_APP_ID = "{{B20CFDE2-9822-4BB7-94A7-7B661ACF7FF5}"
+WEBVIEW2_DOWNLOAD_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
 
 
 def _required_file(path: Path) -> Path:
-    assert path.is_file(), f"Missing Task 7 file: {path.relative_to(REPO_ROOT)}"
+    assert path.is_file(), f"Missing required packaging file: {path.relative_to(REPO_ROOT)}"
     return path
+
+
+def _inno_sections(path: Path) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for raw_line in _required_file(path).read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(";"):
+            continue
+        match = re.fullmatch(r"\[([^]]+)]", line)
+        if match:
+            current = match.group(1).casefold()
+            sections.setdefault(current, [])
+        elif current is not None:
+            sections[current].append(line)
+    return sections
+
+
+def _inno_setup_directives(sections: dict[str, list[str]]) -> dict[str, str]:
+    directives: dict[str, str] = {}
+    for line in sections["setup"]:
+        if line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        assert separator, f"Malformed [Setup] directive: {line}"
+        directives[key.strip().casefold()] = value.strip()
+    return directives
+
+
+def _split_inno_parameters(line: str) -> list[str]:
+    parameters: list[str] = []
+    start = 0
+    quoted = False
+    for index, character in enumerate(line):
+        if character == '"':
+            quoted = not quoted
+        elif character == ";" and not quoted:
+            parameters.append(line[start:index].strip())
+            start = index + 1
+    parameters.append(line[start:].strip())
+    return parameters
+
+
+def _inno_entries(sections: dict[str, list[str]], section: str) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for line in sections.get(section.casefold(), []):
+        if line.startswith("#"):
+            continue
+        entry: dict[str, str] = {}
+        for parameter in _split_inno_parameters(line):
+            key, separator, value = parameter.partition(":")
+            assert separator, f"Malformed [{section}] entry: {line}"
+            entry[key.strip().casefold()] = value.strip().strip('"')
+        entries.append(entry)
+    return entries
 
 
 def _assignment(tree: ast.Module, name: str) -> ast.expr:
@@ -143,6 +202,53 @@ $summary | ConvertTo-Json -Compress -Depth 4
     return summary
 
 
+def _invoke_powershell_predicate(
+    path: Path,
+    function_name: str,
+    **arguments: str,
+) -> bool:
+    _required_file(path)
+    assignments = "\n".join(
+        "$invokeArguments['{}'] = '{}'".format(key, value.replace("'", "''"))
+        for key, value in arguments.items()
+    )
+    parser_script = rf"""
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    '{str(path).replace("'", "''")}',
+    [ref]$tokens,
+    [ref]$errors
+)
+if ($errors.Count -gt 0) {{ throw ($errors.Message -join '; ') }}
+$definitions = @($ast.FindAll(
+    {{
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq '{function_name}'
+    }},
+    $true
+))
+if ($definitions.Count -ne 1) {{
+    throw 'Expected exactly one {function_name} function definition.'
+}}
+. ([ScriptBlock]::Create($definitions[0].Extent.Text))
+$invokeArguments = @{{}}
+{assignments}
+[bool](& '{function_name}' @invokeArguments) | ConvertTo-Json -Compress
+"""
+    encoded = base64.b64encode(parser_script.encode("utf-16-le")).decode("ascii")
+    completed = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-EncodedCommand", encoded],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    return bool(json.loads(completed.stdout.strip()))
+
+
 def _run_script(path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -160,6 +266,18 @@ def _run_script(path: Path, *arguments: str) -> subprocess.CompletedProcess[str]
         errors="replace",
         check=False,
     )
+
+
+def _create_directory_junction(link: Path, target: Path) -> None:
+    completed = subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
 def test_spec_semantically_defines_required_onedir_bundle() -> None:
@@ -487,6 +605,346 @@ def test_portable_script_rejects_runtime_data_tests_and_secrets(
 
     assert completed.returncode != 0
     assert "forbidden" in f"{completed.stdout}\n{completed.stderr}".lower()
+
+
+def test_inno_installer_is_stable_per_user_and_installs_only_onedir() -> None:
+    sections = _inno_sections(INSTALLER_SCRIPT)
+    setup = _inno_setup_directives(sections)
+
+    assert setup["appid"] == EXPECTED_INSTALLER_APP_ID
+    assert setup["appversion"] == "{#AppVersion}"
+    assert setup["privilegesrequired"].casefold() == "lowest"
+    assert "privilegesrequiredoverridesallowed" not in setup
+    assert setup["defaultdirname"] == r"{localappdata}\Programs\ModWatcherAgent"
+    assert setup["defaultgroupname"] == "Mod Watcher Agent"
+    assert setup["outputdir"] == "{#OutputDir}"
+    assert setup["outputbasefilename"] == ("ModWatcherAgent-Setup-{#AppVersion}-win-x64")
+    assert setup["uninstallable"].casefold() == "yes"
+    assert setup["uninstalldisplayicon"] == r"{app}\ModWatcherAgent.exe"
+    assert setup["closeapplications"].casefold() == "yes"
+    assert setup["restartapplications"].casefold() == "no"
+    assert setup["appmutex"] == r"Local\ModWatcherAgentDesktop"
+    assert setup["architecturesallowed"].casefold() in {"x64", "x64compatible"}
+
+    files = _inno_entries(sections, "files")
+    bundle_entries = [entry for entry in files if entry.get("destdir") == "{app}"]
+    assert bundle_entries == [
+        {
+            "source": r"{#SourceDir}\*",
+            "destdir": "{app}",
+            "flags": "ignoreversion recursesubdirs createallsubdirs",
+        }
+    ]
+    assert "localappdata" not in "\n".join(sections["files"]).casefold()
+    assert sections.get("uninstalldelete", []) == []
+
+
+def test_inno_installer_creates_per_user_shortcuts_and_optional_launch() -> None:
+    sections = _inno_sections(INSTALLER_SCRIPT)
+    tasks = _inno_entries(sections, "tasks")
+    assert tasks == [
+        {
+            "name": "desktopicon",
+            "description": "{cm:CreateDesktopIcon}",
+            "groupdescription": "{cm:AdditionalIcons}",
+            "flags": "unchecked",
+        }
+    ]
+
+    icons = _inno_entries(sections, "icons")
+    assert {(entry["name"], entry["filename"], entry.get("tasks")) for entry in icons} == {
+        (r"{group}\Mod Watcher Agent", r"{app}\ModWatcherAgent.exe", None),
+        (r"{autodesktop}\Mod Watcher Agent", r"{app}\ModWatcherAgent.exe", "desktopicon"),
+    }
+
+    runs = _inno_entries(sections, "run")
+    launch = next(entry for entry in runs if entry.get("filename") == r"{app}\ModWatcherAgent.exe")
+    assert {"postinstall", "nowait", "skipifsilent"}.issubset(
+        set(launch["flags"].casefold().split())
+    )
+    assert launch["check"] == "IsWebView2RuntimeInstalled"
+
+
+def test_inno_webview2_policy_is_conditional_offline_and_verifies_result() -> None:
+    text = _required_file(INSTALLER_SCRIPT).read_text(encoding="utf-8-sig")
+    sections = _inno_sections(INSTALLER_SCRIPT)
+    lowered = text.casefold()
+    guid = "{f3017226-fe2a-4295-8bdf-00c3a9a7e4c5}"
+
+    conditional_blocks = re.findall(
+        r"#ifdef\s+WebView2BootstrapperPath(?P<body>.*?)#endif",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert len(conditional_blocks) >= 2
+    assert any(
+        "[files]" not in block.casefold() and "microsoftedgewebview2setup.exe" in block.casefold()
+        for block in conditional_blocks
+    )
+    assert "{#WebView2BootstrapperPath}" in text
+    assert "Flags: dontcopy noencryption" in text
+
+    code = "\n".join(sections["code"])
+    assert guid in code.casefold()
+    assert "RegQueryStringValue" in code
+    assert {"HKCU32", "HKCU64", "HKLM32", "HKLM64"}.issubset(
+        set(re.findall(r"\bHK(?:CU|LM)(?:32|64)\b", code))
+    )
+    assert "'pv'" in code
+    assert "StrToVersion" in code
+    assert "0.0.0.0" in code
+    assert "ExtractTemporaryFile('MicrosoftEdgeWebview2Setup.exe')" in code
+    assert "MicrosoftEdgeWebview2Setup.exe /silent /install" in code
+    assert "WebView2InstallExitCode" in code
+    assert "PrepareToInstall" in code
+    assert "Exec(" in code
+    assert "'/silent /install'" in code
+    assert "ewWaitUntilTerminated" in code
+    assert "IsWebView2RuntimeInstalled" in code
+    assert "AnsiString" not in code
+    assert "SaveStringToFile" not in code
+    assert "LoadStringFromFile" not in code
+    assert 'Filename: "{cmd}"' not in text
+    assert WEBVIEW2_DOWNLOAD_URL in text
+    assert "WebView2Missing=未检测到可用的 Microsoft Edge WebView2 Runtime。" in text
+    assert "WizardSilent" in code
+    assert "microsoftedge.exe" not in lowered
+    for forbidden_download in (
+        "downloadtemporaryfile",
+        "downloadtemporaryfilewithprogress",
+        "flags: external download",
+        "invoke-webrequest",
+        "start-bitstransfer",
+    ):
+        assert forbidden_download not in lowered
+
+
+def test_inno_uninstall_requires_two_interactive_confirms_before_exact_data_delete() -> None:
+    sections = _inno_sections(INSTALLER_SCRIPT)
+    code = "\n".join(sections["code"])
+    uninstall_match = re.search(
+        r"procedure\s+CurUninstallStepChanged\s*\([^)]*\)\s*;(?P<body>.*)\Z",
+        code,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert uninstall_match is not None
+    body = uninstall_match.group("body")
+    assert "usPostUninstall" in body
+    assert "UninstallSilent" in body
+    assert body.count("MB_YESNO") >= 2
+    assert body.count("IDYES") >= 2
+    delete_call = re.search(
+        r"DelTree\s*\(\s*ExpandConstant\s*\(\s*'\{localappdata\}\\ModWatcherAgent'\s*\)",
+        code,
+        re.IGNORECASE,
+    )
+    assert delete_call is not None
+    delete_dispatch = body.index("DeleteUserData")
+    assert body.index("UninstallSilent") < delete_dispatch
+    assert body.rfind("IDYES", 0, delete_dispatch) >= 0
+
+
+def test_build_script_compiles_installer_without_network_downloads_and_hashes_it() -> None:
+    summary = _powershell_ast(BUILD_SCRIPT)
+    assert {"IsccPath", "WebView2BootstrapperPath"}.issubset(set(summary["parameters"]))
+    text = BUILD_SCRIPT.read_text(encoding="utf-8")
+    lowered = text.casefold()
+
+    assert "Resolve-IsccPath" in text
+    assert "Get-Command ISCC.exe" in text
+    for common_path in (
+        r"Inno Setup 6\ISCC.exe",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "LOCALAPPDATA",
+    ):
+        assert common_path.casefold() in lowered
+    assert "MicrosoftEdgeWebview2Setup.exe" in text
+    assert "Get-AuthenticodeSignature" in text
+    assert "SignatureStatus]::Valid" in text
+    assert "O=Microsoft Corporation" in text
+    assert "FileVersionInfo" in text
+    assert "OriginalFilename" in text
+    assert "ProductName" in text
+    assert "/DAppVersion=" in text
+    assert "/DSourceDir=" in text
+    assert "/DOutputDir=" in text
+    assert "/DWebView2BootstrapperPath=" in text
+    assert "ModWatcherAgent-Setup-$appVersion-win-x64.exe" in text
+    assert "Get-Sha256Hex" in text
+    assert ".sha256" in text
+    assert "Assert-CleanInstallerSource" in text
+    assert "Test-SafeReleaseVersion" in text
+    assert "Assert-ControlledOutputFile" in text
+    assert "not produced" not in lowered
+    for forbidden_download in (
+        "invoke-webrequest",
+        "start-bitstransfer",
+        "system.net.webclient",
+        "curl.exe",
+    ):
+        assert forbidden_download not in lowered
+
+
+def test_build_script_rejects_unsafe_installer_version_before_tooling(tmp_path: Path) -> None:
+    copied_script = tmp_path / "scripts" / BUILD_SCRIPT.name
+    copied_script.parent.mkdir(parents=True)
+    copied_script.write_text(BUILD_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    pyproject = tmp_path / "backend" / "pyproject.toml"
+    pyproject.parent.mkdir(parents=True)
+    pyproject.write_text('[project]\nversion = "1.2.3/../../escaped"\n', encoding="utf-8")
+
+    completed = _run_script(
+        copied_script,
+        "-SkipTests",
+        "-SkipFrontendBuild",
+        "-SkipSmokeTest",
+        "-SkipPortable",
+    )
+
+    assert completed.returncode != 0
+    output = f"{completed.stdout}\n{completed.stderr}".casefold()
+    assert "unsafe project version" in output
+    assert not (tmp_path / ".venv-desktop-build").exists()
+
+
+def test_build_script_rejects_release_junction_before_any_tool_runs(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    copied_script = repo / "scripts" / BUILD_SCRIPT.name
+    copied_script.parent.mkdir(parents=True)
+    copied_script.write_text(BUILD_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    pyproject = repo / "backend" / "pyproject.toml"
+    pyproject.parent.mkdir(parents=True)
+    pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir()
+    fake_iscc = tools_dir / "ISCC.exe"
+    fake_iscc.write_bytes(b"not executed")
+    fake_python = tools_dir / "python.cmd"
+    fake_python.write_text("@exit /b 99\r\n", encoding="ascii")
+
+    external_release = tmp_path / "external-release"
+    external_release.mkdir()
+    sentinel = external_release / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    release_junction = repo / "release"
+    _create_directory_junction(release_junction, external_release)
+    try:
+        completed = _run_script(
+            copied_script,
+            "-SkipTests",
+            "-SkipFrontendBuild",
+            "-SkipSmokeTest",
+            "-SkipPortable",
+            "-IsccPath",
+            str(fake_iscc),
+            "-PythonExecutable",
+            str(fake_python),
+        )
+
+        assert completed.returncode != 0
+        output = f"{completed.stdout}\n{completed.stderr}".casefold()
+        assert "release" in output and "reparse point" in output
+        assert sentinel.read_text(encoding="utf-8") == "keep"
+        assert not (repo / ".venv-desktop-build").exists()
+    finally:
+        if release_junction.exists():
+            release_junction.rmdir()
+
+
+def test_build_script_preserves_native_tool_exit_code(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    copied_script = repo / "scripts" / BUILD_SCRIPT.name
+    copied_script.parent.mkdir(parents=True)
+    copied_script.write_text(BUILD_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    pyproject = repo / "backend" / "pyproject.toml"
+    pyproject.parent.mkdir(parents=True)
+    pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+    fake_python = tmp_path / "python.cmd"
+    fake_python.write_text("@exit /b 37\r\n", encoding="ascii")
+
+    completed = _run_script(
+        copied_script,
+        "-SkipTests",
+        "-SkipFrontendBuild",
+        "-SkipSmokeTest",
+        "-SkipPortable",
+        "-SkipInstaller",
+        "-PythonExecutable",
+        str(fake_python),
+    )
+
+    assert completed.returncode == 37
+    assert "failed with exit code 37" in f"{completed.stdout}\n{completed.stderr}"
+
+
+def test_build_script_rejects_renamed_microsoft_binary_as_webview2(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    copied_script = repo / "scripts" / BUILD_SCRIPT.name
+    copied_script.parent.mkdir(parents=True)
+    copied_script.write_text(BUILD_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    pyproject = repo / "backend" / "pyproject.toml"
+    pyproject.parent.mkdir(parents=True)
+    pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir()
+    fake_iscc = tools_dir / "ISCC.exe"
+    fake_iscc.write_bytes(b"not executed")
+    fake_python = tools_dir / "python.cmd"
+    fake_python.write_text("@exit /b 99\r\n", encoding="ascii")
+    system_where = Path(r"C:\Windows\System32\where.exe")
+    assert system_where.is_file()
+    renamed_binary = tools_dir / "MicrosoftEdgeWebview2Setup.exe"
+    shutil.copy2(system_where, renamed_binary)
+
+    completed = _run_script(
+        copied_script,
+        "-SkipTests",
+        "-SkipFrontendBuild",
+        "-SkipSmokeTest",
+        "-SkipPortable",
+        "-IsccPath",
+        str(fake_iscc),
+        "-WebView2BootstrapperPath",
+        str(renamed_binary),
+        "-PythonExecutable",
+        str(fake_python),
+    )
+
+    assert completed.returncode != 0
+    output = f"{completed.stdout}\n{completed.stderr}".casefold()
+    assert "webview2 bootstrapper identity" in output
+    assert "where.exe" in output
+    assert not (repo / ".venv-desktop-build").exists()
+
+
+@pytest.mark.parametrize(
+    ("original_filename", "product_name", "expected"),
+    [
+        ("MicrosoftEdgeUpdateSetup.exe", "Microsoft Edge Update", True),
+        ("MicrosoftEdgeWebview2Setup.exe", "Microsoft Edge WebView2 Runtime", True),
+        ("where.exe", "Microsoft® Windows® Operating System", False),
+        ("MicrosoftEdgeUpdateSetup.exe", "Microsoft Edge", False),
+    ],
+)
+def test_webview2_bootstrapper_identity_predicate_accepts_official_metadata_only(
+    original_filename: str,
+    product_name: str,
+    expected: bool,
+) -> None:
+    assert (
+        _invoke_powershell_predicate(
+            BUILD_SCRIPT,
+            "Test-WebView2BootstrapperIdentity",
+            OriginalFilename=original_filename,
+            ProductName=product_name,
+        )
+        is expected
+    )
 
 
 def test_batch_entry_forwards_arguments_and_exit_code() -> None:
