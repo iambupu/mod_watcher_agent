@@ -29,6 +29,9 @@ Thumbs.db
 *.pyc
 *.pyo
 release/
+dist-desktop/
+build-desktop/
+.venv-desktop-build/
 
 # Suggested additions
 # Virtualenvs
