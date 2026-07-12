@@ -17,8 +17,15 @@ class EmbeddedBackendError(RuntimeError):
     """Raised when the embedded backend cannot complete its lifecycle."""
 
 
+class EmbeddedBackendStopTimeoutError(EmbeddedBackendError):
+    """Require process termination when the non-daemon backend thread survives."""
+
+    requires_forced_exit = True
+
+
 class _UvicornServer(Protocol):
     should_exit: bool
+    started: bool
 
     def run(self) -> None: ...
 
@@ -97,8 +104,15 @@ class EmbeddedBackendServer:
                 with self._state_lock:
                     error = self._error
                     thread = self._thread
+                    server = self._server
                 if error is not None or thread is None or not thread.is_alive():
                     return False
+
+                if server is None or not bool(server.started):
+                    remaining = deadline - time.monotonic()
+                    if remaining > 0:
+                        time.sleep(min(_READY_POLL_INTERVAL_SECONDS, remaining))
+                    continue
 
                 remaining = deadline - time.monotonic()
                 request_timeout = min(_HEALTH_REQUEST_TIMEOUT_SECONDS, remaining)
@@ -135,7 +149,7 @@ class EmbeddedBackendServer:
 
         thread.join(max(timeout, 0))
         if thread.is_alive():
-            raise EmbeddedBackendError(
+            raise EmbeddedBackendStopTimeoutError(
                 f"Embedded backend server did not stop within {timeout:g} seconds"
             )
 

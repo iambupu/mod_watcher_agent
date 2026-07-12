@@ -231,6 +231,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out release metadata
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
       - name: Download verified artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -281,13 +286,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          set -euo pipefail
-          tag="$GITHUB_REF_NAME"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" release/* --clobber
-          else
-            gh release create "$tag" release/* \
-              --verify-tag \
-              --generate-notes \
-              --title "Mod Watcher Agent $tag"
-          fi
+          bash scripts/publish_desktop_release.sh \
+            "$GITHUB_REF_NAME" \
+            docs/desktop-release-notes.md \
+            release

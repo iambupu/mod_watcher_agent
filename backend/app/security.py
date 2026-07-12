@@ -165,9 +165,12 @@ class AccessPolicy:
 
     # Endpoints that never require a token (login, logout, status).
     _TOKEN_EXEMPT_PREFIXES = ("/api/auth/",)
+    _TOKEN_EXEMPT_PATHS = frozenset({"/api/health"})
 
     def _token_required(self, path: str) -> bool:
         if not path.startswith("/api/"):
+            return False
+        if path in self._TOKEN_EXEMPT_PATHS:
             return False
         for prefix in self._TOKEN_EXEMPT_PREFIXES:
             if path.startswith(prefix):
@@ -186,7 +189,11 @@ class AccessPolicy:
                 detail="Remote API access is disabled on this instance",
             )
 
-        if self.profile == "shared_lan" and path in CONTROL_ENDPOINTS_SHARED_LAN and not is_local_request(request):
+        if (
+            self.profile == "shared_lan"
+            and path in CONTROL_ENDPOINTS_SHARED_LAN
+            and not is_local_request(request)
+        ):
             return AccessDecision(
                 allow=False,
                 status_code=403,
@@ -236,7 +243,9 @@ def validate_outbound_url(provider: str, base_url: str) -> str:
     parsed = urlparse(resolved)
     scheme = (parsed.scheme or "").lower()
     if scheme not in {"http", "https"}:
-        raise HTTPException(status_code=422, detail=f"Unsupported outbound URL scheme: {scheme or 'empty'}")
+        raise HTTPException(
+            status_code=422, detail=f"Unsupported outbound URL scheme: {scheme or 'empty'}"
+        )
 
     host = _normalize_host(parsed.hostname or "")
     if not host:
@@ -251,15 +260,25 @@ def validate_outbound_url(provider: str, base_url: str) -> str:
     provider_name = (provider or "").strip().lower()
     if provider_name == "ollama":
         if not settings.MW_ALLOW_LOCAL_LLM:
-            raise HTTPException(status_code=422, detail="Local LLM access is disabled by MW_ALLOW_LOCAL_LLM")
+            raise HTTPException(
+                status_code=422, detail="Local LLM access is disabled by MW_ALLOW_LOCAL_LLM"
+            )
         if host not in {"localhost", "127.0.0.1"}:
-            raise HTTPException(status_code=422, detail="Ollama outbound URL must use localhost or 127.0.0.1")
+            raise HTTPException(
+                status_code=422, detail="Ollama outbound URL must use localhost or 127.0.0.1"
+            )
         return resolved
 
     if scheme != "https":
-        raise HTTPException(status_code=422, detail=f"Provider '{provider_name or 'unknown'}' requires https base_url")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Provider '{provider_name or 'unknown'}' requires https base_url",
+        )
 
     if is_private_or_loopback_host(host):
-        raise HTTPException(status_code=422, detail="Private/loopback outbound URL is blocked for non-local providers")
+        raise HTTPException(
+            status_code=422,
+            detail="Private/loopback outbound URL is blocked for non-local providers",
+        )
 
     return resolved

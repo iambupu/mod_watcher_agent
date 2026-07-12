@@ -141,6 +141,8 @@ def _make_controller(
     ready: bool = True,
     tray_available: bool = True,
     stop_error: BaseException | None = None,
+    force_exit: Callable[[int], object] | None = None,
+    flush_logs: Callable[[], object] | None = None,
 ) -> tuple[object, FakeServer, FakeWindow, FakeTray, FakeGuard, list[str]]:
     module = _desktop_controller_module()
     history: list[str] = []
@@ -156,6 +158,8 @@ def _make_controller(
         guard=guard,
         paths=paths,
         ready_timeout=0.25,
+        **({"force_exit": force_exit} if force_exit is not None else {}),
+        **({"flush_logs": flush_logs} if flush_logs is not None else {}),
     )
     return controller, server, window, tray, guard, history
 
@@ -700,6 +704,38 @@ def test_cleanup_continues_when_one_component_stop_fails(tmp_path: Path) -> None
     assert window.destroy_calls == 1
     assert guard.release_calls == 1
     assert controller.shutdown_complete.is_set()
+
+
+def test_backend_stop_timeout_forces_exit_without_releasing_instance_guard(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class ForcedExitRequiredError(RuntimeError):
+        requires_forced_exit = True
+
+    force_exit_codes: list[int] = []
+    controller, server, window, tray, guard, history = _make_controller(
+        tmp_path,
+        stop_error=ForcedExitRequiredError("backend thread did not stop"),
+        force_exit=lambda code: (
+            history.append(f"process.force_exit:{code}"),
+            force_exit_codes.append(code),
+        ),
+        flush_logs=lambda: history.append("logging.flush"),
+    )
+
+    with caplog.at_level("CRITICAL", logger="app.desktop.controller"):
+        controller.shutdown("test")
+
+    assert controller.state is _desktop_controller_module().DesktopState.FAILED
+    assert server.stop_calls == 1
+    assert tray.stop_calls == 1
+    assert window.destroy_calls == 1
+    assert guard.release_calls == 0
+    assert force_exit_codes == [1]
+    assert history.index("window.destroy") < history.index("logging.flush")
+    assert history.index("logging.flush") < history.index("process.force_exit:1")
+    assert "Forcing process exit after embedded backend shutdown timeout" in caplog.text
 
 
 def test_backend_readiness_failure_never_creates_window_and_cleans_up(tmp_path: Path) -> None:

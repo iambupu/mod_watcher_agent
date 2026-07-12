@@ -12,6 +12,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "desktop-release.yml"
+PUBLISH_SCRIPT = REPO_ROOT / "scripts" / "publish_desktop_release.sh"
+RELEASE_NOTES_PATH = REPO_ROOT / "docs" / "desktop-release-notes.md"
 ACTION_PINS = {
     "actions/checkout": "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",  # v7.0.0
     "actions/setup-python": "ece7cb06caefa5fff74198d8649806c4678c61a1",  # v6.3.0
@@ -173,7 +175,7 @@ def test_build_verifies_tag_version_hashes_and_clean_release_artifacts() -> None
     assert "release" in verify_step["run"]
 
 
-def test_artifacts_are_uploaded_and_tag_release_uses_gh_idempotently() -> None:
+def test_artifacts_are_uploaded_and_tag_release_is_immutable_and_idempotent() -> None:
     workflow = _load_workflow()
     build = workflow["jobs"]["build-desktop"]
     upload = next(
@@ -210,10 +212,25 @@ def test_artifacts_are_uploaded_and_tag_release_uses_gh_idempotently() -> None:
     release = _step_by_name(publish, "Publish GitHub release")
     assert release["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert release["env"]["GH_REPO"] == "${{ github.repository }}"
-    assert "gh release view" in release["run"]
-    assert "gh release create" in release["run"]
-    assert "gh release upload" in release["run"]
-    assert "--clobber" in release["run"]
+    assert "scripts/publish_desktop_release.sh" in release["run"]
+    assert "docs/desktop-release-notes.md" in release["run"]
+    assert "--clobber" not in release["run"]
+    assert "--generate-notes" not in release["run"]
+
+
+def test_explicit_release_notes_cover_runtime_data_and_known_limit_guidance() -> None:
+    notes = RELEASE_NOTES_PATH.read_text(encoding="utf-8")
+    for required in (
+        "WebView2",
+        r"%LOCALAPPDATA%\ModWatcherAgent",
+        "卸载",
+        "保留",
+        "备份",
+        "NotSigned",
+        "已知限制",
+    ):
+        assert required in notes
+    assert "GitHub-hosted tag 发布" not in notes
 
 
 def test_every_powershell_workflow_step_is_syntactically_valid(tmp_path: Path) -> None:
@@ -392,3 +409,168 @@ def test_publish_reverification_rejects_cross_referenced_hash_files(
     )
     assert rejected.returncode != 0
     assert "does not reference its matching artifact" in rejected.stderr
+
+
+def _write_fake_gh_wrapper(path: Path) -> None:
+    path.write_text(
+        r"""#!/usr/bin/env bash
+set -euo pipefail
+
+gh() {
+  printf '%s\n' "$*" >> "$FAKE_GH_LOG"
+  [[ "$1" == "release" ]]
+  local operation="$2"
+  local tag="$3"
+  local remote="$FAKE_GH_REMOTE/$tag"
+  shift 3
+  case "$operation" in
+    view)
+      [[ -d "$remote" ]] || return 1
+      if [[ " $* " == *" --json assets "* ]]; then
+        [[ "${FAKE_GH_MODE:-}" != "inventory_failure" ]] || return 9
+        find "$remote" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort
+      fi
+      ;;
+    download)
+      local pattern=""
+      local destination=""
+      while (($#)); do
+        case "$1" in
+          --pattern) pattern="$2"; shift 2 ;;
+          --dir) destination="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      [[ -f "$remote/$pattern" ]] || return 1
+      mkdir -p "$destination"
+      cp "$remote/$pattern" "$destination/$pattern"
+      ;;
+    upload)
+      local asset="$1"
+      local name
+      name="$(basename "$asset")"
+      [[ ! -e "$remote/$name" ]] || return 2
+      cp "$asset" "$remote/$name"
+      ;;
+    edit)
+      ;;
+    create)
+      mkdir -p "$remote"
+      while (($#)); do
+        if [[ -f "$1" && "$1" == */release/* ]]; then
+          cp "$1" "$remote/$(basename "$1")"
+        fi
+        shift
+      done
+      ;;
+    *) return 3 ;;
+  esac
+}
+
+source "$1" "${@:2}"
+""",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+@pytest.mark.parametrize(
+    ("remote_mode", "expected_returncode", "expected_uploads"),
+    [
+        ("matching", 0, 0),
+        ("mismatch", 1, 0),
+        ("missing", 0, 1),
+        ("extra", 1, 0),
+        ("inventory_failure", 1, 0),
+        ("missing_then_mismatch", 1, 0),
+    ],
+)
+def test_publish_script_enforces_immutable_existing_release_assets_with_fake_gh(
+    tmp_path: Path,
+    remote_mode: str,
+    expected_returncode: int,
+    expected_uploads: int,
+) -> None:
+    git_bash = Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Git/bin/bash.exe"
+    if not git_bash.is_file():
+        pytest.skip("Git Bash is required to execute the release publisher")
+
+    publish_script = tmp_path / "publish.sh"
+    publish_script.write_bytes(PUBLISH_SCRIPT.read_bytes())
+    notes_path = tmp_path / "notes.md"
+    notes_path.write_bytes(RELEASE_NOTES_PATH.read_bytes())
+    wrapper = tmp_path / "fake-gh-wrapper.sh"
+    _write_fake_gh_wrapper(wrapper)
+
+    tag = "v9.8.7"
+    release_dir = tmp_path / "release"
+    remote_dir = tmp_path / "remote" / tag
+    release_dir.mkdir()
+    remote_dir.mkdir(parents=True)
+    names = (
+        "ModWatcherAgent-9.8.7-win-x64-portable.zip",
+        "ModWatcherAgent-9.8.7-win-x64-portable.zip.sha256",
+        "ModWatcherAgent-Setup-9.8.7-win-x64.exe",
+        "ModWatcherAgent-Setup-9.8.7-win-x64.exe.sha256",
+    )
+    for index, name in enumerate(names):
+        payload = f"asset-{index}".encode()
+        (release_dir / name).write_bytes(payload)
+        should_skip = (remote_mode == "missing" and index == len(names) - 1) or (
+            remote_mode == "missing_then_mismatch" and index == 0
+        )
+        if not should_skip:
+            remote_payload = (
+                b"changed"
+                if (remote_mode == "mismatch" and index == 0)
+                or (remote_mode == "missing_then_mismatch" and index == 1)
+                else payload
+            )
+            (remote_dir / name).write_bytes(remote_payload)
+    if remote_mode == "extra":
+        (remote_dir / "unexpected-debug.zip").write_bytes(b"unexpected")
+
+    log_path = tmp_path / "gh.log"
+    environment = os.environ.copy()
+    environment["FAKE_GH_REMOTE"] = str(tmp_path / "remote")
+    environment["FAKE_GH_LOG"] = str(log_path)
+    environment["FAKE_GH_MODE"] = remote_mode
+    result = subprocess.run(
+        [
+            str(git_bash),
+            wrapper.name,
+            publish_script.name,
+            tag,
+            notes_path.name,
+            release_dir.name,
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+    assert result.returncode == expected_returncode, result.stderr or result.stdout
+    log = log_path.read_text(encoding="utf-8")
+    assert log.count("release upload") == expected_uploads
+    if remote_mode in {
+        "mismatch",
+        "extra",
+        "inventory_failure",
+        "missing_then_mismatch",
+    }:
+        expected_error = {
+            "mismatch": "immutable release asset mismatch",
+            "extra": "unexpected remote release assets",
+            "inventory_failure": "unable to query remote release assets",
+            "missing_then_mismatch": "immutable release asset mismatch",
+        }[remote_mode]
+        assert expected_error in result.stderr.casefold()
+        if remote_mode == "missing_then_mismatch":
+            assert not (remote_dir / names[0]).exists()
+    else:
+        for name in names:
+            assert (remote_dir / name).read_bytes() == (release_dir / name).read_bytes()

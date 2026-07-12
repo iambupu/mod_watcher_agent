@@ -1386,6 +1386,45 @@ def test_inno_uninstall_requires_two_interactive_confirms_before_exact_data_dele
     assert body.rfind("IDYES", 0, delete_dispatch) >= 0
 
 
+def test_inno_uninstall_removes_only_its_exact_quoted_auto_start_command() -> None:
+    sections = _inno_sections(INSTALLER_SCRIPT)
+    code = "\n".join(sections["code"])
+    cleanup_match = re.search(
+        r"procedure\s+RemoveOwnedAutoStartEntry\s*;(?P<body>.*?)"
+        r"(?=\nprocedure\s+CurUninstallStepChanged)",
+        code,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert cleanup_match is not None
+    cleanup = cleanup_match.group("body")
+    assert "RegQueryStringValue" in cleanup
+    assert "RegDeleteValue" in cleanup
+    assert r"Software\Microsoft\Windows\CurrentVersion\Run" in cleanup
+    assert "ModWatcherAgent" in cleanup
+    assert "ExpandConstant('{app}\\ModWatcherAgent.exe')" in cleanup
+    comparison = re.search(
+        r"CompareText\s*\(\s*RegisteredCommand\s*,\s*ExpectedCommand\s*\)\s*<>\s*0",
+        cleanup,
+        re.IGNORECASE,
+    )
+    assert comparison is not None
+    assert comparison.start() < cleanup.index("RegDeleteValue")
+
+    uninstall_match = re.search(
+        r"procedure\s+CurUninstallStepChanged\s*\([^)]*\)\s*;(?P<body>.*)\Z",
+        code,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert uninstall_match is not None
+    uninstall = uninstall_match.group("body")
+    cleanup_call = uninstall.index("RemoveOwnedAutoStartEntry")
+    assert cleanup_call < uninstall.index("UninstallSilent")
+    assert (
+        "uninsdeletevalue"
+        not in "\n".join(line for section in sections.values() for line in section).casefold()
+    )
+
+
 def test_build_script_compiles_installer_without_network_downloads_and_hashes_it() -> None:
     summary = _powershell_ast(BUILD_SCRIPT)
     assert {"IsccPath", "WebView2BootstrapperPath"}.issubset(set(summary["parameters"]))

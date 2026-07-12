@@ -10,8 +10,10 @@ import tempfile
 import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -51,6 +53,37 @@ _DESKTOP_ENVIRONMENT_KEYS = (
 
 class DesktopSmokeError(RuntimeError):
     """Raised when the isolated desktop smoke check cannot complete."""
+
+
+class _ReactIndexParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.has_root = False
+        self.assets: list[str] = []
+        self._seen_assets: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = {name.casefold(): value for name, value in attrs}
+        if attributes.get("id") == "root":
+            self.has_root = True
+
+        asset: str | None = None
+        if tag.casefold() == "script":
+            asset = attributes.get("src")
+        elif tag.casefold() == "link":
+            relationships = (attributes.get("rel") or "").casefold().split()
+            if "stylesheet" in relationships:
+                asset = attributes.get("href")
+        if not asset:
+            return
+
+        parsed = urlsplit(asset)
+        if parsed.scheme or parsed.netloc:
+            return
+        local_path = urljoin("/", asset)
+        if local_path not in self._seen_assets:
+            self._seen_assets.add(local_path)
+            self.assets.append(local_path)
 
 
 def configure_desktop_logging(paths: RuntimePaths) -> Any:
@@ -211,10 +244,22 @@ def run_smoke_test(
                 or health_payload.get("status") != "ok"
             ):
                 raise DesktopSmokeError("Desktop smoke health check failed")
+            if health_payload.get("frontend") != "ready":
+                raise DesktopSmokeError("Desktop smoke frontend is not ready")
 
             root_response = client.get("/")
-            if root_response.status_code != 200:
-                raise DesktopSmokeError("Desktop smoke root check failed")
+            content_type = root_response.headers.get("content-type", "").casefold()
+            if root_response.status_code != 200 or not content_type.startswith("text/html"):
+                raise DesktopSmokeError("Desktop smoke root did not return React HTML")
+            root_html = root_response.text
+            parser = _ReactIndexParser()
+            parser.feed(root_html)
+            if not root_html.strip() or not parser.has_root or not parser.assets:
+                raise DesktopSmokeError("Desktop smoke root did not contain the React HTML shell")
+            for asset_path in parser.assets:
+                asset_response = client.get(asset_path)
+                if asset_response.status_code != 200 or not asset_response.content:
+                    raise DesktopSmokeError(f"Desktop smoke React asset failed: {asset_path}")
         _record_smoke_port(paths, port)
         return 0
     except BaseException as exc:

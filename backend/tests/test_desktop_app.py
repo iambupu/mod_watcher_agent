@@ -513,18 +513,58 @@ class FakeSmokeServer:
 
 
 class FakeSmokeResponse:
-    def __init__(self, path: str) -> None:
+    def __init__(
+        self,
+        path: str,
+        *,
+        frontend: str = "ready",
+        root_content_type: str = "text/html; charset=utf-8",
+        missing_asset: str | None = None,
+        empty_asset: str | None = None,
+    ) -> None:
         self.path = path
-        self.status_code = 200
+        self.status_code = 404 if path == missing_asset else 200
+        self.headers = {
+            "content-type": root_content_type if path == "/" else "application/octet-stream"
+        }
+        if path == "/":
+            self.text = (
+                '<!doctype html><html><head><link rel="stylesheet" href="/assets/app.css"></head>'
+                '<body><div id="root"></div><script type="module" src="/assets/app.js"></script>'
+                "</body></html>"
+                if root_content_type.startswith("text/html")
+                else '{"service":"Mod Watcher Agent"}'
+            )
+        else:
+            self.text = ""
+        self.content = b"" if path in {empty_asset, "/", "/api/health"} else b"asset-content"
+        self._frontend = frontend
 
     def json(self) -> dict[str, str]:
-        return {"status": "ok"} if self.path == "/api/health" else {"service": "ok"}
+        return (
+            {"status": "ok", "frontend": self._frontend}
+            if self.path == "/api/health"
+            else {"service": "ok"}
+        )
 
 
 class FakeSmokeClient:
-    def __init__(self, history: list[str], **options: object) -> None:
+    def __init__(
+        self,
+        history: list[str],
+        *,
+        frontend: str = "ready",
+        root_content_type: str = "text/html; charset=utf-8",
+        missing_asset: str | None = None,
+        empty_asset: str | None = None,
+        **options: object,
+    ) -> None:
         self.history = history
         self.options = options
+        self.frontend = frontend
+        self.root_content_type = root_content_type
+        self.missing_asset = missing_asset
+        self.empty_asset = empty_asset
 
     def __enter__(self) -> FakeSmokeClient:
         self.history.append("client.enter")
@@ -535,7 +575,13 @@ class FakeSmokeClient:
 
     def get(self, path: str) -> FakeSmokeResponse:
         self.history.append(f"client.get:{path}")
-        return FakeSmokeResponse(path)
+        return FakeSmokeResponse(
+            path,
+            frontend=self.frontend,
+            root_content_type=self.root_content_type,
+            missing_asset=self.missing_asset,
+            empty_asset=self.empty_asset,
+        )
 
 
 def test_smoke_runner_uses_available_port_trust_env_false_and_stops_server(
@@ -580,11 +626,82 @@ def test_smoke_runner_uses_available_port_trust_env_false_and_stops_server(
         "client.enter",
         "client.get:/api/health",
         "client.get:/",
+        "client.get:/assets/app.css",
+        "client.get:/assets/app.js",
         "client.exit",
         "server.stop:10",
         "thread.join:10",
     ]
     assert servers[0][2].thread.is_alive() is False
+
+
+def test_smoke_runner_rejects_health_when_frontend_is_missing(tmp_path: Path) -> None:
+    module = _desktop_entry_module()
+    history: list[str] = []
+    paths = SimpleNamespace(user_root=tmp_path, runtime_dir=tmp_path / "runtime")
+
+    with pytest.raises(module.DesktopSmokeError, match="frontend is not ready"):
+        module.run_smoke_test(
+            paths,
+            server_factory=lambda _host, _port: FakeSmokeServer(history),
+            client_factory=lambda **options: FakeSmokeClient(
+                history,
+                frontend="missing",
+                **options,
+            ),
+            port_selector=lambda: 24680,
+        )
+
+    assert "client.get:/" not in history
+    assert not (tmp_path / "runtime" / "smoke-port-used.txt").exists()
+
+
+def test_smoke_runner_rejects_json_root_fallback(tmp_path: Path) -> None:
+    module = _desktop_entry_module()
+    history: list[str] = []
+    paths = SimpleNamespace(user_root=tmp_path, runtime_dir=tmp_path / "runtime")
+
+    with pytest.raises(module.DesktopSmokeError, match="React HTML"):
+        module.run_smoke_test(
+            paths,
+            server_factory=lambda _host, _port: FakeSmokeServer(history),
+            client_factory=lambda **options: FakeSmokeClient(
+                history,
+                root_content_type="application/json",
+                **options,
+            ),
+            port_selector=lambda: 24680,
+        )
+
+
+@pytest.mark.parametrize(
+    ("missing_asset", "empty_asset"),
+    [
+        ("/assets/app.js", None),
+        (None, "/assets/app.css"),
+    ],
+)
+def test_smoke_runner_rejects_missing_or_empty_react_assets(
+    tmp_path: Path,
+    missing_asset: str | None,
+    empty_asset: str | None,
+) -> None:
+    module = _desktop_entry_module()
+    history: list[str] = []
+    paths = SimpleNamespace(user_root=tmp_path, runtime_dir=tmp_path / "runtime")
+
+    with pytest.raises(module.DesktopSmokeError, match="React asset"):
+        module.run_smoke_test(
+            paths,
+            server_factory=lambda _host, _port: FakeSmokeServer(history),
+            client_factory=lambda **options: FakeSmokeClient(
+                history,
+                missing_asset=missing_asset,
+                empty_asset=empty_asset,
+                **options,
+            ),
+            port_selector=lambda: 24680,
+        )
 
 
 def test_smoke_runner_uses_explicit_environment_port(

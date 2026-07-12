@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import logging
+import os
 import threading
+from collections.abc import Callable
 from enum import StrEnum
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class DesktopStartupError(RuntimeError):
@@ -74,6 +79,8 @@ class DesktopController:
         paths: object,
         *,
         ready_timeout: float = 30.0,
+        force_exit: Callable[[int], object] | None = None,
+        flush_logs: Callable[[], object] | None = None,
     ) -> None:
         self.server = server
         self.window = window
@@ -81,6 +88,8 @@ class DesktopController:
         self.guard = guard
         self.paths = paths
         self.ready_timeout = ready_timeout
+        self._force_exit = force_exit or os._exit
+        self._flush_logs = flush_logs or logging.shutdown
 
         self.state = DesktopState.CREATED
         self.tray_available = False
@@ -267,15 +276,23 @@ class DesktopController:
             return
 
         cleanup_error: BaseException | None = None
+        force_exit_required = False
         try:
             for cleanup in (
                 self.tray.stop,
                 self.server.stop,
                 self._destroy_window,
-                self.guard.release,
             ):
                 try:
                     cleanup()
+                except BaseException as exc:
+                    if cleanup_error is None:
+                        cleanup_error = exc
+                    if bool(getattr(exc, "requires_forced_exit", False)):
+                        force_exit_required = True
+            if not force_exit_required:
+                try:
+                    self.guard.release()
                 except BaseException as exc:
                     if cleanup_error is None:
                         cleanup_error = exc
@@ -291,3 +308,15 @@ class DesktopController:
                     self.state = DesktopState.STOPPED
                 self._shutdown_owner = None
                 self.shutdown_complete.set()
+
+        if force_exit_required:
+            try:
+                logger.critical(
+                    "Forcing process exit after embedded backend shutdown timeout: %s",
+                    cleanup_error,
+                )
+            finally:
+                try:
+                    self._flush_logs()
+                finally:
+                    self._force_exit(1)

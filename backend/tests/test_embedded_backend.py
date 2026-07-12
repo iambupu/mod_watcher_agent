@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import httpx
@@ -20,11 +21,13 @@ class _FakeUvicornServer:
     def __init__(self, config: Any) -> None:
         self.config = config
         self.should_exit = False
+        self.started = False
         self.run_started = threading.Event()
         type(self).instances.append(self)
         type(self).created.set()
 
     def run(self) -> None:
+        self.started = True
         self.run_started.set()
         while not self.should_exit:
             time.sleep(0.001)
@@ -303,6 +306,53 @@ def test_wait_ready_requires_ok_json_health_response(
 
     assert requested_urls == ["http://127.0.0.1:17500/ready"] * 4
     assert client_options == [{"trust_env": False}]
+
+
+def test_wait_ready_rejects_health_from_a_foreign_listener() -> None:
+    class ForeignHealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            body = b'{"status":"ok"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+    class NeverBoundOwnedServer:
+        def __init__(self, config: Any) -> None:
+            self.config = config
+            self.should_exit = False
+            self.started = False
+
+        def run(self) -> None:
+            while not self.should_exit:
+                time.sleep(0.001)
+
+    foreign = ThreadingHTTPServer(("127.0.0.1", 0), ForeignHealthHandler)
+    foreign_thread = threading.Thread(target=foreign.serve_forever, daemon=True)
+    foreign_thread.start()
+    with httpx.Client(trust_env=False) as client:
+        assert client.get(
+            f"http://127.0.0.1:{foreign.server_port}/api/health",
+            timeout=1,
+        ).json() == {"status": "ok"}
+    server = EmbeddedBackendServer(
+        "127.0.0.1",
+        foreign.server_port,
+        app_factory=_health_app,
+        server_factory=NeverBoundOwnedServer,
+    )
+    server.start()
+    try:
+        assert server.wait_ready(timeout=1) is False
+    finally:
+        server.stop()
+        foreign.shutdown()
+        foreign.server_close()
+        foreign_thread.join(1)
 
 
 def test_stop_waits_for_server_creation_race() -> None:

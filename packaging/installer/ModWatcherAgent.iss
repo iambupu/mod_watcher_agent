@@ -183,10 +183,37 @@ begin
   end;
 end;
 
+procedure RemoveOwnedAutoStartEntry;
+var
+  RegisteredCommand: String;
+  ExpectedCommand: String;
+begin
+  ExpectedCommand := '"' + ExpandConstant('{app}\ModWatcherAgent.exe') + '"';
+  if not RegQueryStringValue(
+    HKCU,
+    'Software\Microsoft\Windows\CurrentVersion\Run',
+    'ModWatcherAgent',
+    RegisteredCommand) then
+    Exit;
+  if CompareText(RegisteredCommand, ExpectedCommand) <> 0 then
+  begin
+    Log('Preserving user-modified ModWatcherAgent auto-start command.');
+    Exit;
+  end;
+  if RegDeleteValue(
+    HKCU,
+    'Software\Microsoft\Windows\CurrentVersion\Run',
+    'ModWatcherAgent') then
+    Log('Removed owned ModWatcherAgent auto-start command.')
+  else
+    Log('Failed to remove owned ModWatcherAgent auto-start command.');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep <> usPostUninstall then
     Exit;
+  RemoveOwnedAutoStartEntry;
   if UninstallSilent then
   begin
     Log('Silent uninstall preserves user data.');

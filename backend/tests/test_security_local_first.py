@@ -68,14 +68,48 @@ def test_access_policy_local_strict_requires_token(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(settings, "MW_ADMIN_TOKEN", "secret-token")
 
     no_token = AccessPolicy().evaluate(_make_request("127.0.0.1", "/api/settings"))
-    ok_token = AccessPolicy().evaluate(_make_request("127.0.0.1", "/api/settings", token="secret-token"))
+    ok_token = AccessPolicy().evaluate(
+        _make_request("127.0.0.1", "/api/settings", token="secret-token")
+    )
 
     assert no_token.allow is False
     assert no_token.status_code == 401
     assert ok_token.allow is True
 
 
-def test_access_policy_shared_lan_restricts_control_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("profile", "allow_lan", "client_host"),
+    [
+        ("local_strict", False, "127.0.0.1"),
+        ("shared_lan", True, "192.168.1.9"),
+    ],
+)
+def test_persisted_protected_policy_exempts_only_health_for_allowed_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+    allow_lan: bool,
+    client_host: str,
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    with Session(security.engine) as session:
+        session.add(Setting(key="access_profile", value=profile, updated_at=now))
+        session.add(Setting(key="allow_lan", value=str(allow_lan).lower(), updated_at=now))
+        session.commit()
+
+    monkeypatch.setattr(settings, "MW_ADMIN_TOKEN", "secret-token")
+    security.invalidate_runtime_policy_cache()
+
+    health = AccessPolicy().evaluate(_make_request(client_host, "/api/health"))
+    protected = AccessPolicy().evaluate(_make_request(client_host, "/api/settings"))
+
+    assert health.allow is True
+    assert protected.allow is False
+    assert protected.status_code == 401
+
+
+def test_access_policy_shared_lan_restricts_control_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(settings, "MW_ACCESS_PROFILE", "shared_lan")
     monkeypatch.setattr(settings, "MW_ALLOW_LAN", True)
     monkeypatch.setattr(settings, "MW_ADMIN_TOKEN", "secret-token")
@@ -91,7 +125,9 @@ def test_access_policy_shared_lan_restricts_control_endpoints(monkeypatch: pytes
 def test_validate_outbound_url_security_rules(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "MW_ALLOW_LOCAL_LLM", True)
 
-    assert validate_outbound_url("ollama", "http://localhost:11434/v1") == "http://localhost:11434/v1"
+    assert (
+        validate_outbound_url("ollama", "http://localhost:11434/v1") == "http://localhost:11434/v1"
+    )
     assert validate_outbound_url("siliconflow", "") == "https://api.siliconflow.cn/v1"
     assert validate_outbound_url("xai", "") == "https://api.x.ai/v1"
     assert validate_outbound_url("kimi", "") == "https://api.moonshot.cn/v1"
@@ -107,7 +143,9 @@ def test_validate_outbound_url_security_rules(monkeypatch: pytest.MonkeyPatch) -
     assert getattr(scheme_err.value, "status_code", None) == 422
 
 
-def test_shared_lan_blocks_http_domain_gateway_and_private_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shared_lan_blocks_http_domain_gateway_and_private_ip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(settings, "MW_ALLOW_LOCAL_LLM", True)
     monkeypatch.setattr(
         security,
