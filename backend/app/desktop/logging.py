@@ -22,14 +22,34 @@ _DESKTOP_LOG_MAX_BYTES = 5 * 1024 * 1024
 _DESKTOP_LOG_BACKUP_COUNT = 3
 _DESKTOP_SECRET_PATTERNS = (
     (
-        re.compile(r"(?i)\bCookie\s*[:=]\s*[^\r\n]+"),
-        "Cookie: ********",
+        re.compile(r"(?i)\bBearer\s+[^\s,\"']+"),
+        "Bearer ********",
     ),
     (
-        re.compile(r"(?i)\b(profile_content|profile_data)\b\s*[:=]\s*[^\r\n]*"),
-        r"\1=********",
+        re.compile(
+            r"""(?ix)
+            (?P<prefix>["']?\b(?:
+                authorization
+                |webhook
+                |(?:[a-z0-9]+_)*(?:api_key|token|password)
+            )\b["']?\s*[:=]\s*)
+            (?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)
+            """
+        ),
+        r"\g<prefix>********",
+    ),
+    (
+        re.compile(r"(?im)(?P<prefix>[\"']?\bCookie\b[\"']?\s*[:=]\s*)[^\r\n]+"),
+        r"\g<prefix>********",
+    ),
+    (
+        re.compile(
+            r"(?is)(?P<prefix>[\"']?\b(?:profile_content|profile_data)\b[\"']?\s*[:=]\s*).*\Z"
+        ),
+        r"\g<prefix>********",
     ),
 )
+_HOOK_INSTALLATION_ATTRIBUTE = "_mod_watcher_exception_hook_installation"
 
 _configuration_lock = threading.Lock()
 _hook_lock = threading.Lock()
@@ -48,6 +68,42 @@ class _RedactingFormatter(logging.Formatter):
         return _redact_desktop_text(super().format(record))
 
 
+class _RedactingFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except BaseException:
+            message = "<unformattable log message>"
+        record.msg = _redact_desktop_text(message)
+        record.args = ()
+        if record.exc_text:
+            record.exc_text = _redact_desktop_text(record.exc_text)
+        if record.stack_info:
+            record.stack_info = _redact_desktop_text(record.stack_info)
+        return True
+
+
+class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802
+        # The stdlib implementation dumps raw msg/args to stderr when enabled.
+        # A log-media failure must neither expose those values nor recurse.
+        return None
+
+
+def _resolve_log_path(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path.absolute()
+
+
+def _close_handler_safely(handler: logging.Handler) -> None:
+    try:
+        handler.close()
+    except BaseException:
+        return
+
+
 def configure_desktop_logging(paths: object) -> logging.Logger:
     """Configure one rotating, fully redacted desktop log handler."""
 
@@ -56,14 +112,20 @@ def configure_desktop_logging(paths: object) -> logging.Logger:
     logger.propagate = False
     log_path = Path(paths.log_dir)  # type: ignore[attr-defined]
     log_path /= "desktop.log"
+    resolved_log_path = _resolve_log_path(log_path)
 
     with _configuration_lock:
+        if not any(
+            isinstance(current_filter, _RedactingFilter) for current_filter in logger.filters
+        ):
+            logger.addFilter(_RedactingFilter())
         matching_handler = next(
             (
                 handler
                 for handler in logger.handlers
                 if getattr(handler, "_mod_watcher_desktop_handler", False)
-                and Path(getattr(handler, "baseFilename", "")) == log_path.resolve()
+                and _resolve_log_path(Path(getattr(handler, "baseFilename", "")))
+                == resolved_log_path
             ),
             None,
         )
@@ -74,11 +136,11 @@ def configure_desktop_logging(paths: object) -> logging.Logger:
             if not getattr(handler, "_mod_watcher_desktop_handler", False):
                 continue
             logger.removeHandler(handler)
-            handler.close()
+            _close_handler_safely(handler)
 
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            handler = logging.handlers.RotatingFileHandler(
+            handler = _SafeRotatingFileHandler(
                 log_path,
                 maxBytes=_DESKTOP_LOG_MAX_BYTES,
                 backupCount=_DESKTOP_LOG_BACKUP_COUNT,
@@ -88,6 +150,7 @@ def configure_desktop_logging(paths: object) -> logging.Logger:
             return logger
 
         handler._mod_watcher_desktop_handler = True  # type: ignore[attr-defined]
+        handler.addFilter(_RedactingFilter())
         handler.setFormatter(
             _RedactingFormatter(
                 "[%(asctime)s] %(levelname)-7s %(name)s - %(message)s",
@@ -107,7 +170,7 @@ def close_desktop_logging(logger: logging.Logger | None = None) -> None:
             if not getattr(handler, "_mod_watcher_desktop_handler", False):
                 continue
             target.removeHandler(handler)
-            handler.close()
+            _close_handler_safely(handler)
 
 
 def _application_version() -> str:
@@ -185,13 +248,30 @@ class ExceptionHookInstallation:
         with _hook_lock:
             if self._restored:
                 return
+            self._restored = True
             if sys.excepthook is self.sys_hook:
                 sys.excepthook = self.original_sys_hook
             if threading.excepthook is self.thread_hook:
                 threading.excepthook = self.original_thread_hook
             if _active_hook_installation is self:
                 _active_hook_installation = None
-            self._restored = True
+
+
+def _unwrap_retired_hook(hook: Callable[..., Any], *, is_thread_hook: bool) -> Callable[..., Any]:
+    seen: set[int] = set()
+    while id(hook) not in seen:
+        seen.add(id(hook))
+        installation = getattr(hook, _HOOK_INSTALLATION_ATTRIBUTE, None)
+        if not isinstance(installation, ExceptionHookInstallation) or not installation._restored:
+            return hook
+        if is_thread_hook and hook is installation.thread_hook:
+            hook = installation.original_thread_hook
+            continue
+        if not is_thread_hook and hook is installation.sys_hook:
+            hook = installation.original_sys_hook
+            continue
+        return hook
+    return hook
 
 
 def install_exception_hooks(
@@ -207,10 +287,19 @@ def install_exception_hooks(
     global _active_hook_installation
     with _hook_lock:
         if _active_hook_installation is not None:
-            return _active_hook_installation
+            if (
+                sys.excepthook is _active_hook_installation.sys_hook
+                and threading.excepthook is _active_hook_installation.thread_hook
+            ):
+                return _active_hook_installation
+            _active_hook_installation._restored = True
+            _active_hook_installation = None
 
-        original_sys_hook = sys.excepthook
-        original_thread_hook = threading.excepthook
+        original_sys_hook = _unwrap_retired_hook(sys.excepthook, is_thread_hook=False)
+        original_thread_hook = _unwrap_retired_hook(
+            threading.excepthook,
+            is_thread_hook=True,
+        )
         log_dir = Path(paths.log_dir)  # type: ignore[attr-defined]
         user_data_dir = Path(paths.user_root)  # type: ignore[attr-defined]
 
@@ -225,32 +314,34 @@ def install_exception_hooks(
             exc_value: BaseException,
             exc_traceback: TracebackType | None,
         ) -> Any:
-            write_crash_log(
-                log_dir,
-                exc_value,
-                state=current_state(),
-                thread_name=threading.current_thread().name,
-                app_version=app_version,
-                platform_name=platform_name,
-                frozen=frozen,
-                user_data_dir=user_data_dir,
-                traceback_object=exc_traceback,
-            )
+            if not installation._restored:
+                write_crash_log(
+                    log_dir,
+                    exc_value,
+                    state=current_state(),
+                    thread_name=threading.current_thread().name,
+                    app_version=app_version,
+                    platform_name=platform_name,
+                    frozen=frozen,
+                    user_data_dir=user_data_dir,
+                    traceback_object=exc_traceback,
+                )
             return original_sys_hook(exc_type, exc_value, exc_traceback)
 
         def thread_hook(args: Any) -> Any:
             thread = getattr(args, "thread", None)
-            write_crash_log(
-                log_dir,
-                args.exc_value,
-                state=current_state(),
-                thread_name=getattr(thread, "name", "unknown-thread"),
-                app_version=app_version,
-                platform_name=platform_name,
-                frozen=frozen,
-                user_data_dir=user_data_dir,
-                traceback_object=args.exc_traceback,
-            )
+            if not installation._restored:
+                write_crash_log(
+                    log_dir,
+                    args.exc_value,
+                    state=current_state(),
+                    thread_name=getattr(thread, "name", "unknown-thread"),
+                    app_version=app_version,
+                    platform_name=platform_name,
+                    frozen=frozen,
+                    user_data_dir=user_data_dir,
+                    traceback_object=args.exc_traceback,
+                )
             return original_thread_hook(args)
 
         installation = ExceptionHookInstallation(
@@ -259,6 +350,8 @@ def install_exception_hooks(
             sys_hook=sys_hook,
             thread_hook=thread_hook,
         )
+        setattr(sys_hook, _HOOK_INSTALLATION_ATTRIBUTE, installation)
+        setattr(thread_hook, _HOOK_INSTALLATION_ATTRIBUTE, installation)
         sys.excepthook = sys_hook
         threading.excepthook = thread_hook
         _active_hook_installation = installation
