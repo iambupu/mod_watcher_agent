@@ -46,7 +46,7 @@ _DESKTOP_SECRET_PATTERNS = (
         re.compile(
             r"(?is)(?P<prefix>[\"']?\b(?:profile_content|profile_data)\b[\"']?\s*[:=]\s*).*\Z"
         ),
-        r"\g<prefix>********",
+        "[profile data redacted]",
     ),
 )
 _HOOK_INSTALLATION_ATTRIBUTE = "_mod_watcher_exception_hook_installation"
@@ -76,7 +76,24 @@ class _RedactingFilter(logging.Filter):
             message = "<unformattable log message>"
         record.msg = _redact_desktop_text(message)
         record.args = ()
-        if record.exc_text:
+        if record.exc_info:
+            exception_type = record.exc_info[0]
+            exception_prefix = f"{getattr(exception_type, '__name__', 'Exception')}:"
+            try:
+                exception_text = record.exc_text or logging.Formatter().formatException(
+                    record.exc_info
+                )
+            except BaseException:
+                exception_text = f"{exception_prefix} <unformattable exception>"
+            record.exc_text = _redact_desktop_text(exception_text)
+            if not any(
+                line.lstrip().startswith(exception_prefix) for line in record.exc_text.splitlines()
+            ):
+                record.exc_text = (
+                    f"{record.exc_text.rstrip()}\n{exception_prefix} <sensitive details redacted>"
+                )
+            record.exc_info = None
+        elif record.exc_text:
             record.exc_text = _redact_desktop_text(record.exc_text)
         if record.stack_info:
             record.stack_info = _redact_desktop_text(record.stack_info)

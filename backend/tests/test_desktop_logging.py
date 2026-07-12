@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import io
 import logging
 import logging.handlers
 import sys
@@ -417,6 +418,38 @@ def test_desktop_log_sanitizes_records_before_preexisting_handlers(tmp_path: Pat
         module.close_desktop_logging(logger)
 
     assert observed_records == [("access_token=********", ())]
+
+
+def test_desktop_log_sanitizes_exception_before_preexisting_handlers(tmp_path: Path) -> None:
+    module = _desktop_logging_module()
+    logger = logging.getLogger("mod_watcher.desktop")
+    preexisting_output = io.StringIO()
+    preexisting_handler = logging.StreamHandler(preexisting_output)
+    preexisting_handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(preexisting_handler)
+    paths = _paths(tmp_path)
+
+    try:
+        configured_logger = module.configure_desktop_logging(paths)
+        try:
+            raise RuntimeError(
+                'metadata={"profile_data":{"Cookie":"preexisting-traceback-secret"}}'
+            )
+        except RuntimeError:
+            configured_logger.exception("ordinary handler traceback")
+        preexisting_handler.flush()
+        for handler in configured_logger.handlers:
+            handler.flush()
+        desktop_content = (paths.log_dir / "desktop.log").read_text(encoding="utf-8")
+    finally:
+        logger.removeHandler(preexisting_handler)
+        preexisting_handler.close()
+        module.close_desktop_logging(logger)
+
+    for content in (preexisting_output.getvalue(), desktop_content):
+        assert "preexisting-traceback-secret" not in content
+        assert content.count("Traceback (most recent call last)") == 1
+        assert "RuntimeError:" in content
 
 
 def test_close_desktop_logging_contains_handler_flush_failures(tmp_path: Path) -> None:
