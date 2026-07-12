@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import socket
 import threading
 import time
 from collections.abc import Callable
@@ -27,7 +28,7 @@ class _UvicornServer(Protocol):
     should_exit: bool
     started: bool
 
-    def run(self) -> None: ...
+    def run(self, sockets: list[socket.socket] | None = None) -> None: ...
 
 
 AppFactory = Callable[[], Any]
@@ -49,12 +50,14 @@ class EmbeddedBackendServer:
         app_factory: AppFactory | None = None,
         health_path: str = "/api/health",
         server_factory: ServerFactory = uvicorn.Server,
+        prebound_socket: socket.socket | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.health_path = health_path if health_path.startswith("/") else f"/{health_path}"
         self._app_factory = app_factory or _load_default_app
         self._server_factory = server_factory
+        self._prebound_socket = prebound_socket
         self._server: _UvicornServer | None = None
         self._error: BaseException | None = None
         self._started = False
@@ -91,6 +94,10 @@ class EmbeddedBackendServer:
             except BaseException as exc:
                 self._started = False
                 self._thread = None
+                prebound_socket = self._prebound_socket
+                self._prebound_socket = None
+                if prebound_socket is not None:
+                    prebound_socket.close()
                 raise EmbeddedBackendError(
                     "Embedded backend server thread failed to start"
                 ) from exc
@@ -123,6 +130,8 @@ class EmbeddedBackendServer:
                         response.status_code == 200
                         and isinstance(payload, dict)
                         and payload.get("status") == "ok"
+                        and payload.get("database") == "ready"
+                        and payload.get("frontend") == "ready"
                     ):
                         return True
                 except (httpx.HTTPError, ValueError):
@@ -137,6 +146,10 @@ class EmbeddedBackendServer:
     def stop(self, timeout: float = 10) -> None:
         with self._state_lock:
             if not self._started:
+                prebound_socket = self._prebound_socket
+                self._prebound_socket = None
+                if prebound_socket is not None:
+                    prebound_socket.close()
                 return
             thread = self._thread
             if thread is None:
@@ -154,6 +167,8 @@ class EmbeddedBackendServer:
             )
 
     def _run(self) -> None:
+        with self._state_lock:
+            prebound_socket = self._prebound_socket
         try:
             app = self._app_factory()
             config = uvicorn.Config(
@@ -170,7 +185,16 @@ class EmbeddedBackendServer:
                 stop_requested = self._stop_requested.is_set()
             if stop_requested:
                 server.should_exit = True
-            server.run()
+            if prebound_socket is None:
+                server.run()
+            else:
+                server.run(sockets=[prebound_socket])
         except BaseException as exc:
             with self._state_lock:
                 self._error = exc
+        finally:
+            with self._state_lock:
+                if self._prebound_socket is prebound_socket:
+                    self._prebound_socket = None
+            if prebound_socket is not None:
+                prebound_socket.close()

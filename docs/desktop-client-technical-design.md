@@ -1,11 +1,11 @@
 # Mod Watcher Agent Windows 独立客户端技术设计
 
-> 文档状态：待实施设计  
-> 目标仓库：`iambupu/mod_watcher_agent`  
-> 基线版本：`0.2.2`  
-> 目标平台：Windows 10/11 x64  
-> 客户端形态：独立原生窗口 + 系统托盘 + 最小化/关闭到托盘  
-> 推荐技术：FastAPI + React/Vite + pywebview + pystray + PyInstaller（onedir）
+> - 文档状态：待实施设计
+> - 目标仓库：`iambupu/mod_watcher_agent`
+> - 基线版本：`0.2.2`
+> - 目标平台：Windows 10/11 x64
+> - 客户端形态：独立原生窗口 + 系统托盘 + 最小化/关闭到托盘
+> - 推荐技术：FastAPI + React/Vite + pywebview + pystray + PyInstaller（onedir）
 
 ---
 

@@ -89,7 +89,7 @@ def _health_app() -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "database": "ready", "frontend": "ready"}
 
     return app
 
@@ -269,7 +269,10 @@ def test_wait_ready_requires_ok_json_health_response(
             httpx.Response(200, json={"status": "starting"}),
             httpx.Response(503, json={"status": "ok"}),
             httpx.Response(200, content=b"not-json"),
-            httpx.Response(200, json={"status": "ok"}),
+            httpx.Response(
+                200,
+                json={"status": "ok", "database": "ready", "frontend": "ready"},
+            ),
         ]
     )
     requested_urls: list[str] = []
@@ -306,6 +309,55 @@ def test_wait_ready_requires_ok_json_health_response(
 
     assert requested_urls == ["http://127.0.0.1:17500/ready"] * 4
     assert client_options == [{"trust_env": False}]
+
+
+def test_wait_ready_requires_database_and_frontend_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={"status": "ok", "database": "starting", "frontend": "ready"},
+            ),
+            httpx.Response(
+                200,
+                json={"status": "ok", "database": "ready", "frontend": "missing"},
+            ),
+            httpx.Response(
+                200,
+                json={"status": "ok", "database": "ready", "frontend": "ready"},
+            ),
+        ]
+    )
+    requested_urls: list[str] = []
+    server = EmbeddedBackendServer(
+        "127.0.0.1",
+        17500,
+        app_factory=_health_app,
+        server_factory=_FakeUvicornServer,
+    )
+
+    class FakeClient:
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+        def get(self, url: str, *, timeout: float) -> httpx.Response:
+            requested_urls.append(url)
+            assert timeout > 0
+            return next(responses)
+
+    monkeypatch.setattr(httpx, "Client", lambda **_kwargs: FakeClient())
+    server.start()
+    try:
+        assert server.wait_ready(timeout=1) is True
+    finally:
+        server.stop()
+
+    assert requested_urls == ["http://127.0.0.1:17500/api/health"] * 3
 
 
 def test_wait_ready_rejects_health_from_a_foreign_listener() -> None:
@@ -421,6 +473,47 @@ def test_real_server_starts_reports_ready_stops_and_releases_port(unused_port: i
 
     assert not server.thread.is_alive()
     assert not _port_accepts_connections(unused_port)
+
+
+def test_real_server_accepts_a_prebound_socket_and_releases_it_on_stop() -> None:
+    reserved_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    reserved_socket.bind(("127.0.0.1", 0))
+    reserved_socket.listen()
+    port = int(reserved_socket.getsockname()[1])
+    server = EmbeddedBackendServer(
+        "127.0.0.1",
+        port,
+        app_factory=_health_app,
+        prebound_socket=reserved_socket,
+    )
+
+    server.start()
+    try:
+        assert server.wait_ready(timeout=5) is True
+        assert _port_accepts_connections(port)
+    finally:
+        server.stop()
+
+    assert reserved_socket.fileno() == -1
+    assert not _port_accepts_connections(port)
+
+
+def test_stop_before_start_releases_a_prebound_socket() -> None:
+    reserved_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    reserved_socket.bind(("127.0.0.1", 0))
+    port = int(reserved_socket.getsockname()[1])
+    server = EmbeddedBackendServer(
+        "127.0.0.1",
+        port,
+        app_factory=_health_app,
+        prebound_socket=reserved_socket,
+    )
+
+    server.stop()
+
+    assert reserved_socket.fileno() == -1
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as replacement:
+        replacement.bind(("127.0.0.1", port))
 
 
 def test_default_app_factory_imports_main_only_when_thread_runs(

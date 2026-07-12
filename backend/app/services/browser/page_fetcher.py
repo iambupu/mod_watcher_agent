@@ -94,8 +94,8 @@ class BrowserPageFetcher:
                             profile_dir=profile_dir,
                             headless=headless,
                         )
-                        page = await context.new_page()
                         try:
+                            page = await context.new_page()
                             await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
                             html = await page.content()
                             title = await page.title()
@@ -174,13 +174,29 @@ class BrowserPageFetcher:
 
     async def _close_login_unlocked(self) -> None:
         """在已持有锁的前提下清理登录 context，调用方负责串行化。"""
-        if self._login_context is not None:
-            await self._login_context.close()
-            self._login_context = None
-        if self._login_playwright is not None:
-            await self._login_playwright.stop()
-            self._login_playwright = None
+        context = self._login_context
+        playwright = self._login_playwright
+
+        self._login_context = None
+        self._login_playwright = None
         self._login_profile_name = None
+
+        cleanup_errors: list[BaseException] = []
+        if context is not None:
+            try:
+                await context.close()
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+        if playwright is not None:
+            try:
+                await playwright.stop()
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+
+        if len(cleanup_errors) == 1:
+            raise cleanup_errors[0]
+        if cleanup_errors:
+            raise BaseExceptionGroup("browser login cleanup failed", cleanup_errors)
 
     @classmethod
     def detect_status(cls, html: str) -> BrowserFetchStatus:

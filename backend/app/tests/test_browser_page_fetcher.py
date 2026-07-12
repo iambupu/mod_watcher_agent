@@ -124,6 +124,58 @@ class _SuccessfulContext:
         self.closed = True
 
 
+class _FakeAsyncPlaywrightContextManager:
+    def __init__(self, playwright):
+        self._playwright = playwright
+
+    async def __aenter__(self):
+        return self._playwright
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return None
+
+
+class _FailingNewPageContext:
+    def __init__(self):
+        self.closed = False
+
+    async def new_page(self):
+        raise RuntimeError("new page failed")
+
+    async def close(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_fetch_html_closes_temporary_context_when_new_page_fails(monkeypatch):
+    context = _FailingNewPageContext()
+    fake_playwright = _FakePlaywright()
+
+    async def fake_launch(self, playwright, *, profile_dir, headless):
+        return context
+
+    monkeypatch.setattr(
+        BrowserPageFetcher, "_profile_dir", staticmethod(lambda profile_name: Path("profile"))
+    )
+    monkeypatch.setattr(BrowserPageFetcher, "_launch_persistent_context", fake_launch)
+    monkeypatch.setattr(
+        BrowserPageFetcher,
+        "_load_playwright_api",
+        staticmethod(
+            lambda: {
+                "async_playwright": lambda: _FakeAsyncPlaywrightContextManager(fake_playwright),
+                "timeout_error": TimeoutError,
+            }
+        ),
+    )
+
+    result = await BrowserPageFetcher().fetch_html("https://example.com/")
+
+    assert result.status == "unknown_error"
+    assert result.error == "new page failed"
+    assert context.closed is True
+
+
 @pytest.mark.asyncio
 async def test_open_login_waits_for_browser_lock(monkeypatch):
     fake_playwright = _FakePlaywright()
@@ -177,6 +229,97 @@ async def test_close_login_waits_for_browser_lock():
     await task
 
     assert context.closed is True
+    assert fetcher._login_context is None
+    assert fetcher._login_playwright is None
+    assert fetcher._login_profile_name is None
+
+
+class _FailingCloseContext:
+    def __init__(self, fetcher):
+        self._fetcher = fetcher
+        self.close_attempted = False
+        self.observed_detached_state = False
+
+    async def close(self):
+        self.close_attempted = True
+        self.observed_detached_state = (
+            self._fetcher._login_context is None
+            and self._fetcher._login_playwright is None
+            and self._fetcher._login_profile_name is None
+        )
+        raise RuntimeError("context close failed")
+
+
+class _FailingStopPlaywright(_FakePlaywright):
+    def __init__(self):
+        super().__init__()
+        self.stop_attempted = False
+
+    async def stop(self):
+        self.stop_attempted = True
+        raise RuntimeError("playwright stop failed")
+
+
+class _CancelledCloseContext:
+    async def close(self):
+        raise asyncio.CancelledError
+
+
+@pytest.mark.asyncio
+async def test_close_login_detaches_state_and_stops_runtime_when_context_close_fails():
+    fetcher = BrowserPageFetcher()
+    context = _FailingCloseContext(fetcher)
+    playwright = _FakePlaywright()
+    fetcher._login_context = context
+    fetcher._login_playwright = playwright
+    fetcher._login_profile_name = "loverslab"
+
+    with pytest.raises(RuntimeError, match="context close failed"):
+        await fetcher.close_login()
+
+    assert context.close_attempted is True
+    assert context.observed_detached_state is True
+    assert playwright.stopped is True
+    assert fetcher._login_context is None
+    assert fetcher._login_playwright is None
+    assert fetcher._login_profile_name is None
+
+
+@pytest.mark.asyncio
+async def test_close_login_reports_both_context_and_runtime_cleanup_failures():
+    fetcher = BrowserPageFetcher()
+    context = _FailingCloseContext(fetcher)
+    playwright = _FailingStopPlaywright()
+    fetcher._login_context = context
+    fetcher._login_playwright = playwright
+    fetcher._login_profile_name = "loverslab"
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        await fetcher.close_login()
+
+    assert [str(error) for error in exc_info.value.exceptions] == [
+        "context close failed",
+        "playwright stop failed",
+    ]
+    assert context.close_attempted is True
+    assert playwright.stop_attempted is True
+    assert fetcher._login_context is None
+    assert fetcher._login_playwright is None
+    assert fetcher._login_profile_name is None
+
+
+@pytest.mark.asyncio
+async def test_close_login_stops_runtime_before_propagating_context_cancellation():
+    fetcher = BrowserPageFetcher()
+    playwright = _FakePlaywright()
+    fetcher._login_context = _CancelledCloseContext()
+    fetcher._login_playwright = playwright
+    fetcher._login_profile_name = "loverslab"
+
+    with pytest.raises(asyncio.CancelledError):
+        await fetcher.close_login()
+
+    assert playwright.stopped is True
     assert fetcher._login_context is None
     assert fetcher._login_playwright is None
     assert fetcher._login_profile_name is None

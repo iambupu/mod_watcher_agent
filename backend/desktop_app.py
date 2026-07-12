@@ -55,6 +55,10 @@ class DesktopSmokeError(RuntimeError):
     """Raised when the isolated desktop smoke check cannot complete."""
 
 
+class DesktopBackendPortError(RuntimeError):
+    """Raised before migration when the fixed desktop backend port is occupied."""
+
+
 class _ReactIndexParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -92,6 +96,14 @@ def configure_desktop_logging(paths: RuntimePaths) -> Any:
     return configure(paths)
 
 
+def load_desktop_runtime_settings() -> Any:
+    """Load the configured desktop .env before resolving bootstrap values."""
+
+    from app.config import settings
+
+    return settings
+
+
 def close_desktop_logging(logger: Any) -> None:
     from app.desktop.logging import close_desktop_logging as close
 
@@ -125,6 +137,42 @@ def select_available_loopback_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind((_SMOKE_HOST, 0))
         return int(listener.getsockname()[1])
+
+
+def desktop_backend_address() -> tuple[str, int]:
+    raw_port = os.getenv("MW_BACKEND_PORT", str(_DEFAULT_BACKEND_PORT))
+    try:
+        port = int(raw_port, 10)
+    except ValueError as exc:
+        raise DesktopBackendPortError(
+            "MW_BACKEND_PORT must be an integer between 1 and 65535"
+        ) from exc
+    if not 1 <= port <= 65535:
+        raise DesktopBackendPortError("MW_BACKEND_PORT must be between 1 and 65535")
+    return _SMOKE_HOST, port
+
+
+@contextmanager
+def reserve_desktop_backend_socket(host: str, port: int) -> Iterator[socket.socket]:
+    """Hold the production port across migration and transfer it to Uvicorn."""
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        listener.bind((host, port))
+        listener.listen()
+    except OSError as exc:
+        listener.close()
+        raise DesktopBackendPortError(
+            f"Desktop backend port {host}:{port} is already in use; "
+            "stop the existing Mod Watcher Agent service before starting the desktop client"
+        ) from exc
+
+    try:
+        yield listener
+    finally:
+        listener.close()
 
 
 def select_smoke_port() -> int:
@@ -204,6 +252,23 @@ def release_smoke_runtime_resources(paths: RuntimePaths) -> None:
                 handler.close()
 
 
+def _force_exit_after_smoke_stop_timeout(
+    paths: RuntimePaths,
+    error: BaseException,
+) -> None:
+    with suppress(BaseException):
+        write_desktop_crash(paths, error, "smoke-stop-timeout")
+    with suppress(BaseException):
+        logging.getLogger("mod_watcher.desktop").critical(
+            "Forcing process exit after desktop smoke backend shutdown timeout: %s",
+            error,
+        )
+    try:
+        logging.shutdown()
+    finally:
+        os._exit(1)
+
+
 def run_smoke_test(
     paths: RuntimePaths,
     *,
@@ -281,8 +346,13 @@ def run_smoke_test(
             if cleanup_error is None:
                 cleanup_error = exc
 
-        release_smoke_runtime_resources(paths)
+        if cleanup_error is not None and bool(
+            getattr(cleanup_error, "requires_forced_exit", False)
+        ):
+            _force_exit_after_smoke_stop_timeout(paths, cleanup_error)
+            raise cleanup_error
 
+        release_smoke_runtime_resources(paths)
         if primary_error is None and cleanup_error is not None:
             raise cleanup_error
 
@@ -320,6 +390,9 @@ def build_desktop_controller(
     *,
     paths: RuntimePaths,
     guard: SingleInstanceGuard,
+    backend_socket: socket.socket | None = None,
+    backend_address: tuple[str, int] | None = None,
+    admin_token: str | None = None,
 ) -> Any:
     """Build desktop adapters only after runtime setup and migration finish."""
 
@@ -328,12 +401,26 @@ def build_desktop_controller(
     from app.desktop.tray import TrayController
     from app.desktop.window import PyWebViewWindow
 
-    host = "127.0.0.1"
-    port = int(os.getenv("MW_BACKEND_PORT", str(_DEFAULT_BACKEND_PORT)))
+    if backend_address is None or admin_token is None:
+        settings = load_desktop_runtime_settings()
+        if backend_address is None:
+            backend_address = desktop_backend_address()
+        if admin_token is None:
+            admin_token = settings.MW_ADMIN_TOKEN
+
+    host, port = backend_address
     base_url = f"http://{host}:{port}"
-    server = EmbeddedBackendServer(host=host, port=port)
+    server = EmbeddedBackendServer(
+        host=host,
+        port=port,
+        prebound_socket=backend_socket,
+    )
     window = PyWebViewWindow(paths=paths, url=base_url)
-    tray = TrayController(paths=paths, base_url=base_url)
+    tray = TrayController(
+        paths=paths,
+        base_url=base_url,
+        admin_token=admin_token,
+    )
     return DesktopController(
         server=server,
         window=window,
@@ -361,6 +448,7 @@ def _run_normal_desktop() -> int:
         paths = build_runtime_paths()
         ensure_runtime_directories(paths)
         configure_desktop_environment(paths)
+        runtime_settings = load_desktop_runtime_settings()
         desktop_logger = configure_desktop_logging(paths)
         logging_configured = True
         desktop_logger.info("Desktop startup mode=normal")
@@ -377,22 +465,31 @@ def _run_normal_desktop() -> int:
             return 0
         desktop_logger.info("Single desktop instance acquired")
 
-        migrate_legacy_database(paths)
-        desktop_logger.info("Legacy database migration completed")
-        controller = build_desktop_controller(paths=paths, guard=guard)
-        lifecycle_state = "running"
-        desktop_logger.info("Desktop controller starting")
-        result = int(controller.start())
-        desktop_logger.info("Desktop controller finished with result=%s", result)
-        if result != 0:
-            error = getattr(controller, "error", None)
-            detail = str(error) if error is not None else "桌面生命周期未正常结束"
-            show_native_error(
-                _APPLICATION_TITLE,
-                format_desktop_startup_error(detail),
+        host, port = desktop_backend_address()
+        with reserve_desktop_backend_socket(host, port) as backend_socket:
+            desktop_logger.info("Desktop backend port reserved: %s:%s", host, port)
+            migrate_legacy_database(paths)
+            desktop_logger.info("Legacy database migration completed")
+            controller = build_desktop_controller(
+                paths=paths,
+                guard=guard,
+                backend_socket=backend_socket,
+                backend_address=(host, port),
+                admin_token=runtime_settings.MW_ADMIN_TOKEN,
             )
-            desktop_logger.error("Desktop controller reported failure: %s", detail)
-        return result
+            lifecycle_state = "running"
+            desktop_logger.info("Desktop controller starting")
+            result = int(controller.start())
+            desktop_logger.info("Desktop controller finished with result=%s", result)
+            if result != 0:
+                error = getattr(controller, "error", None)
+                detail = str(error) if error is not None else "桌面生命周期未正常结束"
+                show_native_error(
+                    _APPLICATION_TITLE,
+                    format_desktop_startup_error(detail),
+                )
+                desktop_logger.error("Desktop controller reported failure: %s", detail)
+            return result
     except BaseException as exc:
         lifecycle_state = "failed"
         if controller is not None:

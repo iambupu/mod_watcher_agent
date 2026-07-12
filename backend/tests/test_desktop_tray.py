@@ -422,6 +422,106 @@ def test_tray_http_actions_use_loopback_without_environment_proxies(tmp_path: Pa
         )
 
 
+@pytest.mark.parametrize("profile", ["local_strict", "shared_lan"])
+def test_tray_http_actions_authenticate_with_actual_protected_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    profile: str,
+) -> None:
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse
+    from fastapi.testclient import TestClient
+
+    from app import security
+
+    module = _desktop_tray_module()
+    app = FastAPI()
+    client_options: list[dict[str, Any]] = []
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        security,
+        "_load_runtime_policy",
+        lambda force_refresh=False: security.RuntimePolicy(  # noqa: ARG005
+            profile=profile,
+            allow_lan=profile == "shared_lan",
+            admin_token="desktop-secret",
+        ),
+    )
+
+    @app.middleware("http")
+    async def access_guard(request: Request, call_next: Callable[..., Any]):
+        decision = security.AccessPolicy().evaluate(request)
+        if not decision.allow:
+            return JSONResponse(
+                status_code=decision.status_code,
+                content={"detail": decision.detail},
+            )
+        return await call_next(request)
+
+    @app.post("/api/jobs/discover-all")
+    async def discover_all() -> dict[str, bool]:
+        calls.append(("POST", "/api/jobs/discover-all"))
+        return {"ok": True}
+
+    @app.post("/api/jobs/check-favorites")
+    async def check_favorites() -> dict[str, bool]:
+        calls.append(("POST", "/api/jobs/check-favorites"))
+        return {"ok": True}
+
+    @app.get("/api/jobs/status")
+    async def scheduler_status() -> dict[str, bool]:
+        calls.append(("GET", "/api/jobs/status"))
+        return {"running": True}
+
+    @app.post("/api/jobs/pause")
+    async def pause_scheduler() -> dict[str, bool]:
+        calls.append(("POST", "/api/jobs/pause"))
+        return {"ok": True}
+
+    @app.post("/api/logs/open-dir")
+    async def open_logs() -> dict[str, bool]:
+        calls.append(("POST", "/api/logs/open-dir"))
+        return {"ok": True}
+
+    def client_factory(**kwargs: Any) -> TestClient:
+        client_options.append(
+            {
+                **kwargs,
+                "headers": dict(kwargs.get("headers", {})),
+            }
+        )
+        return TestClient(
+            app,
+            base_url=kwargs["base_url"],
+            headers=kwargs.get("headers"),
+            client=("127.0.0.1", 50000),
+        )
+
+    tray = module.TrayController(
+        paths=SimpleNamespace(log_dir=tmp_path),
+        base_url="http://127.0.0.1:17500",
+        admin_token=" desktop-secret ",
+        client_factory=client_factory,
+    )
+
+    assert tray.check_now() is True
+    assert tray.check_favorites() is True
+    assert tray.toggle_scheduler() is True
+    assert tray.open_logs() is True
+    assert calls == [
+        ("POST", "/api/jobs/discover-all"),
+        ("POST", "/api/jobs/check-favorites"),
+        ("GET", "/api/jobs/status"),
+        ("POST", "/api/jobs/pause"),
+        ("POST", "/api/logs/open-dir"),
+    ]
+    assert all(
+        options["headers"] == {"X-Mod-Watcher-Token": "desktop-secret"}
+        for options in client_options
+    )
+
+
 def test_tray_stop_called_on_its_own_thread_does_not_self_join(tmp_path: Path) -> None:
     module = _desktop_tray_module()
     FakeIcon.instances.clear()

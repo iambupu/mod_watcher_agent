@@ -25,6 +25,7 @@ class TrayController:
         image_draw_module: Any | None = None,
         dependency_loader: Callable[[], tuple[Any, Any, Any]] | None = None,
         client_factory: Callable[..., Any] = httpx.Client,
+        admin_token: str = "",
         startup_timeout: float = 5.0,
         join_timeout: float = 5.0,
     ) -> None:
@@ -39,6 +40,7 @@ class TrayController:
         self._image_draw = image_draw_module
         self._dependency_loader = dependency_loader
         self._client_factory = client_factory
+        self._admin_token = admin_token.strip()
         self.startup_timeout = startup_timeout
         self.join_timeout = join_timeout
 
@@ -229,10 +231,15 @@ class TrayController:
         return image
 
     def _new_client(self) -> Any:
+        options: dict[str, object] = {
+            "base_url": self.base_url,
+            "timeout": _API_TIMEOUT_SECONDS,
+            "trust_env": False,
+        }
+        if self._admin_token:
+            options["headers"] = {"X-Mod-Watcher-Token": self._admin_token}
         return self._client_factory(
-            base_url=self.base_url,
-            timeout=_API_TIMEOUT_SECONDS,
-            trust_env=False,
+            **options,
         )
 
     def _post(self, path: str) -> bool:

@@ -399,6 +399,37 @@ def test_tray_callbacks_restore_and_request_the_single_shutdown_path(tmp_path: P
     assert guard.release_calls == 1
 
 
+@pytest.mark.parametrize("failing_method", ["show", "restore"])
+def test_normal_tray_restore_failure_uses_failed_shutdown_path(
+    tmp_path: Path,
+    failing_method: str,
+) -> None:
+    module = _desktop_controller_module()
+    controller, server, window, tray, guard, history = _make_controller(tmp_path)
+    controller.state = module.DesktopState.WINDOW_HIDDEN
+
+    def fail_window_transition() -> None:
+        if failing_method == "show":
+            window.show_calls += 1
+        else:
+            window.restore_calls += 1
+        history.append(f"window.{failing_method}")
+        raise RuntimeError(f"window {failing_method} failed")
+
+    setattr(window, failing_method, fail_window_transition)
+
+    controller.restore_window()
+
+    assert controller.state is module.DesktopState.FAILED
+    assert isinstance(controller.error, RuntimeError)
+    assert str(controller.error) == f"window {failing_method} failed"
+    assert controller.shutdown_complete.is_set()
+    assert server.stop_calls == 1
+    assert tray.stop_calls == 1
+    assert window.destroy_calls == 1
+    assert guard.release_calls == 1
+
+
 def test_exit_during_tray_start_never_enters_window_loop(tmp_path: Path) -> None:
     module = _desktop_controller_module()
     history: list[str] = []

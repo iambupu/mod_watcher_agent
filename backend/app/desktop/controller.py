@@ -168,8 +168,14 @@ class DesktopController:
         return not self._hide_window_to_tray()
 
     def restore_window(self, *_args: object) -> None:
-        with self._visibility_lock:
-            self._restore_window_locked()
+        try:
+            with self._visibility_lock:
+                self._restore_window_locked()
+        except BaseException as exc:
+            with self._state_lock:
+                self.error = exc
+                self.state = DesktopState.FAILED
+            self._cleanup(preserve_failure=True)
 
     def on_tray_unavailable(
         self,

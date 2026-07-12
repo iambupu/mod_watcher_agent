@@ -157,6 +157,11 @@ def test_desktop_entry_follows_required_initialization_order(
         history,
         on_start=lambda: guard_holder[0].release(),
     )
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as available:
+        available.bind(("127.0.0.1", 0))
+        backend_port = int(available.getsockname()[1])
+    monkeypatch.setenv("MW_BACKEND_PORT", "17500")
+    reserved_sockets: list[socket.socket] = []
 
     def guard_factory(lock_path: Path) -> FakeEntryGuard:
         guard = FakeEntryGuard(history, lock_path)
@@ -177,6 +182,13 @@ def test_desktop_entry_follows_required_initialization_order(
         "configure_desktop_environment",
         lambda value: history.append("env.configure") if value is paths else None,
     )
+
+    def load_runtime_settings() -> object:
+        history.append("settings.load")
+        os.environ["MW_BACKEND_PORT"] = str(backend_port)
+        return SimpleNamespace(MW_ADMIN_TOKEN="entry-secret")
+
+    monkeypatch.setattr(module, "load_desktop_runtime_settings", load_runtime_settings)
     monkeypatch.setattr(
         module,
         "configure_desktop_logging",
@@ -202,19 +214,41 @@ def test_desktop_entry_follows_required_initialization_order(
         raising=False,
     )
     monkeypatch.setattr(module, "SingleInstanceGuard", guard_factory)
-    monkeypatch.setattr(
-        module,
-        "migrate_legacy_database",
-        lambda value: history.append("database.migrate") if value is paths else None,
-    )
+
+    def migrate_database(value: object) -> None:
+        assert value is paths
+        with socket.create_connection(("127.0.0.1", backend_port), timeout=1):
+            pass
+        with (
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM) as competing_listener,
+            pytest.raises(OSError),
+        ):
+            competing_listener.bind(("127.0.0.1", backend_port))
+        history.append("database.migrate")
+
+    monkeypatch.setattr(module, "migrate_legacy_database", migrate_database)
+
+    def build_controller(
+        *,
+        paths: object,
+        guard: object,
+        backend_socket: socket.socket,
+        backend_address: tuple[str, int],
+        admin_token: str,
+    ):
+        assert paths is not None
+        assert guard is not None
+        assert backend_socket.getsockname() == ("127.0.0.1", backend_port)
+        assert backend_address == ("127.0.0.1", backend_port)
+        assert admin_token == "entry-secret"
+        reserved_sockets.append(backend_socket)
+        history.append("controller.build")
+        return controller
+
     monkeypatch.setattr(
         module,
         "build_desktop_controller",
-        lambda *, paths, guard: (
-            history.append("controller.build") or controller
-            if paths is not None and guard is not None
-            else None
-        ),
+        build_controller,
     )
     monkeypatch.setattr(
         module,
@@ -229,6 +263,7 @@ def test_desktop_entry_follows_required_initialization_order(
         "paths.build",
         "paths.ensure",
         "env.configure",
+        "settings.load",
         "logging.configure",
         "hooks.install",
         "guard.construct",
@@ -243,15 +278,98 @@ def test_desktop_entry_follows_required_initialization_order(
     assert guard_holder[0].lock_path == paths.runtime_dir / "desktop.lock"
     assert guard_holder[0].release_calls == 1
     assert hooks.restore_calls == 1
+    assert len(reserved_sockets) == 1
+    assert reserved_sockets[0].fileno() == -1
     assert log_messages == [
         "INFO Desktop startup mode=normal",
         f"INFO Runtime directories ready: {paths.user_root}",
         "INFO Single desktop instance acquired",
+        f"INFO Desktop backend port reserved: 127.0.0.1:{backend_port}",
         "INFO Legacy database migration completed",
         "INFO Desktop controller starting",
         "INFO Desktop controller finished with result=0",
         "INFO Desktop shutdown complete",
     ]
+
+
+def test_build_desktop_controller_wires_reserved_socket_and_admin_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.desktop import backend_server, controller, tray, window
+
+    module = _desktop_entry_module()
+    captured: dict[str, dict[str, object]] = {}
+    sentinels = {
+        "server": object(),
+        "window": object(),
+        "tray": object(),
+        "controller": object(),
+    }
+    paths = SimpleNamespace(user_root=tmp_path)
+    guard = object()
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reserved_socket:
+        reserved_socket.bind(("127.0.0.1", 0))
+        port = int(reserved_socket.getsockname()[1])
+        monkeypatch.setenv("MW_BACKEND_PORT", str(port))
+        monkeypatch.setattr(
+            module,
+            "load_desktop_runtime_settings",
+            lambda: pytest.fail("explicit bootstrap values must not be reloaded"),
+        )
+
+        def server_factory(**kwargs: object) -> object:
+            captured["server"] = kwargs
+            return sentinels["server"]
+
+        def window_factory(**kwargs: object) -> object:
+            captured["window"] = kwargs
+            return sentinels["window"]
+
+        def tray_factory(**kwargs: object) -> object:
+            captured["tray"] = kwargs
+            return sentinels["tray"]
+
+        def controller_factory(**kwargs: object) -> object:
+            captured["controller"] = kwargs
+            return sentinels["controller"]
+
+        monkeypatch.setattr(backend_server, "EmbeddedBackendServer", server_factory)
+        monkeypatch.setattr(window, "PyWebViewWindow", window_factory)
+        monkeypatch.setattr(tray, "TrayController", tray_factory)
+        monkeypatch.setattr(controller, "DesktopController", controller_factory)
+
+        result = module.build_desktop_controller(
+            paths=paths,
+            guard=guard,
+            backend_socket=reserved_socket,
+            backend_address=("127.0.0.1", port),
+            admin_token="desktop-secret",
+        )
+
+    assert result is sentinels["controller"]
+    assert captured["server"] == {
+        "host": "127.0.0.1",
+        "port": port,
+        "prebound_socket": reserved_socket,
+    }
+    assert captured["window"] == {
+        "paths": paths,
+        "url": f"http://127.0.0.1:{port}",
+    }
+    assert captured["tray"] == {
+        "paths": paths,
+        "base_url": f"http://127.0.0.1:{port}",
+        "admin_token": "desktop-secret",
+    }
+    assert captured["controller"] == {
+        "server": sentinels["server"],
+        "window": sentinels["window"],
+        "tray": sentinels["tray"],
+        "guard": guard,
+        "paths": paths,
+    }
 
 
 def test_entry_does_not_release_guard_again_after_controller_owns_lifecycle(
@@ -420,6 +538,61 @@ def test_entry_migration_failure_releases_guard_without_building_controller(
     assert messages == ["桌面客户端启动失败：migration failed"]
 
 
+def test_occupied_backend_port_aborts_before_database_migration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _desktop_entry_module()
+    paths = SimpleNamespace(
+        user_root=tmp_path,
+        runtime_dir=tmp_path / "runtime",
+        log_dir=tmp_path / "logs",
+    )
+    history: list[str] = []
+    messages: list[str] = []
+    guard = FakeEntryGuard(history, paths.runtime_dir / "desktop.lock")
+    logger = RecordingDesktopLogger([])
+    hooks = FakeHookInstallation(history)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        port = int(occupied.getsockname()[1])
+        monkeypatch.setenv("MW_BACKEND_PORT", str(port))
+        monkeypatch.setattr(module.multiprocessing, "freeze_support", lambda: None)
+        monkeypatch.setattr(module, "build_runtime_paths", lambda: paths)
+        monkeypatch.setattr(module, "ensure_runtime_directories", lambda _paths: None)
+        monkeypatch.setattr(module, "configure_desktop_environment", lambda _paths: None)
+        monkeypatch.setattr(module, "configure_desktop_logging", lambda _paths: logger)
+        monkeypatch.setattr(
+            module,
+            "install_desktop_exception_hooks",
+            lambda _paths, _state_provider: hooks,
+        )
+        monkeypatch.setattr(module, "close_desktop_logging", lambda _logger: None)
+        monkeypatch.setattr(module, "SingleInstanceGuard", lambda _path: guard)
+        monkeypatch.setattr(
+            module,
+            "migrate_legacy_database",
+            lambda _paths: history.append("database.migrate"),
+        )
+        monkeypatch.setattr(
+            module,
+            "build_desktop_controller",
+            lambda **_kwargs: pytest.fail("occupied port must abort before controller build"),
+        )
+        monkeypatch.setattr(
+            module,
+            "show_native_error",
+            lambda _title, text: messages.append(text),
+        )
+
+        assert module.main() == 1
+
+    assert "database.migrate" not in history
+    assert guard.release_calls == 1
+    assert messages and "already in use" in messages[0]
+
+
 def test_importing_desktop_entry_does_not_import_backend_app_or_gui_dependencies() -> None:
     backend_dir = Path(__file__).resolve().parents[1]
     probe = subprocess.run(
@@ -441,6 +614,45 @@ def test_importing_desktop_entry_does_not_import_backend_app_or_gui_dependencies
     )
 
     assert probe.returncode == 0, probe.stderr
+
+
+def test_runtime_settings_loader_honors_desktop_env_file_on_first_import(
+    tmp_path: Path,
+) -> None:
+    backend_dir = Path(__file__).resolve().parents[1]
+    env_file = tmp_path / "desktop.env"
+    env_file.write_text(
+        "MW_BACKEND_PORT=23456\nMW_ADMIN_TOKEN=fresh-desktop-token\n",
+        encoding="utf-8",
+    )
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"MW_BACKEND_PORT", "MW_ADMIN_TOKEN", "MW_ENV_FILE"}
+    }
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os, sys; import desktop_app; "
+                "assert 'app.config' not in sys.modules; "
+                "os.environ['MW_ENV_FILE'] = sys.argv[1]; "
+                "settings = desktop_app.load_desktop_runtime_settings(); "
+                "assert desktop_app.desktop_backend_address() == ('127.0.0.1', 23456); "
+                "assert settings.MW_ADMIN_TOKEN == 'fresh-desktop-token'"
+            ),
+            str(env_file),
+        ],
+        cwd=backend_dir,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert probe.returncode == 0, (probe.stdout, probe.stderr)
 
 
 def test_native_error_adapter_uses_injected_windows_message_box() -> None:
@@ -805,6 +1017,125 @@ def test_smoke_runner_failure_still_stops_and_joins_backend(tmp_path: Path) -> N
         "thread.join:10",
     ]
     assert server.thread.is_alive() is False
+
+
+def test_smoke_runner_forces_exit_when_backend_stop_times_out_after_primary_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _desktop_entry_module()
+    history: list[str] = []
+    server = FakeSmokeServer(history, ready=False)
+    paths = SimpleNamespace(user_root=tmp_path, log_dir=tmp_path / "logs")
+
+    class ForcedStopTimeoutError(RuntimeError):
+        requires_forced_exit = True
+
+    def fail_stop(timeout: float = 10) -> None:
+        history.append(f"server.stop:{timeout}")
+        raise ForcedStopTimeoutError("backend thread did not stop")
+
+    server.stop = fail_stop  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        module,
+        "write_desktop_crash",
+        lambda _paths, exception, state: history.append(f"crash:{state}:{exception}"),
+    )
+    monkeypatch.setattr(module.logging, "shutdown", lambda: history.append("logging.flush"))
+    monkeypatch.setattr(module.os, "_exit", lambda code: history.append(f"process.exit:{code}"))
+
+    with pytest.raises(ForcedStopTimeoutError, match="backend thread did not stop"):
+        module.run_smoke_test(
+            paths,
+            server_factory=lambda _host, _port: server,
+            client_factory=lambda **_options: pytest.fail("HTTP must wait for readiness"),
+            port_selector=lambda: 24680,
+        )
+
+    assert history[-3:] == [
+        "crash:smoke-stop-timeout:backend thread did not stop",
+        "logging.flush",
+        "process.exit:1",
+    ]
+
+
+def test_smoke_stop_timeout_terminates_a_process_with_a_live_non_daemon_thread(
+    tmp_path: Path,
+) -> None:
+    backend_dir = Path(__file__).resolve().parents[1]
+    events_path = tmp_path / "events.txt"
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            r"""
+import os
+import sys
+import threading
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+import desktop_app
+
+events_path = Path(sys.argv[1])
+
+def record(event):
+    with events_path.open("a", encoding="utf-8") as stream:
+        stream.write(f"{event}\n")
+
+class ForcedStopTimeout(RuntimeError):
+    requires_forced_exit = True
+
+class StubbornSmokeServer:
+    def __init__(self):
+        self.error = None
+        self.release = threading.Event()
+        self.thread = threading.Thread(target=self.release.wait, daemon=False)
+
+    def start(self):
+        self.thread.start()
+
+    def wait_ready(self, _timeout):
+        return False
+
+    def stop(self, timeout=10):
+        record(f"stop:{timeout}")
+        raise ForcedStopTimeout("backend thread did not stop")
+
+desktop_app._SMOKE_STOP_TIMEOUT_SECONDS = 0.01
+desktop_app.write_desktop_crash = (
+    lambda _paths, _exception, state: record(f"crash:{state}") or True
+)
+desktop_app.logging.shutdown = lambda: record("flush")
+
+threading.Thread(
+    target=lambda: (time.sleep(1), os._exit(23)),
+    daemon=True,
+).start()
+
+desktop_app.run_smoke_test(
+    SimpleNamespace(user_root=events_path.parent, log_dir=events_path.parent),
+    server_factory=lambda _host, _port: StubbornSmokeServer(),
+    client_factory=lambda **_options: None,
+    port_selector=lambda: 24680,
+)
+""",
+            str(events_path),
+        ],
+        cwd=backend_dir,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert probe.returncode == 1, (probe.stdout, probe.stderr)
+    assert events_path.read_text(encoding="utf-8").splitlines() == [
+        "stop:0.01",
+        "crash:smoke-stop-timeout",
+        "flush",
+    ]
 
 
 def test_available_port_selector_avoids_an_occupied_loopback_port() -> None:
