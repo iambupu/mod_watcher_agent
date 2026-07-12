@@ -888,6 +888,12 @@ def test_inno_webview2_policy_is_conditional_offline_and_verifies_result() -> No
 
     code = "\n".join(sections["code"])
     assert guid in code.casefold()
+    assert re.search(
+        r"function\s+RegistryHasWebView2\s*\(const\s+RootKey:\s*Integer\)",
+        code,
+        re.IGNORECASE,
+    )
+    assert not [line for line in sections["code"] if line.lstrip().startswith("[")]
     assert "RegQueryStringValue" in code
     assert {"HKCU32", "HKCU64", "HKLM32", "HKLM64"}.issubset(
         set(re.findall(r"\bHK(?:CU|LM)(?:32|64)\b", code))

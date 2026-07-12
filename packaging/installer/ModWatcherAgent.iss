@@ -80,7 +80,7 @@ begin
   Result := ParsedVersion > 0;
 end;
 
-function RegistryHasWebView2(const RootKey: HKEY): Boolean;
+function RegistryHasWebView2(const RootKey: Integer): Boolean;
 var
   Version: String;
 begin
@@ -150,12 +150,10 @@ begin
     (not IsWebView2RuntimeInstalled) then
   begin
     FailureText := FmtMessage(
-      CustomMessage('WebView2InstallFailure'),
-      [IntToStr(WebView2InstallExitCode)]);
+      CustomMessage('WebView2InstallFailure'), [IntToStr(WebView2InstallExitCode)]);
     ShowWebView2Guidance(FailureText);
     Result := FmtMessage(
-      CustomMessage('WebView2InstallRetry'),
-      [FailureText]);
+      CustomMessage('WebView2InstallRetry'), [FailureText]);
   end;
 end;
 #endif
@@ -179,8 +177,7 @@ begin
   begin
     MsgBox(
       FmtMessage(
-        CustomMessage('UserDataDeleteFailed'),
-        [ExpandConstant('{localappdata}\ModWatcherAgent')]),
+        CustomMessage('UserDataDeleteFailed'), [ExpandConstant('{localappdata}\ModWatcherAgent')]),
       mbError,
       MB_OK);
   end;
@@ -204,8 +201,7 @@ begin
     Exit;
   if MsgBox(
     FmtMessage(
-      CustomMessage('UserDataDeleteSecond'),
-      [ExpandConstant('{localappdata}\ModWatcherAgent')]),
+      CustomMessage('UserDataDeleteSecond'), [ExpandConstant('{localappdata}\ModWatcherAgent')]),
     mbConfirmation,
     MB_YESNO or MB_DEFBUTTON2) <> IDYES then
     Exit;
