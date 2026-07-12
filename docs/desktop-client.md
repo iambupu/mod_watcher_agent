@@ -2,7 +2,7 @@
 
 本文面向使用 Mod Watcher Agent Windows 独立客户端的普通用户，也为需要诊断、迁移或源码兼容模式的高级用户提供准确边界。
 
-> 当前状态：桌面代码基线 `de86184` 已在本机使用 Python 3.12.13 x64 与 Inno Setup 6.7.3 完整执行 `scripts/build_desktop.ps1`，退出码为 0；backend、Ruff、前端安装/类型检查/测试/构建、PyInstaller onedir、packaged smoke、portable、Setup 和 SHA256 全链均执行完成。构建脚本已将含陈旧安装器的输入目录自动收敛为精确 4 件相互匹配的当前资产；最终 onedir 与静默安装后的 EXE 都通过强化无 GUI smoke，两轮静默逐用户安装/卸载、默认保留用户数据和开机启动项归属清理也已实测。以上只证明本机 headless 构建与静默安装路径，不代表 GitHub-hosted workflow、tag Release、Windows 10/11 GUI、DPI/双屏/托盘、缺失 WebView2、升级、交互删除或代码签名已经验收。逐项边界见 [验收记录](./desktop-client-acceptance.md)。
+> 当前状态：桌面代码基线 `ec5dedb` 已在本机使用 Python 3.12.13 x64 与 Inno Setup 6.7.3 完整执行 `scripts/build_desktop.ps1`，退出码为 0；backend、Ruff、前端安装/类型检查/测试/构建、PyInstaller onedir、packaged smoke、portable、Setup 和 SHA256 全链均执行完成。构建脚本已将含陈旧安装器的输入目录自动收敛为精确 4 件相互匹配的当前资产；最终 onedir 与静默安装后的 EXE 都通过强化无 GUI smoke，两轮静默逐用户安装/卸载、默认保留用户数据和开机启动项归属清理也已实测。以上只证明本机 headless 构建与静默安装路径，不代表 GitHub-hosted workflow、tag Release、Windows 10/11 GUI、DPI/双屏/托盘、缺失 WebView2、升级、交互删除或代码签名已经验收。逐项边界见 [验收记录](./desktop-client-acceptance.md)。
 
 ## 1. 客户端形态
 
@@ -18,13 +18,13 @@ ModWatcherAgent.exe
 
 React 界面由同一进程中的 FastAPI 托管。客户端不会为 Uvicorn 再启动一个 Python 子进程，也不会启动 Vite 或 Node.js。
 
-正常桌面模式固定监听：
+正常桌面模式默认监听：
 
 ```text
 http://127.0.0.1:17500
 ```
 
-该地址只绑定回环接口。端口被占用时，正常桌面启动会失败并写入日志，不会自动改用随机端口。随机端口只用于隔离 smoke test。
+该地址只绑定回环接口。客户端会先加载用户 `.env`，只解析一次地址；取得单实例锁后、数据库迁移前即独占并监听该端口，再把同一 socket 移交给 Uvicorn。端口被占用时会在迁移前失败并写入日志，不会自动改用随机端口。随机端口只用于隔离 smoke test。
 
 ## 2. 选择安装版或便携版
 
@@ -305,7 +305,7 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 Get-NetTCPConnection -LocalPort 17500 -State Listen
 ```
 
-确认占用进程后安全退出它，再重启客户端。普通桌面模式不会自动选择新端口。
+确认占用进程后安全退出它，再重启客户端。客户端会在数据库迁移前拒绝占用状态，普通桌面模式不会自动选择新端口。
 
 ### 14.3 托盘图标缺失
 

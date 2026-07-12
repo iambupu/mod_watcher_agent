@@ -7,13 +7,13 @@
 截至 2026-07-12：
 
 - 桌面运行时、迁移、生命周期、日志、PyInstaller、portable、Inno 脚本和发布 workflow 均已有实现与自动测试。
-- 桌面代码基线 `de86184` 已在本机使用 Python 3.12.13 x64 与 Inno Setup 6.7.3 完整执行 `scripts/build_desktop.ps1`，退出码为 0。该命令实际经过 backend 测试、Ruff、`npm ci`、前端 typecheck/test/build、PyInstaller onedir、packaged smoke、portable、Inno 和 SHA256 阶段。
+- 桌面代码基线 `ec5dedb` 已在本机使用 Python 3.12.13 x64 与 Inno Setup 6.7.3 完整执行 `scripts/build_desktop.ps1`，退出码为 0。该命令实际经过 backend 测试、Ruff、`npm ci`、前端 typecheck/test/build、PyInstaller onedir、packaged smoke、portable、Inno 和 SHA256 阶段。
 - 最终 onedir 含 1,045 个文件；EXE 为 x64 PE，7 项关键资源存在，onedir 与 ZIP 禁入扫描通过。ZIP 内 EXE 与 `dist-desktop` EXE 的 SHA256 一致。
 - 最终构建从含 `0.0.0` 陈旧安装器的目录自动收敛为 portable、Setup 及两个同名 `.sha256`；当前本地 `release` 精确包含 4 件与基线对应的资产，摘要和文件名严格匹配。
-- build 后独立 packaged smoke 以端口 11232 通过；health、React HTML shell、引用的本地脚本/样式资源、隔离数据库/日志、进程、端口和临时目录清理均通过。
-- 最终 Setup 已两次静默逐用户安装到含中文和空格的临时目录；安装后 EXE smoke 以端口 11756 通过，静默卸载保留用户数据 sentinel，删除仅属于当前安装 EXE 的 HKCU Run 值，并保留用户改写的同名 Run 值。测试后安装文件、Run 值、HKCU 卸载项、进程、数据目录和临时目录均无本轮残留。
+- build 后独立 packaged smoke 以端口 10905 通过；health、React HTML shell、引用的本地脚本/样式资源、隔离数据库/日志、进程、端口和临时目录清理均通过。
+- 最终 Setup 已两次静默逐用户安装到含中文和空格的临时目录；两次安装后 EXE smoke 分别以端口 11354、11661 通过，静默卸载保留用户数据 sentinel，删除仅属于当前安装 EXE 的 HKCU Run 值，并保留用户改写的同名 Run 值。测试后安装文件、Run 值、HKCU 卸载项、进程、数据目录和临时目录均无本轮残留。
 - 当前 EXE 与 Setup 的 Authenticode 状态均为 `NotSigned`。
-- 最终 Python 3.12 backend 回归为 1,276 passed（1 warning），打包/发布联合回归为 135 passed；生命周期/安全、打包/发布和陈旧制品清理的独立复审均为 P0/P1/P2 全部 0。
+- 最终 Python 3.12 backend 回归为 1,292 passed（1 warning），前端为 35 个测试文件中的 168 passed；统一终审、生命周期/清理专项和 socket/迁移专项复审均为 Critical/Important/Minor 全部 0。
 - 没有 GitHub-hosted `workflow_dispatch` 或 tag Release 的执行证据。
 - 没有完成 Windows 10/11、DPI、双屏、缺失 WebView2、真实 GUI/托盘、真实旧数据库迁移、升级、交互删除和代码签名矩阵。
 
@@ -32,7 +32,7 @@
 
 ## 3. 当前证据快照
 
-本节区分两类证据：HEAD、资产大小/摘要、文件数、资源和签名状态可从当前工作区直接复核；构建退出码、端口 11232/11756 与静默安装生命周期来自本轮会话的执行输出，仓库中没有对应的持久 transcript，不应写成可由日志文件复验。
+本节区分两类证据：HEAD、资产大小/摘要、文件数、资源和签名状态可从当前工作区直接复核；构建退出码、端口 10905/11354/11661 与静默安装生命周期来自本轮会话的执行输出，仓库中没有对应的持久 transcript，不应写成可由日志文件复验。
 
 ### 3.1 自动测试
 
@@ -53,14 +53,14 @@
 - `backend/app/tests/test_windows_autostart_service.py`
 - 浏览器与 LoversLab 相关测试。
 
-Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结果。本轮最终 Python 3.12 backend 回归为 `1,276 passed`（1 warning），打包/发布联合回归为 `135 passed`，Ruff 通过。完整 `scripts/build_desktop.ps1` 实际执行 backend/Ruff 与 `npm ci`、前端 typecheck/test/build 并整体退出 0；前端仍为 35 个测试文件中的 168 个测试。三路最终独立复审结论均为 P0/P1/P2 全部 0。
+Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结果。本轮最终 Python 3.12 backend 回归为 `1,292 passed`（1 warning），Ruff 通过。完整 `scripts/build_desktop.ps1` 实际执行 backend/Ruff 与 `npm ci`、前端 typecheck/test/build 并整体退出 0；前端为 35 个测试文件中的 168 个测试。三路最终独立复审结论均为 Critical/Important/Minor 全部 0。
 
 ### 3.2 本机真实产物
 
-已验证（针对桌面代码基线 `de86184` 的最终 `dist-desktop` 产物）：
+已验证（针对桌面代码基线 `ec5dedb` 的最终 `dist-desktop` 产物）：
 
 - `dist-desktop\ModWatcherAgent\ModWatcherAgent.exe` 可运行 `--smoke-test`。
-- build 后独立 smoke 使用端口 11232，启动真实进程内 FastAPI，检查 `/api/health`、React HTML shell 与全部引用的本地脚本/样式资源，创建隔离数据库和 `desktop.log`，随后确认进程、同一端口和临时目录清理。
+- build 后独立 smoke 使用端口 10905，启动真实进程内 FastAPI，检查 `/api/health`、React HTML shell 与全部引用的本地脚本/样式资源，创建隔离数据库和 `desktop.log`，随后确认进程、同一端口和临时目录清理。
 - EXE 的 PE Machine 为 `0x8664`。
 - onedir 共 1,045 个文件；前端 `index.html`、Alembic 配置、游戏别名、WebView2 Core/WinForms、x64 Loader 与 `Python.Runtime.dll` 共 7 项关键资源存在。
 - onedir 与 portable ZIP 禁入扫描没有发现运行时数据库、日志、profile、快照、缓存、测试或明显凭据。
@@ -80,14 +80,14 @@ Task1–8 报告记录了逐阶段 RED/GREEN、完整 backend 回归和 Ruff 结
 
 | 资产 | 大小 | SHA256 / 校验 |
 |---|---:|---|
-| `ModWatcherAgent-0.2.2-win-x64-portable.zip` | 81,113,697 bytes | `b1ee095fe0d521489ef5cd524ee5e0541499d3de9ff53713b2f2875cb7ff42e3` |
+| `ModWatcherAgent-0.2.2-win-x64-portable.zip` | 81,117,677 bytes | `64812b3d011da812e05da707b684fa311e0df0ba13efb6e1457b870ed653cce9` |
 | `ModWatcherAgent-0.2.2-win-x64-portable.zip.sha256` | 110 bytes | 摘要与文件名严格匹配 portable ZIP。 |
-| `ModWatcherAgent-Setup-0.2.2-win-x64.exe` | 58,992,836 bytes | `6d13c4cd5fd2286046757c850f36b40c6b4f77b7b413093d543cdde9290a1738` |
+| `ModWatcherAgent-Setup-0.2.2-win-x64.exe` | 58,994,256 bytes | `19a6b434ddbf9a46857c182be46282ae7b06dfb535ba8a993e04f68408e3817e` |
 | `ModWatcherAgent-Setup-0.2.2-win-x64.exe.sha256` | 107 bytes | 摘要与文件名严格匹配 Setup。 |
 
-portable ZIP 含 1,045 个文件，ZIP 内 EXE 与当前 onedir EXE 的 SHA256 相同。完整构建使用已校验的 Inno Setup 6.7.3 并退出 0；最终 Setup 与 EXE 的 Authenticode 状态均为 `NotSigned`。这些是本地产物，不是 GitHub Release 资产。
+portable ZIP 与 onedir 各含 1,045 个文件，完整文件树一致；ZIP 内 EXE 与当前 onedir EXE 的 SHA256 均为 `4d35b209dddb8cb2f7a090e40334e54493868cc51a3d297e821cb287e4432e6f`。完整构建使用已校验的 Inno Setup 6.7.3 并退出 0；最终 Setup 与 EXE 的 Authenticode 状态均为 `NotSigned`。这些是本地产物，不是 GitHub Release 资产。
 
-最终 Setup 的本机静默生命周期证据为：两次安装到含中文和空格的临时目录并成功卸载；安装后 EXE smoke 在端口 11756 通过；LocalAppData 用户数据 sentinel 保留；精确归属当前安装 EXE 的 Run 值被删除，用户改写为其他命令的同名 Run 值被保留。测试后安装文件、Run 值、HKCU 卸载项、进程、数据目录和临时目录无本轮残留。该证据不包含覆盖升级、安装向导、快捷方式、交互卸载双确认或删除用户数据。
+最终 Setup 的本机静默生命周期证据为：两次安装到含中文和空格的临时目录并成功卸载；两次安装后 EXE smoke 分别在端口 11354、11661 通过；LocalAppData 用户数据 sentinel 保留；精确归属当前安装 EXE 的 Run 值被删除，用户改写为其他命令的同名 Run 值被保留。测试后安装文件、Run 值、HKCU 卸载项、进程、数据目录和临时目录无本轮残留。该证据不包含覆盖升级、安装向导、快捷方式、交互卸载双确认或删除用户数据。
 
 ### 3.4 GitHub Actions
 
@@ -109,9 +109,9 @@ portable ZIP 含 1,045 个文件，ZIP 内 EXE 与当前 onedir EXE 的 SHA256 �
 |---|---|---|---|---|
 | Task 1：RuntimePaths | 源码/冻结路径、目录创建、本地绑定环境 | `test_runtime_paths.py` | 自动通过 | 中文用户名真实 Windows 流程见 M05。 |
 | Task 2：后端资源与 health | 前端/Alembic/浏览器路径、`/api/health`、生命周期清理 | `test_desktop_runtime_integration.py` | 自动通过 | 干净发布机静态资源回归见 M01/M02。 |
-| Task 3：SQLite 迁移 | Backup API、WAL、integrity、锁、no-clobber、元数据 | `test_database_migration.py` | 自动通过 | 真实旧用户数据库见 M10。 |
-| Task 4：进程内 Uvicorn | 非 daemon 线程、自有实例 readiness、幂等 stop、超时强退和端口释放 | `test_embedded_backend.py`、controller 子进程回归 | 自动通过 | 真实桌面长时运行见 M08/M09。 |
-| Task 5：窗口/托盘/单实例 | controller、pywebview、pystray、Named Mutex、降级退出 | controller/window/tray/single-instance tests | 自动通过 | fake 驱动不能代替真实 GUI，见 M03/M04/M08。 |
+| Task 3：SQLite 迁移 | Backup API、WAL、integrity、锁、no-clobber、元数据、迁移前端口离线门禁 | `test_database_migration.py`、desktop bootstrap 竞争回归 | 自动通过 | 真实旧用户数据库见 M10。 |
+| Task 4：进程内 Uvicorn | 非 daemon 线程、自有实例及 database/frontend readiness、预监听 socket 接管、幂等 stop、超时强退和端口释放 | `test_embedded_backend.py`、controller 子进程回归 | 自动通过 | 真实桌面长时运行见 M08/M09。 |
+| Task 5：窗口/托盘/单实例 | controller、pywebview、pystray、Named Mutex、严格/共享策略托盘令牌、恢复失败清理与降级退出 | controller/window/tray/single-instance tests | 自动通过 | fake 驱动不能代替真实 GUI，见 M03/M04/M08。 |
 | Task 6：依赖/浏览器/日志/smoke | desktop extras、冻结 Chromium 禁用、脱敏日志、React/静态资源 smoke CLI | desktop app/logging/browser tests | 自动通过 | 真实浏览器与通知见 M12。 |
 | Task 7：onedir/portable | spec、受控陈旧制品清理、精确四件门禁、x64/关键资源/禁入、portable/SHA256 | 完整构建；1,045 文件；旧版安装器实际清理；当前 ZIP/SHA；独立 smoke | 本机产物通过 | GitHub-hosted 复现见 R01/R04。 |
 | Task 8：Inno/WebView2 | 逐用户安装器、条件 Bootstrapper、默认保留数据、归属 Run 值清理 | 最终 Setup 构建；两轮静默新装/卸载；smoke、sentinel 和 Run 值所有权实测 | 部分通过 | 缺失 WebView2、升级和交互路径见 M07/M14。 |
@@ -196,7 +196,7 @@ portable ZIP 含 1,045 个文件，ZIP 内 EXE 与当前 onedir EXE 的 SHA256 �
 | P03 | `console=False`、版本资源、图标、不提权 | spec/version tests | 自动通过 | M01/M02 外观 |
 | P04 | x64 PE 和 WebView2/pythonnet DLL | final x64 EXE；7 项关键资源；1,045 文件 | 本机产物通过 | GitHub-hosted R01/R04 |
 | P05 | 清理/output/reparse/junction 边界 | packaging dynamic tests；未跳过制品族清理、reparse 整体预检、未知项 fail-closed 与末尾精确四件门禁；最终 onedir/ZIP 禁入扫描 | 本机产物通过 | GitHub-hosted R01/R04 |
-| P06 | portable ZIP 与同名 SHA256 | 81,113,697 bytes；摘要/文件名匹配；ZIP EXE 与 onedir 一致 | 本机产物通过 | GitHub Release R04 |
+| P06 | portable ZIP 与同名 SHA256 | 81,117,677 bytes；摘要/文件名匹配；ZIP 与 onedir 的 1,045 文件完整一致 | 本机产物通过 | GitHub Release R04 |
 | P07 | 逐用户安装、开始菜单、可选桌面快捷方式 | 最终 Setup；静默逐用户自定义目录安装通过 | 部分通过 | 安装向导与快捷方式见 M06/M14 |
 | P08 | WebView2 条件 Bootstrapper、签名、Unicode Exec、退出码复查 | resolver/identity/Inno contract tests | 静态通过 | M07、R02 |
 | P09 | 卸载默认保留，交互双确认才删除 | Inno uninstall tests | 静态通过 | M14 |
@@ -239,7 +239,7 @@ portable ZIP 含 1,045 个文件，ZIP 内 EXE 与当前 onedir EXE 的 SHA256 �
 |---|---|---|---|
 | R01 | GitHub `workflow_dispatch` | run URL、commit SHA、所有 job/step 结果、artifact 清单 | 未执行 |
 | R02 | GitHub Runner 真实 Inno | 6.7.3 下载/attestation/签名、ISCC 编译日志、Setup SHA256 | 未执行 |
-| R03 | 当前桌面代码完整构建 | 基线 `de86184` 的 onedir smoke、portable、Setup、两个 SHA256，精确 4 件且内容 clean；实际清理一件陈旧 `0.0.0` 安装器 | 本机产物通过；GitHub-hosted 未执行 |
+| R03 | 当前桌面代码完整构建 | 基线 `ec5dedb` 的 onedir smoke、portable、Setup、两个 SHA256，精确 4 件且内容 clean；实际清理一件陈旧 `0.0.0` 安装器 | 本机产物通过；GitHub-hosted 未执行 |
 | R04 | `v<version>` tag Release | tag/version 匹配、publish job、Release URL、下载后 SHA256 复验 | 未执行 |
 
 远端运行使用 Inno Setup 编译器前，商业发布者必须自行核对并取得符合 [Inno Setup 当前商业许可政策](https://jrsoftware.org/isorder.php) 的许可。本仓库不会授予或代替该许可。
@@ -275,15 +275,15 @@ portable ZIP 含 1,045 个文件，ZIP 内 EXE 与当前 onedir EXE 的 SHA256 �
 | 托盘失败导致窗口丢失 | 高 | 实时健康、恢复与降级退出竞态测试 | 真实 shell/多屏 M04/M08 |
 | 退出留下后端、线程或端口 | 高 | 幂等 cleanup、线程测试、packaged smoke | 长时任务/浏览器 M09/M12 |
 | 后端 stop 超时后非 daemon 线程阻止退出 | 高 | 专用强退错误、保留单实例锁、记录/刷新后 `os._exit(1)`；独立子进程复现通过 | 长时真实桌面任务仍见 M09/M12 |
-| SQLite 迁移丢 WAL 或覆盖目标 | 高 | Backup API、integrity、锁、no-clobber、源库保留 | 真实旧库 M10 |
+| SQLite 迁移丢 WAL、覆盖目标或旧服务继续写源库 | 高 | Backup API、integrity、锁、no-clobber、源库保留；配置先加载且只解析一次地址；迁移前独占并监听端口，再把同一 socket 移交 Uvicorn | 真实旧库 M10 |
 | 中文/空格路径失败 | 中 | pathlib/Unicode Exec、专项自动测试 | 实际 Windows 用户 M05 |
 | 打包版 Chromium CLI 递归 | 中 | frozen 模式硬禁用，优先系统浏览器 | 系统浏览器缺失时功能不可用；M12 |
 | Release 泄露数据库/密钥 | 高 | 多阶段 tree/ZIP/installer/CI 禁入扫描；当前 onedir/ZIP 已复验 | GitHub Release R04 再复验 |
 | 日志泄露密钥/Cookie | 高 | 写入前脱敏与异常清理测试 | 新日志格式仍需 review；分享前人工检查 |
 | API Key 明文存储 | 高 | 本机回环、用户目录和文档警示 | DPAPI/Credential Manager 未实现 |
-| 端口 17500 被占用 | 中 | health 超时、原生错误与日志 | 正常模式不自动换端口；用户需释放 |
+| 端口 17500 被占用 | 中 | 单实例后、数据库迁移前即独占监听；占用时原生错误与日志，不发布迁移快照 | 正常模式不自动换端口；用户需释放 |
 | SmartScreen/杀软误报 | 中 | onedir、版本资源、SHA256 | EXE 与 Setup 当前均 NotSigned；M15 |
-| 当前 portable 与当前 onedir 不一致 | 高 | 已关闭：基线 `de86184` 完整重建；ZIP 内 EXE 与 onedir SHA256 一致 | 桌面代码再次变化后必须重建 |
+| 当前 portable 与当前 onedir 不一致 | 高 | 已关闭：基线 `ec5dedb` 完整重建；ZIP 与 onedir 的 1,045 文件完整一致 | 桌面代码再次变化后必须重建 |
 | Release 目录混入旧版或意外制品 | 高 | 未跳过制品族受控清理，完整构建前要求无未知项、末尾精确四件；`0.0.0` 陈旧安装器实际回归已通过 | GitHub-hosted R01/R04 再复验 |
 | 重跑 tag 覆盖已发布二进制 | 高 | 已移除 `--clobber`；先完整清单/字节比对，再仅补传缺件；不匹配、多余资产或查询失败时零上传 | GitHub 真实 Release 仍需 R04 |
 | 游戏别名首次播种覆盖用户文件或留下半文件 | 高 | 目标目录临时文件、flush/fsync、原子 no-clobber 发布与竞态测试；最终 onedir 含当前资源 | 真实 GUI 功能 M12 |
@@ -298,9 +298,9 @@ portable ZIP 含 1,045 个文件，ZIP 内 EXE 与当前 onedir EXE 的 SHA256 �
 
 1. R01–R04 全部有可追溯证据。
 2. M01–M14 与 M16 全部通过；M15 有明确签名/风险接受决定。
-3. 当前桌面代码重新生成精确 4 件 Release 资产，不能复用旧 portable。（本机基线 `de86184` 已满足。）
+3. 当前桌面代码重新生成精确 4 件 Release 资产，不能复用旧 portable。（本机基线 `ec5dedb` 已满足。）
 4. 所有 SHA256 与对应资产双向匹配，最终资产禁入扫描通过。（本机资产已满足，GitHub Release 仍需复验。）
-5. 当前版本全 backend、frontend 和桌面 focused tests 通过。（本机基线 `de86184` 已满足。）
+5. 当前版本全 backend、frontend 和桌面 focused tests 通过。（本机基线 `ec5dedb` 已满足。）
 6. 商业发布场景已完成 Inno Setup 当前许可合规确认。
 7. Release notes 明确 WebView2、数据目录、卸载保留、备份和已知限制。
 
