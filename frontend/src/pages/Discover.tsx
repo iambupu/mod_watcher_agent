@@ -8,8 +8,6 @@ import {
   Loader2,
   RefreshCw,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   ChevronUp,
   LayoutGrid,
   List,
@@ -35,6 +33,8 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FilterBarButton, FilterButtonGroup, FilterInput, FilterSelect } from "@/components/ui/FilterControls";
 import AppSidebar from "@/components/layout/AppSidebar";
 import { ModCard } from "@/components/ModCard";
+import { DiscoverPagination } from "@/components/DiscoverPagination";
+import { ModIntroductionModal } from "@/components/modCard/ModIntroductionModal";
 import { ModStatsLine } from "@/components/ModStatsLine";
 import { SourceBadge } from "@/components/SourceBadge";
 import { ModFilterPanel } from "@/components/ModFilterPanel";
@@ -49,14 +49,15 @@ import {
   unignoreMod,
 } from "@/api/mods";
 import { importNexusModsGame, pollJobRun, runDiscoveryAll } from "@/api/jobs";
-import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavoriteRefs, removeFavorite } from "@/api/favorites";
+import { favoriteByModId as mapFavoritesByModId, fetchFavoriteRefs } from "@/api/favorites";
 import { useSummaryRegeneration } from "@/hooks/useSummaryRegeneration";
+import { useFavoriteToggle } from "@/hooks/useFavoriteToggle";
 import { useUIStore } from "@/stores/uiStore";
 import { formatModSummary } from "@/utils/modSummary";
 import { formatModTitle } from "@/utils/modTitle";
 import { isAdultContent } from "@/utils/modAdult";
 import { formatModCategory } from "@/utils/modCategory";
-import { parseIntegerInput, parseWholeIntegerInput } from "@/utils/numberInput";
+import { parseWholeIntegerInput } from "@/utils/numberInput";
 import type { ModItem, ModSource, AdultPolicy, SummaryMode } from "@/types";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 80] as const;
@@ -218,6 +219,12 @@ const Discover: React.FC = () => {
     enabled: ignoredListOpen,
   });
 
+  const synchronizeDiscoverData = () => {
+    queryClient.invalidateQueries({ queryKey: ["mod-games"] });
+    queryClient.invalidateQueries({ queryKey: ["mod-categories"] });
+    refetch();
+  };
+
   const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
   const updatedLabel = isLoading ? t("common.loading") : t("discover.listLoaded");
 
@@ -259,7 +266,7 @@ const Discover: React.FC = () => {
         return;
       }
       setLastResult(t("jobs.foundMods", { count: job.items_matched }));
-      refetch();
+      synchronizeDiscoverData();
     } catch (e) {
       if (isCurrentRun()) {
         setLastResult(t("jobs.failed", { error: (e as Error).message }));
@@ -306,9 +313,7 @@ const Discover: React.FC = () => {
         return;
       }
       setLastResult(t("discover.importFinished", { created: job.items_matched, scanned: job.items_scanned }));
-      queryClient.invalidateQueries({ queryKey: ["mod-games"] });
-      queryClient.invalidateQueries({ queryKey: ["mod-categories"] });
-      refetch();
+      synchronizeDiscoverData();
     } catch (e) {
       if (isCurrentRun()) {
         setLastResult(t("jobs.failed", { error: (e as Error).message }));
@@ -330,7 +335,7 @@ const Discover: React.FC = () => {
   const ignoreMutation = useMutation({
     mutationFn: ignoreMod,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["mods"] });
+      synchronizeDiscoverData();
       queryClient.invalidateQueries({ queryKey: ["mods", "ignored"] });
     },
   });
@@ -349,24 +354,13 @@ const Discover: React.FC = () => {
   const unignoreMutation = useMutation({
     mutationFn: unignoreMod,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["mods"] });
+      synchronizeDiscoverData();
       queryClient.invalidateQueries({ queryKey: ["mods", "ignored"] });
-      queryClient.invalidateQueries({ queryKey: ["mod-games"] });
     },
   });
 
-  const favoriteMutation = useMutation({
-    mutationFn: async (modId: number) => {
-      const favorite = favoriteByModId.get(modId);
-      if (favorite) {
-        await removeFavorite(favorite.id);
-        return;
-      }
-      await addFavorite({ mod_id: modId });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["favorites"] });
-    },
+  const { favoriteMutation } = useFavoriteToggle({
+    favoriteByModId,
   });
 
   const handleToggleFavorite = (modId: number) => {
@@ -402,107 +396,6 @@ const Discover: React.FC = () => {
   const handleGenerateIntroduction = async (modId: number) => {
     const result = await generateIntroductionMutation.mutateAsync(modId);
     return result.content;
-  };
-
-  const renderPagination = () => {
-    if (totalPages <= 1) return null;
-
-    const pages: number[] = [];
-    const maxVisible = 5;
-    let start = Math.max(1, page - Math.floor(maxVisible / 2));
-    let end = Math.min(totalPages, start + maxVisible - 1);
-    if (end - start + 1 < maxVisible) {
-      start = Math.max(1, end - maxVisible + 1);
-    }
-    for (let i = start; i <= end; i++) {
-      pages.push(i);
-    }
-
-    const jumpToPage = () => {
-      const clamped = parseIntegerInput(pageInput, { min: 1, max: totalPages });
-      if (clamped === null || clamped === undefined) {
-        setPageInput(String(page));
-        return;
-      }
-      if (clamped !== page) {
-        setPage(clamped);
-      } else {
-        setPageInput(String(clamped));
-      }
-    };
-
-    return (
-      <div className="mt-8 flex flex-wrap items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm">
-        <Button
-          variant="outline"
-          size="sm"
-          className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-          disabled={page <= 1}
-          onClick={() => setPage((p) => p - 1)}
-        >
-          <ChevronLeft size={16} />
-        </Button>
-
-        {start > 1 && (
-          <>
-            <Button variant="ghost" size="sm" className="text-slate-600 hover:bg-slate-100 hover:text-slate-950" onClick={() => setPage(1)}>
-              1
-            </Button>
-            {start > 2 && <span className="px-1 text-slate-400">...</span>}
-          </>
-        )}
-
-        {pages.map((p) => (
-          <Button
-            key={p}
-            variant={p === page ? "default" : "ghost"}
-            size="sm"
-            className={p === page ? "border border-sky-200 bg-sky-100 text-sky-800 hover:bg-sky-100" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"}
-            onClick={() => setPage(p)}
-          >
-            {p}
-          </Button>
-        ))}
-
-        {end < totalPages && (
-          <>
-            {end < totalPages - 1 && <span className="px-1 text-slate-400">...</span>}
-            <Button variant="ghost" size="sm" className="text-slate-600 hover:bg-slate-100 hover:text-slate-950" onClick={() => setPage(totalPages)}>
-              {totalPages}
-            </Button>
-          </>
-        )}
-
-        <Button
-          variant="outline"
-          size="sm"
-          className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-          disabled={page >= totalPages}
-          onClick={() => setPage((p) => p + 1)}
-        >
-          <ChevronRight size={16} />
-        </Button>
-        <div className="ml-2 inline-flex items-center gap-2">
-          <input
-            type="number"
-            min={1}
-            max={totalPages}
-            value={pageInput}
-            onChange={(e) => setPageInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                jumpToPage();
-              }
-            }}
-            className="h-9 w-24 rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-700 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
-            aria-label={t("discover.pageJumpInputLabel")}
-          />
-          <Button type="button" variant="outline" size="sm" className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50" onClick={jumpToPage}>
-            {t("discover.pageJumpAction")}
-          </Button>
-        </div>
-      </div>
-    );
   };
 
   return (
@@ -736,7 +629,7 @@ const Discover: React.FC = () => {
                 <span className="font-medium">{updatedLabel}</span>
                 <button
                   type="button"
-                  onClick={() => refetch()}
+                  onClick={synchronizeDiscoverData}
                   className="inline-flex items-center rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-sky-700"
                   title={t("discover.retry")}
                 >
@@ -867,7 +760,7 @@ const Discover: React.FC = () => {
                     ))}
                   </div>
                 )}
-                {renderPagination()}
+              <DiscoverPagination page={page} totalPages={totalPages} pageInput={pageInput} onPageInputChange={setPageInput} onPageChange={setPage} />
               </>
             )}
           </div>
@@ -1159,33 +1052,7 @@ function DiscoverListRow({
         </div>
       </CardContent>
 
-      {introductionOpen && (
-        <ModalShell
-          open={introductionOpen}
-          onClose={() => setIntroductionOpen(false)}
-          size="md"
-          panelClassName="max-h-[80vh] overflow-hidden"
-        >
-          <ModalHeader
-            title={t("mod.aiIntroduction")}
-            subtitle={<span className="line-clamp-1">{displayTitle}</span>}
-            onClose={() => setIntroductionOpen(false)}
-            closeAriaLabel={t("common.close")}
-            className="mb-0 shrink-0 border-b border-slate-200 px-5 py-3"
-          />
-          <div className="max-h-[62vh] overflow-y-auto px-5 py-4">
-            {generatingIntroduction && !introduction ? (
-              <p className="text-sm text-slate-500">{t("mod.aiIntroductionLoading")}</p>
-            ) : introError ? (
-              <p className="text-sm text-rose-600">{introError}</p>
-            ) : (
-              <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                {introduction || mod.ai_introduction || t("mod.noAiIntroduction")}
-              </p>
-            )}
-          </div>
-        </ModalShell>
-      )}
+      <ModIntroductionModal open={introductionOpen} title={displayTitle} introduction={introduction} fallbackIntroduction={mod.ai_introduction} error={introError} loading={generatingIntroduction} onClose={() => setIntroductionOpen(false)} />
     </Card>
   );
 }

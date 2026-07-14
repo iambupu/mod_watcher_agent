@@ -9,11 +9,15 @@ import {
   SUMMARY_MODES,
   UI_LANGUAGES,
 } from "@/constants/settings";
-import { DEFAULT_PROVIDER_BASE_URLS, KNOWN_LLM_PROVIDERS } from "@/constants/llmProviders";
-import type { UserSettings, UILanguage, SummaryMode, LlmProvider, LlmProviderConfig, AccessProfile } from "@/types";
+import type { UserSettings, UILanguage, SummaryMode, LlmProviderConfig, AccessProfile } from "@/types";
 import { parseBoolean } from "@/utils/boolean";
-import { parseJsonArray, parseJsonText } from "@/utils/json";
+import { parseJsonText } from "@/utils/json";
 import { clampIntegerInput } from "@/utils/numberInput";
+import {
+  isKnownLlmProvider,
+  parseLlmProviders,
+  serializeLlmProviders,
+} from "./llmProviderCodec";
 
 const KNOWN_UI_LANGUAGES = new Set<UILanguage>(UI_LANGUAGES);
 const KNOWN_SUMMARY_MODES = new Set<SummaryMode>(SUMMARY_MODES);
@@ -62,47 +66,31 @@ interface BackendSettings {
   bind_host: string;
 }
 
-interface BackendLlmProviderConfig {
-  provider: string;
-  enabled: boolean;
-  priority: number;
-  model: string;
-  api_key: string;
-  base_url: string;
-}
-
 interface SettingsResponse {
   settings: BackendSettings;
 }
 
+interface BackendRuntimePaths {
+  config_dir: string;
+  default_database_path: string;
+  active_database_path: string;
+}
+
+export interface RuntimePathsInfo {
+  configDir: string;
+  defaultDatabasePath: string;
+  activeDatabasePath: string;
+}
+
 function mapBackendToSettings(data: SettingsResponse): UserSettings {
   const s = data.settings;
-  let llmProviders: LlmProviderConfig[] = [];
-  llmProviders = parseJsonArray(s.llm_providers_json).flatMap((item) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-    const p = item as Partial<BackendLlmProviderConfig>;
-    const provider = p.provider || "";
-    if (!isKnownLlmProvider(provider)) return [];
-    return [{
-      provider,
-      enabled: parseBoolean(p.enabled),
-      priority: clampIntegerInput(String(p.priority ?? ""), { min: 1, max: 999, fallback: 999 }),
-      model: p.model || "",
-      apiKey: p.api_key || "",
-      baseUrl: p.base_url || DEFAULT_PROVIDER_BASE_URLS[provider] || "",
-    }];
-  });
   const primaryProvider = isKnownLlmProvider(s.llm_provider) ? s.llm_provider : "openai";
-  if (llmProviders.length === 0) {
-    llmProviders = [{
-      provider: primaryProvider,
-      enabled: true,
-      priority: 1,
-      model: s.llm_model || "",
-      apiKey: s.llm_api_key || "",
-      baseUrl: s.llm_base_url || DEFAULT_PROVIDER_BASE_URLS[primaryProvider],
-    }];
-  }
+  const llmProviders = parseLlmProviders(s.llm_providers_json, {
+    provider: s.llm_provider,
+    model: s.llm_model || "",
+    apiKey: s.llm_api_key || "",
+    baseUrl: s.llm_base_url || "",
+  });
   return {
     uiLanguage: knownValue(KNOWN_UI_LANGUAGES, s.ui_language, "zh-CN"),
     summaryLanguage: knownValue(KNOWN_UI_LANGUAGES, s.summary_language, "zh-CN"),
@@ -159,42 +147,35 @@ function mapBackendToSettings(data: SettingsResponse): UserSettings {
   };
 }
 
-function isKnownLlmProvider(provider: string): provider is LlmProvider {
-  return KNOWN_LLM_PROVIDERS.has(provider as LlmProvider);
-}
-
 function knownValue<T extends string>(knownValues: Set<T>, raw: string | undefined, fallback: T): T {
   return knownValues.has(raw as T) ? (raw as T) : fallback;
 }
 
 function mapSettingsToBackend(s: Partial<UserSettings>): { settings: Partial<BackendSettings> } {
   const settings: Partial<BackendSettings> = {};
-  if (s.uiLanguage !== undefined) settings.ui_language = s.uiLanguage;
-  if (s.summaryLanguage !== undefined) settings.summary_language = s.summaryLanguage;
-  if (s.summaryMode !== undefined) settings.summary_mode = s.summaryMode;
-  if (s.summaryReportIntervalMinutes !== undefined) settings.summary_report_interval_minutes = String(s.summaryReportIntervalMinutes);
-  if (s.summaryReportPrompt !== undefined) settings.summary_report_prompt = s.summaryReportPrompt;
-  if (s.watchdogCheckIntervalMinutes !== undefined) settings.watchdog_check_interval_minutes = String(s.watchdogCheckIntervalMinutes);
-  if (s.watchdogGraceMinutes !== undefined) settings.watchdog_grace_minutes = String(s.watchdogGraceMinutes);
-  if (s.watchdogMaxCatchupPerRun !== undefined) settings.watchdog_max_catchup_per_run = String(s.watchdogMaxCatchupPerRun);
-  if (s.nexusApiKey !== undefined) settings.nexus_api_key = s.nexusApiKey;
-  if (s.googleSearchApiKey !== undefined) settings.google_search_api_key = s.googleSearchApiKey;
-  if (s.googleSearchEngineId !== undefined) settings.google_search_engine_id = s.googleSearchEngineId;
-  if (s.loverslabSearchScrapeEnabled !== undefined) settings.loverslab_search_scrape_enabled = String(s.loverslabSearchScrapeEnabled);
-  if (s.loverslabSearchScrapeEngine !== undefined) settings.loverslab_search_scrape_engine = s.loverslabSearchScrapeEngine;
-  if (s.llmProvider !== undefined) settings.llm_provider = s.llmProvider;
-  if (s.llmModel !== undefined) settings.llm_model = s.llmModel;
-  if (s.llmApiKey !== undefined) settings.llm_api_key = s.llmApiKey;
-  if (s.llmBaseUrl !== undefined) settings.llm_base_url = s.llmBaseUrl;
+  const assign = (key: keyof BackendSettings, value: unknown) => {
+    if (value !== undefined) (settings as Record<string, string>)[key] = String(value);
+  };
+
+  assign("ui_language", s.uiLanguage);
+  assign("summary_language", s.summaryLanguage);
+  assign("summary_mode", s.summaryMode);
+  assign("summary_report_interval_minutes", s.summaryReportIntervalMinutes);
+  assign("summary_report_prompt", s.summaryReportPrompt);
+  assign("watchdog_check_interval_minutes", s.watchdogCheckIntervalMinutes);
+  assign("watchdog_grace_minutes", s.watchdogGraceMinutes);
+  assign("watchdog_max_catchup_per_run", s.watchdogMaxCatchupPerRun);
+  assign("nexus_api_key", s.nexusApiKey);
+  assign("google_search_api_key", s.googleSearchApiKey);
+  assign("google_search_engine_id", s.googleSearchEngineId);
+  assign("loverslab_search_scrape_enabled", s.loverslabSearchScrapeEnabled);
+  assign("loverslab_search_scrape_engine", s.loverslabSearchScrapeEngine);
+  assign("llm_provider", s.llmProvider);
+  assign("llm_model", s.llmModel);
+  assign("llm_api_key", s.llmApiKey);
+  assign("llm_base_url", s.llmBaseUrl);
   if (s.llmProviders !== undefined) {
-    settings.llm_providers_json = JSON.stringify(s.llmProviders.map((p) => ({
-      provider: p.provider,
-      enabled: p.enabled,
-      priority: p.priority,
-      model: p.model,
-      api_key: p.apiKey,
-      base_url: p.baseUrl,
-    })));
+    settings.llm_providers_json = JSON.stringify(serializeLlmProviders(s.llmProviders));
     const primary = [...s.llmProviders].filter((p) => p.enabled).sort((a, b) => a.priority - b.priority)[0] ?? s.llmProviders[0];
     if (primary) {
       settings.llm_provider = primary.provider;
@@ -203,30 +184,43 @@ function mapSettingsToBackend(s: Partial<UserSettings>): { settings: Partial<Bac
       settings.llm_base_url = primary.baseUrl;
     }
   }
-  if (s.telegramEnabled !== undefined) settings.telegram_enabled = String(s.telegramEnabled);
-  if (s.telegramBotToken !== undefined) settings.telegram_bot_token = s.telegramBotToken;
-  if (s.telegramChatId !== undefined) settings.telegram_chat_id = s.telegramChatId;
-  if (s.discordEnabled !== undefined) settings.discord_enabled = String(s.discordEnabled);
-  if (s.discordWebhookUrl !== undefined) settings.discord_webhook_url = s.discordWebhookUrl;
-  if (s.systemNotificationsEnabled !== undefined) settings.system_notifications_enabled = String(s.systemNotificationsEnabled);
-  if (s.autoStart !== undefined) settings.auto_start = String(s.autoStart);
-  if (s.notificationsEnabled !== undefined) settings.notifications_enabled = String(s.notificationsEnabled);
-  if (s.databasePath !== undefined) settings.database_path = s.databasePath;
-  if (s.proxyEnabled !== undefined) settings.proxy_enabled = String(s.proxyEnabled);
-  if (s.proxyType !== undefined) settings.proxy_type = s.proxyType;
-  if (s.proxyHost !== undefined) settings.proxy_host = s.proxyHost;
-  if (s.proxyPort !== undefined) settings.proxy_port = String(s.proxyPort);
-  if (s.proxyUsername !== undefined) settings.proxy_username = s.proxyUsername;
-  if (s.proxyPassword !== undefined) settings.proxy_password = s.proxyPassword;
-  if (s.accessProfile !== undefined) settings.access_profile = s.accessProfile;
-  if (s.allowLan !== undefined) settings.allow_lan = String(s.allowLan);
-  if (s.bindHost !== undefined) settings.bind_host = s.bindHost;
+  assign("telegram_enabled", s.telegramEnabled);
+  assign("telegram_bot_token", s.telegramBotToken);
+  assign("telegram_chat_id", s.telegramChatId);
+  assign("discord_enabled", s.discordEnabled);
+  assign("discord_webhook_url", s.discordWebhookUrl);
+  assign("system_notifications_enabled", s.systemNotificationsEnabled);
+  assign("auto_start", s.autoStart);
+  assign("notifications_enabled", s.notificationsEnabled);
+  assign("database_path", s.databasePath);
+  assign("proxy_enabled", s.proxyEnabled);
+  assign("proxy_type", s.proxyType);
+  assign("proxy_host", s.proxyHost);
+  assign("proxy_port", s.proxyPort);
+  assign("proxy_username", s.proxyUsername);
+  assign("proxy_password", s.proxyPassword);
+  assign("access_profile", s.accessProfile);
+  assign("allow_lan", s.allowLan);
+  assign("bind_host", s.bindHost);
   return { settings };
 }
 
 export async function fetchSettings(): Promise<UserSettings> {
   const data = await get<SettingsResponse>("/settings");
   return mapBackendToSettings(data);
+}
+
+export async function fetchRuntimePaths(): Promise<RuntimePathsInfo> {
+  const paths = await get<BackendRuntimePaths>("/settings/runtime-paths");
+  return {
+    configDir: paths.config_dir,
+    defaultDatabasePath: paths.default_database_path,
+    activeDatabasePath: paths.active_database_path,
+  };
+}
+
+export function openConfigDirectory(): Promise<{ opened: boolean; path: string }> {
+  return post<{ opened: boolean; path: string }>("/settings/open-config-dir");
 }
 
 export async function updateSettings(data: Partial<UserSettings>): Promise<UserSettings> {
@@ -252,14 +246,7 @@ export interface LlmProviderTestResult {
 
 export async function testLlmProviders(providers: LlmProviderConfig[]): Promise<{ results: LlmProviderTestResult[] }> {
   return post<{ results: LlmProviderTestResult[] }>("/settings/llm/test", {
-    providers: providers.map((p) => ({
-      provider: p.provider,
-      enabled: p.enabled,
-      priority: p.priority,
-      model: p.model,
-      api_key: p.apiKey,
-      base_url: p.baseUrl,
-    })),
+    providers: serializeLlmProviders(providers),
   });
 }
 

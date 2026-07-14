@@ -31,7 +31,7 @@ import { Panel } from "@/components/ui/Panel";
 import { fetchStats } from "@/api/stats";
 import type { Stats } from "@/api/stats";
 import { fetchRecommendedMods } from "@/api/mods";
-import { addFavorite, favoriteByModId as mapFavoritesByModId, fetchFavoriteRefs, removeFavorite } from "@/api/favorites";
+import { favoriteByModId as mapFavoritesByModId, fetchFavoriteRefs } from "@/api/favorites";
 import { fetchJobRuns, fetchSchedulerStatus, pauseScheduler, resumeScheduler, runSummaryReport } from "@/api/jobs";
 import type { JobRun } from "@/api/jobs";
 import { fetchSettings } from "@/api/settings";
@@ -43,6 +43,7 @@ import { nonNegativeNumberValue } from "@/utils/numberInput";
 import type { ModItem } from "@/types";
 import { ModalHeader, ModalShell } from "@/components/ui/Modal";
 import { FilterBarButton } from "@/components/ui/FilterControls";
+import { useFavoriteToggle } from "@/hooks/useFavoriteToggle";
 
 interface StatCardConfig {
   icon: React.ReactNode;
@@ -268,19 +269,9 @@ const Dashboard: React.FC = () => {
 
   const favoriteByModId = React.useMemo(() => mapFavoritesByModId(favorites), [favorites]);
 
-  const favoriteMutation = useMutation({
-    mutationFn: async (modId: number) => {
-      const favorite = favoriteByModId.get(modId);
-      if (favorite) {
-        await removeFavorite(favorite.id);
-        return;
-      }
-      await addFavorite({ mod_id: modId });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["favorites"] });
-      queryClient.invalidateQueries({ queryKey: ["stats"] });
-    },
+  const { favoriteMutation } = useFavoriteToggle({
+    favoriteByModId,
+    invalidateQueryKeys: [["favorites"], ["stats"]],
   });
 
   const handleToggleFavorite = (modId: number) => {

@@ -2,7 +2,13 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { exportSettings, fetchSettings, importSettings } from "@/api/settings";
+import {
+  exportSettings,
+  fetchRuntimePaths,
+  fetchSettings,
+  importSettings,
+  openConfigDirectory,
+} from "@/api/settings";
 import { ApiError } from "@/api/client";
 
 describe("settings API mapping", () => {
@@ -143,6 +149,38 @@ describe("settings API mapping", () => {
     expect(settings.notificationsEnabled).toBe(false);
     expect(settings.proxyEnabled).toBe(true);
     expect(settings.allowLan).toBe(false);
+  });
+
+  it("maps read-only runtime paths for the settings page", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        config_dir: "C:\\Users\\tester\\AppData\\Local\\ModWatcherAgent\\config",
+        default_database_path: "C:\\Users\\tester\\AppData\\Local\\ModWatcherAgent\\data\\mod_watcher.db",
+        active_database_path: "D:\\mods\\custom.db",
+      }),
+    } as Response);
+
+    await expect(fetchRuntimePaths()).resolves.toEqual({
+      configDir: "C:\\Users\\tester\\AppData\\Local\\ModWatcherAgent\\config",
+      defaultDatabasePath: "C:\\Users\\tester\\AppData\\Local\\ModWatcherAgent\\data\\mod_watcher.db",
+      activeDatabasePath: "D:\\mods\\custom.db",
+    });
+  });
+
+  it("opens the configuration directory through the settings endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ opened: true, path: "C:\\config" }),
+    } as Response);
+
+    await expect(openConfigDirectory()).resolves.toEqual({
+      opened: true,
+      path: "C:\\config",
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain("/settings/open-config-dir");
   });
 
   it("clamps numeric settings from backend values before exposing them to the UI", async () => {

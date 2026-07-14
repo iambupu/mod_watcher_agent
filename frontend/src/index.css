@@ -9,6 +9,45 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* 让桌面 WebView 的滚动条融入浅色 Mod 情报控制台，同时保留清晰的拖拽反馈。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.46) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 48px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-color: rgba(100, 116, 139, 0.42);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  border-width: 2px;
+  background-color: rgba(2, 132, 199, 0.68);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background-color: rgba(3, 105, 161, 0.78);
+}
+
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;

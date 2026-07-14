@@ -7,21 +7,17 @@ import {
   ChevronUp,
   ExternalLink,
   EyeOff,
-  Gamepad2,
   Heart,
-  ImageIcon,
   Languages,
-  ShieldAlert,
   Sparkles,
 } from "lucide-react";
+import { ModCardMedia } from "@/components/modCard/ModCardMedia";
+import { ModIntroductionModal } from "@/components/modCard/ModIntroductionModal";
 import { ModStatsLine } from "@/components/ModStatsLine";
-import { SourceBadge } from "@/components/SourceBadge";
 import { Button } from "@/components/ui/Button";
 import { useUIStore } from "@/stores/uiStore";
-import { ModalHeader, ModalShell } from "@/components/ui/Modal";
 import { Panel } from "@/components/ui/Panel";
 import { parseJsonStringArray } from "@/utils/json";
-import { isAdultContent } from "@/utils/modAdult";
 import { formatModSummary } from "@/utils/modSummary";
 import { formatModTitle } from "@/utils/modTitle";
 import type { ModItem } from "@/types";
@@ -38,13 +34,6 @@ interface ModCardProps {
   generatingIntroduction?: boolean;
   footerContent?: React.ReactNode;
 }
-
-const sourceBadgeTone: Record<ModItem["source"], string> = {
-  nexusmods:
-    "border-cyan-300/70 bg-cyan-50/95 text-cyan-900 shadow-[0_8px_24px_rgba(8,145,178,0.16)]",
-  loverslab:
-    "border-sky-300/70 bg-sky-50/95 text-sky-900 shadow-[0_8px_24px_rgba(2,132,199,0.16)]",
-};
 
 export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onToggleFavorite, showBottomFavoriteAction = true, onIgnore, onRegenerateSummary, regeneratingSummary = false, onGenerateIntroduction, generatingIntroduction = false, footerContent }) => {
   const { t } = useTranslation();
@@ -109,67 +98,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
       className="group relative flex min-h-full overflow-hidden flex-col border-slate-200/80 bg-[#f8fbff] shadow-[0_12px_30px_rgba(15,23,42,0.07)] transition duration-200 hover:-translate-y-0.5 hover:border-sky-300/70 hover:shadow-[0_18px_42px_rgba(15,23,42,0.11)]"
     >
       <div className="absolute inset-x-0 top-0 z-20 h-px bg-sky-500/60" />
-      <div
-        className={`relative flex-shrink-0 overflow-hidden bg-slate-950 ${
-          mod.thumbnail_url ? "aspect-[300/169]" : "aspect-[300/85]"
-        }`}
-      >
-        {mod.thumbnail_url ? (
-          <img
-            src={mod.thumbnail_url}
-            alt={displayTitle}
-            className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
-            loading="lazy"
-            decoding="async"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.22),transparent_34%),linear-gradient(135deg,#111827,#0f172a)] text-sky-100/55">
-            <ImageIcon size={44} strokeWidth={1.35} />
-          </div>
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/64 via-slate-950/5 to-slate-950/22" />
-        <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:linear-gradient(rgba(255,255,255,0.28)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.28)_1px,transparent_1px)] [background-size:22px_22px]" />
-        <div className="absolute left-3 top-3">
-          <div className="flex max-w-[calc(100%-3rem)] flex-wrap gap-1.5">
-            <SourceBadge
-              source={mod.source}
-              className={`backdrop-blur-md ${sourceBadgeTone[mod.source]}`}
-            />
-            {isAdultContent(mod.adult_content) && (
-              <span
-                className="inline-flex items-center gap-1 rounded-md border border-rose-300/70 bg-rose-50/95 px-2 py-0.5 text-xs font-semibold text-rose-800 shadow-[0_8px_24px_rgba(225,29,72,0.14)] backdrop-blur-md"
-                title="Adult content"
-              >
-                <ShieldAlert size={12} strokeWidth={2.2} />
-                NSFW
-              </span>
-            )}
-          </div>
-        </div>
-        {gameLabel && (
-          <div className="absolute bottom-3 left-3 right-3">
-            <span
-              className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-white/15 bg-slate-950/72 px-2.5 py-1 text-xs font-semibold text-sky-50 shadow-[0_10px_26px_rgba(15,23,42,0.32)] backdrop-blur-md"
-              title={gameLabel}
-            >
-              <Gamepad2 size={13} strokeWidth={2.2} />
-              <span className="truncate">{gameLabel}</span>
-            </span>
-          </div>
-        )}
-        {onToggleFavorite && (
-          <button
-            onClick={(e) => { e.preventDefault(); onToggleFavorite(); }}
-            className="absolute right-3 top-3 rounded-md border border-white/15 bg-slate-950/62 p-2 text-white/70 shadow-[0_10px_26px_rgba(15,23,42,0.28)] backdrop-blur-md transition hover:bg-white hover:text-rose-500"
-            aria-label={isFavorited ? t("mod.unfavorite") : t("mod.favorite")}
-          >
-            <Heart
-              size={18}
-              className={isFavorited ? "fill-red-500 text-red-500" : ""}
-            />
-          </button>
-        )}
-      </div>
+      <ModCardMedia mod={mod} displayTitle={displayTitle} gameLabel={gameLabel} isFavorited={isFavorited} onToggleFavorite={onToggleFavorite} />
 
       <div className="flex flex-1 flex-col gap-3 p-4">
         <a
@@ -296,31 +225,7 @@ export const ModCard: React.FC<ModCardProps> = ({ mod, isFavorited = false, onTo
           </div>
         )}
       </div>
-      {introductionOpen && (
-        <ModalShell
-          open={introductionOpen}
-          onClose={() => setIntroductionOpen(false)}
-          size="md"
-          panelClassName="max-h-[80vh] overflow-hidden"
-        >
-          <ModalHeader
-            title={t("mod.aiIntroduction")}
-            subtitle={<span className="line-clamp-1">{displayTitle}</span>}
-            onClose={() => setIntroductionOpen(false)}
-            closeAriaLabel={t("common.close")}
-            className="px-5 py-3 border-b border-gray-200 shrink-0 mb-0"
-          />
-            <div className="max-h-[62vh] overflow-y-auto px-5 py-4">
-              {generatingIntroduction && !introduction ? (
-                <p className="text-sm text-gray-500">{t("mod.aiIntroductionLoading")}</p>
-              ) : introError ? (
-                <p className="text-sm text-red-600">{introError}</p>
-              ) : (
-                <p className="whitespace-pre-wrap text-sm leading-6 text-gray-700">{introduction || mod.ai_introduction || t("mod.noAiIntroduction")}</p>
-              )}
-            </div>
-        </ModalShell>
-      )}
+      <ModIntroductionModal open={introductionOpen} title={displayTitle} introduction={introduction} fallbackIntroduction={mod.ai_introduction} error={introError} loading={generatingIntroduction} onClose={() => setIntroductionOpen(false)} />
     </Panel>
   );
 };

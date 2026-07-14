@@ -15,7 +15,8 @@ import { SETTINGS_NUMERIC_BOUNDS } from "@/constants/settings";
 import { clampIntegerInput } from "@/utils/numberInput";
 
 import { NotificationSettings } from "@/components/NotificationSettings";
-import { fetchSettings, updateSettings, testLlmProviders, testTelegram, testDiscord, exportSettings, importSettings, setAutoStart as applyAutoStart, type LlmProviderTestResult } from "@/api/settings";
+import { StoragePathsCard } from "@/components/settings/StoragePathsCard";
+import { fetchRuntimePaths, fetchSettings, openConfigDirectory, updateSettings, testLlmProviders, testTelegram, testDiscord, exportSettings, importSettings, setAutoStart as applyAutoStart, type LlmProviderTestResult } from "@/api/settings";
 import type { UserSettings, UILanguage, LlmProvider, LlmProviderConfig } from "@/types";
 
 const PROVIDER_OPTIONS = DEFAULT_LLM_PROVIDERS;
@@ -47,6 +48,10 @@ const Settings: React.FC = () => {
     queryKey: ["settings"],
     queryFn: fetchSettings,
   });
+  const { data: runtimePaths } = useQuery({
+    queryKey: ["settings", "runtime-paths"],
+    queryFn: fetchRuntimePaths,
+  });
 
   const [uiLanguage, setUILanguage] = useState<UILanguage>("zh-CN");
   const [summaryLanguage, setSummaryLanguage] = useState<UILanguage>("zh-CN");
@@ -76,6 +81,8 @@ const Settings: React.FC = () => {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [systemNotificationsEnabled, setSystemNotificationsEnabled] = useState(true);
   const [databasePath, setDatabasePath] = useState("");
+  const [openingConfigDirectory, setOpeningConfigDirectory] = useState(false);
+  const [configDirectoryError, setConfigDirectoryError] = useState<string | null>(null);
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [proxyType, setProxyType] = useState<"http" | "socks5">("http");
   const [proxyHost, setProxyHost] = useState("");
@@ -114,6 +121,20 @@ const Settings: React.FC = () => {
   };
 
   useEffect(() => clearStatusTimer, []);
+
+  const handleOpenConfigDirectory = async () => {
+    setOpeningConfigDirectory(true);
+    setConfigDirectoryError(null);
+    try {
+      await openConfigDirectory();
+    } catch (error) {
+      setConfigDirectoryError(
+        error instanceof Error ? error.message : t("settings.openConfigDirectoryError"),
+      );
+    } finally {
+      setOpeningConfigDirectory(false);
+    }
+  };
 
   useEffect(() => {
     if (settings) {
@@ -692,20 +713,14 @@ const Settings: React.FC = () => {
                 </CardContent>
               </Card>
 
-              <Card className="overflow-hidden">
-                <CardHeader className="bg-slate-50/70">
-                  <h3 className="font-semibold text-slate-900">{t("settings.databasePath")}</h3>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <Input
-                    value={databasePath}
-                    onChange={(e) => setDatabasePath(e.target.value)}
-                    placeholder="sqlite:///./mod_watcher.db"
-                  />
-                  <p className="text-xs text-amber-600">{t("settings.databasePathHint")}</p>
-                  <p className="text-xs leading-5 text-slate-500">{t("settings.databasePathResolveHint")}</p>
-                </CardContent>
-              </Card>
+              <StoragePathsCard
+                runtimePaths={runtimePaths}
+                databasePath={databasePath}
+                onDatabasePathChange={setDatabasePath}
+                onOpenConfigDirectory={handleOpenConfigDirectory}
+                openingConfigDirectory={openingConfigDirectory}
+                openError={configDirectoryError}
+              />
             </div>
 
             <Card className="overflow-hidden">
