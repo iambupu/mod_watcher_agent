@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlmodel import Session
 
+from app.services.agent.planning.query_plan_contract import semantic_strategy
 from app.services.agent.planning.refined_retrieval_planner import (
     RefinedRetrievalInput,
     build_refined_retrieval_plan,
@@ -155,7 +156,7 @@ async def self_correction_review_stage(
                 RefinedRetrievalInput(
                     original_query=query,
                     query_plan=current_plan,
-                    semantic_strategy=_semantic_strategy(current_plan),
+                    semantic_strategy=semantic_strategy(current_plan),
                     correction_plan=effective_plan,
                     detected_errors=_review_gaps(review),
                     round_index=round_index + 1,
@@ -224,11 +225,6 @@ def _self_correction_config(query_plan: dict[str, Any]) -> SelfCorrectionConfig:
         except ValueError:
             return SelfCorrectionConfig.model_validate(default_self_correction_config())
     return SelfCorrectionConfig.model_validate(default_self_correction_config())
-
-
-def _semantic_strategy(query_plan: dict[str, Any]) -> dict[str, Any]:
-    value = query_plan.get("_agent_semantic_strategy")
-    return value if isinstance(value, dict) else {}
 
 
 def _initial_trace(config: SelfCorrectionConfig, *, final_status: str) -> dict[str, Any]:

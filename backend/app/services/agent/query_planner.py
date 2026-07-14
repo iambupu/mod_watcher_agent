@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlmodel import Session, select
@@ -64,6 +65,7 @@ from app.services.agent.planning.query_intent import (
     is_open_discovery_query,
     is_recent_query,
 )
+from app.services.agent.planning.query_plan_contract import DATE_RANGE_FIELDS, METRIC_FIELDS
 from app.services.agent.planning.query_plan_hygiene import (
     sanitize_category_slot_options,
     sanitize_query_plan_fields,
@@ -444,6 +446,41 @@ def _normalize_categories(
     return categories, category_hints, category_match_mode, semantic.expanded_terms
 
 
+@dataclass
+class _QueryPlanNormalization:
+    raw: dict[str, Any]
+    query: str
+    slot_options: dict[str, list[str]]
+    intent: str
+    keywords: list[str]
+    games: list[str]
+    categories: list[str]
+    category_hints: list[str]
+    category_match_mode: str
+    excluded_keywords: list[str]
+    sources: list[str] = field(default_factory=list)
+    excluded_sources: list[str] = field(default_factory=list)
+    author: str | None = None
+    metrics: dict[str, int | None] = field(default_factory=dict)
+    updated_since_days: int | None = None
+    date_ranges: dict[str, str | None] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    has_thumbnail: bool | None = None
+    summary_languages: list[str] = field(default_factory=list)
+    excluded_summary_languages: list[str] = field(default_factory=list)
+    requirement_terms: list[str] = field(default_factory=list)
+    compatibility_terms: list[str] = field(default_factory=list)
+    exact_title: str | None = None
+    version: str | None = None
+    game_domains: list[str] = field(default_factory=list)
+    source_url: str | None = None
+    external_id: str | None = None
+    adult_content: bool | None = None
+    sort_field: str = "relevance"
+    open_discovery: bool = False
+    retrieval_mode: str = "filtered"
+
+
 def normalize_query_plan(
     plan: dict | None,
     query: str,
@@ -451,208 +488,261 @@ def normalize_query_plan(
 ) -> dict[str, Any]:
     """将 executor 兼容查询计划规范化为数据库查询可消费的结构。"""
 
+    state = _start_query_plan_normalization(plan, query, slot_options)
+    _normalize_source_constraints(state)
+    _normalize_metric_and_date_constraints(state)
+    _normalize_content_constraints(state)
+    _normalize_identity_and_sort_constraints(state)
+    normalized = _build_normalized_query_plan(state)
+    return sanitize_query_plan_fields(normalized, query=query)
+
+
+def _start_query_plan_normalization(
+    plan: dict | None,
+    query: str,
+    slot_options: dict[str, list[str]],
+) -> _QueryPlanNormalization:
     raw = plan if isinstance(plan, dict) else {}
-    # 前端筛选器通过 [scope] 追加的是用户显式选择，优先级高于 LLM 解析结果。
     raw = _apply_scope_overrides(raw, query, slot_options)
     if not raw.get("excluded_keywords") and not raw.get("exclude_keywords"):
         inferred_exclusions = infer_excluded_keywords(query)
         if inferred_exclusions:
             raw = {**raw, **inferred_exclusions}
-    excluded_keywords = _normalize_excluded_keywords(raw.get("excluded_keywords") or raw.get("exclude_keywords"))
-    semantic_query_text = _query_without_excluded_terms(query, excluded_keywords)
-    intent = _normalize_intent(raw, query)
+    excluded_keywords = _normalize_excluded_keywords(
+        raw.get("excluded_keywords") or raw.get("exclude_keywords")
+    )
     keywords, games = _normalize_keywords_and_games(raw, query, slot_options)
     categories, category_hints, category_match_mode, semantic_keywords = _normalize_categories(
         raw,
-        semantic_query_text,
+        _query_without_excluded_terms(query, excluded_keywords),
         slot_options,
     )
-    keywords = _merge_unique(keywords, semantic_keywords)
-    # 结构化槽位已经承载的词要从 keywords 中移除，避免同一约束重复参与硬过滤。
-    keywords = _drop_excluded_keywords(keywords, excluded_keywords)
-    categories = _drop_excluded_categories(categories, excluded_keywords)
-    category_hints = _drop_excluded_categories(category_hints, excluded_keywords)
-
-    excluded_sources = _normalize_allowed_list(
-        raw.get("excluded_sources") or raw.get("excluded_source"),
-        slot_options["sources"],
+    return _QueryPlanNormalization(
+        raw=raw,
+        query=query,
+        slot_options=slot_options,
+        intent=_normalize_intent(raw, query),
+        keywords=_drop_excluded_keywords(
+            _merge_unique(keywords, semantic_keywords), excluded_keywords
+        ),
+        games=games,
+        categories=_drop_excluded_categories(categories, excluded_keywords),
+        category_hints=_drop_excluded_categories(category_hints, excluded_keywords),
+        category_match_mode=category_match_mode,
+        excluded_keywords=excluded_keywords,
     )
-    sources = _normalize_allowed_list(raw.get("sources") or raw.get("source"), slot_options["sources"])
-    if excluded_sources and not sources:
-        excluded = set(excluded_sources)
-        sources = [source for source in slot_options["sources"] if source not in excluded]
-    if sources or excluded_sources:
-        keywords = _drop_source_keywords(keywords)
-    author = _normalize_author(raw.get("author") or raw.get("authors") or raw.get("creator") or raw.get("modder"))
-    if author:
-        keywords = _drop_author_keywords(keywords, author)
-    metrics = {
-        "min_downloads": _normalize_min_metric(raw.get("min_downloads")),
-        "min_endorsements": _normalize_min_metric(raw.get("min_endorsements")),
-        "min_views": _normalize_min_metric(raw.get("min_views")),
-        "min_likes": _normalize_min_metric(raw.get("min_likes")),
+
+
+def _normalize_source_constraints(state: _QueryPlanNormalization) -> None:
+    raw = state.raw
+    allowed_sources = state.slot_options["sources"]
+    state.excluded_sources = _normalize_allowed_list(
+        raw.get("excluded_sources") or raw.get("excluded_source"), allowed_sources
+    )
+    state.sources = _normalize_allowed_list(
+        raw.get("sources") or raw.get("source"), allowed_sources
+    )
+    if state.excluded_sources and not state.sources:
+        excluded = set(state.excluded_sources)
+        state.sources = [source for source in allowed_sources if source not in excluded]
+    if state.sources or state.excluded_sources:
+        state.keywords = _drop_source_keywords(state.keywords)
+    state.author = _normalize_author(
+        raw.get("author") or raw.get("authors") or raw.get("creator") or raw.get("modder")
+    )
+    if state.author:
+        state.keywords = _drop_author_keywords(state.keywords, state.author)
+
+
+def _normalize_metric_and_date_constraints(state: _QueryPlanNormalization) -> None:
+    raw = state.raw
+    state.metrics = {field: _normalize_min_metric(raw.get(field)) for field in METRIC_FIELDS}
+    if not any(value is not None for value in state.metrics.values()):
+        inferred_metrics = infer_numeric_constraints(state.query)
+        state.metrics = {field: inferred_metrics.get(field) for field in METRIC_FIELDS}
+    state.keywords = _drop_metric_keywords(state.keywords, state.metrics)
+    state.updated_since_days = _normalize_time_window(
+        raw.get("updated_since_days") or raw.get("updated_within_days")
+    )
+    if state.updated_since_days is None:
+        state.updated_since_days = infer_time_window(state.query).get("updated_since_days")
+    state.keywords = _drop_time_window_keywords(state.keywords, state.updated_since_days)
+    inferred_dates = infer_absolute_date_constraints(state.query)
+    state.date_ranges = {
+        field: _normalize_absolute_date(raw.get(field) or inferred_dates.get(field))
+        for field in DATE_RANGE_FIELDS
     }
-    if not any(value is not None for value in metrics.values()):
-        inferred_metrics = infer_numeric_constraints(query)
-        metrics = {
-            "min_downloads": inferred_metrics.get("min_downloads"),
-            "min_endorsements": inferred_metrics.get("min_endorsements"),
-            "min_views": inferred_metrics.get("min_views"),
-            "min_likes": inferred_metrics.get("min_likes"),
-        }
-    keywords = _drop_metric_keywords(keywords, metrics)
-    updated_since_days = _normalize_time_window(raw.get("updated_since_days") or raw.get("updated_within_days"))
-    if updated_since_days is None:
-        updated_since_days = infer_time_window(query).get("updated_since_days")
-    keywords = _drop_time_window_keywords(keywords, updated_since_days)
-    inferred_dates = infer_absolute_date_constraints(query)
-    date_ranges = {
-        "updated_after": _normalize_absolute_date(raw.get("updated_after") or inferred_dates.get("updated_after")),
-        "updated_before": _normalize_absolute_date(raw.get("updated_before") or inferred_dates.get("updated_before")),
-        "published_after": _normalize_absolute_date(raw.get("published_after") or inferred_dates.get("published_after")),
-        "published_before": _normalize_absolute_date(raw.get("published_before") or inferred_dates.get("published_before")),
-        "created_after": _normalize_absolute_date(raw.get("created_after") or inferred_dates.get("created_after")),
-        "created_before": _normalize_absolute_date(raw.get("created_before") or inferred_dates.get("created_before")),
-    }
-    keywords = _drop_absolute_date_keywords(keywords, date_ranges)
-    explicit_tag_constraint = _has_explicit_tag_constraint(query)
+    state.keywords = _drop_absolute_date_keywords(state.keywords, state.date_ranges)
+
+
+def _normalize_content_constraints(state: _QueryPlanNormalization) -> None:
+    raw = state.raw
     raw_tags = _normalize_tags(raw.get("tags") or raw.get("tag"))
-    inferred_tags = _normalize_tags(infer_tag_constraints(query).get("tags"))
-    tags = raw_tags or inferred_tags if explicit_tag_constraint else []
-    if tags:
-        keywords = _drop_tag_keywords(keywords, tags)
+    inferred_tags = _normalize_tags(infer_tag_constraints(state.query).get("tags"))
+    state.tags = raw_tags or inferred_tags if _has_explicit_tag_constraint(state.query) else []
+    if state.tags:
+        state.keywords = _drop_tag_keywords(state.keywords, state.tags)
     elif raw_tags:
-        keywords = _merge_unique(keywords, raw_tags)
-    inferred_thumbnail = infer_thumbnail_constraint(query)
-    has_thumbnail = _normalize_optional_bool(raw.get("has_thumbnail"))
-    if has_thumbnail is None:
-        has_thumbnail = inferred_thumbnail.get("has_thumbnail")
-    inferred_summary_languages = infer_summary_language_constraints(query)
-    summary_languages = _normalize_summary_languages(raw.get("summary_languages") or raw.get("summary_language"))
-    if not summary_languages:
-        summary_languages = _normalize_summary_languages(inferred_summary_languages.get("summary_languages"))
-    excluded_summary_languages = _normalize_summary_languages(
+        state.keywords = _merge_unique(state.keywords, raw_tags)
+    state.has_thumbnail = _normalize_optional_bool(raw.get("has_thumbnail"))
+    if state.has_thumbnail is None:
+        state.has_thumbnail = infer_thumbnail_constraint(state.query).get("has_thumbnail")
+    _normalize_language_constraints(state)
+    _normalize_dependency_constraints(state)
+    state.exact_title = _normalize_exact_title(raw.get("exact_title") or raw.get("title"))
+    if state.exact_title is None:
+        state.exact_title = infer_title_constraint(state.query).get("exact_title")
+    state.version = _normalize_version(raw.get("version") or raw.get("mod_version"))
+    if state.version is None:
+        state.version = infer_version_constraint(state.query).get("version")
+    state.keywords = _drop_version_keywords(state.keywords, state.version)
+
+
+def _normalize_language_constraints(state: _QueryPlanNormalization) -> None:
+    raw = state.raw
+    inferred = infer_summary_language_constraints(state.query)
+    state.summary_languages = _normalize_summary_languages(
+        raw.get("summary_languages") or raw.get("summary_language")
+    ) or _normalize_summary_languages(inferred.get("summary_languages"))
+    state.excluded_summary_languages = _normalize_summary_languages(
         raw.get("excluded_summary_languages") or raw.get("excluded_summary_language")
+    ) or _normalize_summary_languages(inferred.get("excluded_summary_languages"))
+    state.summary_languages = _drop_excluded_summary_languages(
+        state.summary_languages, state.excluded_summary_languages
     )
-    if not excluded_summary_languages:
-        excluded_summary_languages = _normalize_summary_languages(
-            inferred_summary_languages.get("excluded_summary_languages")
-        )
-    summary_languages = _drop_excluded_summary_languages(summary_languages, excluded_summary_languages)
-    keywords = _drop_summary_language_keywords(
-        keywords,
-        _merge_unique(summary_languages, excluded_summary_languages),
+    state.keywords = _drop_summary_language_keywords(
+        state.keywords,
+        _merge_unique(state.summary_languages, state.excluded_summary_languages),
     )
-    requirement_terms = _normalize_requirement_terms(
+
+
+def _normalize_dependency_constraints(state: _QueryPlanNormalization) -> None:
+    raw = state.raw
+    state.requirement_terms = _normalize_requirement_terms(
         raw.get("requirement_terms") or raw.get("requirements") or raw.get("dependencies")
-    )
-    if not requirement_terms:
-        requirement_terms = _normalize_requirement_terms(infer_requirement_terms(query).get("requirement_terms"))
-    keywords = _drop_requirement_keywords(keywords, requirement_terms)
-    compatibility_terms = _normalize_compatibility_terms(
+    ) or _normalize_requirement_terms(infer_requirement_terms(state.query).get("requirement_terms"))
+    state.keywords = _drop_requirement_keywords(state.keywords, state.requirement_terms)
+    state.compatibility_terms = _normalize_compatibility_terms(
         raw.get("compatibility_terms") or raw.get("compatible_with") or raw.get("compatibility")
+    ) or _normalize_compatibility_terms(
+        infer_compatibility_terms(state.query).get("compatibility_terms")
     )
-    if not compatibility_terms:
-        compatibility_terms = _normalize_compatibility_terms(
-            infer_compatibility_terms(query).get("compatibility_terms")
+    state.compatibility_terms = _drop_gameplay_support_compatibility_terms(
+        state.query, state.compatibility_terms
+    )
+    state.keywords = _drop_compatibility_keywords(state.keywords, state.compatibility_terms)
+
+
+def _normalize_identity_and_sort_constraints(state: _QueryPlanNormalization) -> None:
+    raw = state.raw
+    game_domains = state.slot_options["game_domains"]
+    state.game_domains = _merge_unique(
+        _normalize_allowed_list(raw.get("game_domains") or raw.get("game_domain"), game_domains),
+        _game_domains_from_games(state.games, game_domains),
+    )
+    identity = infer_identity_constraints(state.query)
+    state.source_url = _normalize_source_url(
+        raw.get("source_url") or raw.get("url") or identity.get("source_url")
+    )
+    state.external_id = _normalize_external_id(
+        raw.get("external_id") or raw.get("source_id") or identity.get("external_id")
+    )
+    _apply_identity_source_constraints(state, identity)
+    state.external_id = _canonicalize_nexus_external_id(
+        state.external_id,
+        state.sources,
+        state.games,
+        state.game_domains,
+        state.slot_options,
+    )
+    state.keywords = _drop_identity_keywords(
+        state.keywords, state.external_id, state.source_url
+    )
+    state.adult_content = _normalize_adult_content(state.query)
+    state.keywords = _drop_adult_keywords(state.keywords, state.adult_content)
+    state.sort_field = _normalize_sort_field(
+        raw.get("sort_field") or raw.get("sort"), state.intent
+    )
+    state.keywords = _drop_sort_keywords(state.keywords, state.sort_field)
+    state.open_discovery = bool(_normalize_optional_bool(raw.get("open_discovery"))) or is_open_discovery_query(
+        state.query
+    )
+    state.retrieval_mode = "fuzzy" if state.open_discovery else "filtered"
+
+
+def _apply_identity_source_constraints(
+    state: _QueryPlanNormalization,
+    identity: dict[str, Any],
+) -> None:
+    if state.source_url:
+        inferred_source = source_from_url(state.source_url)
+        if inferred_source and not state.sources:
+            state.sources = [inferred_source]
+        if inferred_source and not state.external_id:
+            state.external_id = canonical_external_id(inferred_source, "", state.source_url)
+    if identity.get("sources") and not state.sources:
+        state.sources = _normalize_allowed_list(
+            identity.get("sources"), state.slot_options["sources"]
         )
-    compatibility_terms = _drop_gameplay_support_compatibility_terms(query, compatibility_terms)
-    keywords = _drop_compatibility_keywords(keywords, compatibility_terms)
-    exact_title = _normalize_exact_title(raw.get("exact_title") or raw.get("title"))
-    if exact_title is None:
-        exact_title = infer_title_constraint(query).get("exact_title")
-    version = _normalize_version(raw.get("version") or raw.get("mod_version"))
-    if version is None:
-        version = infer_version_constraint(query).get("version")
-    keywords = _drop_version_keywords(keywords, version)
-    game_domains = _normalize_allowed_list(
-        raw.get("game_domains") or raw.get("game_domain"),
-        slot_options["game_domains"],
-    )
-    game_domains = _merge_unique(game_domains, _game_domains_from_games(games, slot_options["game_domains"]))
-    # URL 和外部 ID 是最强身份约束；能识别来源时同步收窄 sources。
-    identity = infer_identity_constraints(query)
-    source_url = _normalize_source_url(raw.get("source_url") or raw.get("url") or identity.get("source_url"))
-    external_id = _normalize_external_id(raw.get("external_id") or raw.get("source_id") or identity.get("external_id"))
-    if source_url:
-        inferred_source = source_from_url(source_url)
-        if inferred_source and not sources:
-            sources = [inferred_source]
-        if inferred_source and not external_id:
-            external_id = canonical_external_id(inferred_source, "", source_url)
-    if identity.get("sources") and not sources:
-        sources = _normalize_allowed_list(identity.get("sources"), slot_options["sources"])
-    external_id = _canonicalize_nexus_external_id(external_id, sources, games, game_domains, slot_options)
-    keywords = _drop_identity_keywords(keywords, external_id, source_url)
 
-    adult_content = _normalize_adult_content(query)
-    keywords = _drop_adult_keywords(keywords, adult_content)
-    sort_field = _normalize_sort_field(raw.get("sort_field") or raw.get("sort"), intent)
-    keywords = _drop_sort_keywords(keywords, sort_field)
-    raw_open_discovery = _normalize_optional_bool(raw.get("open_discovery"))
-    open_discovery = bool(raw_open_discovery) or is_open_discovery_query(query)
-    retrieval_mode = "fuzzy" if open_discovery else "filtered"
 
-    # normalized 是所有后续工具共享的契约，只保留已验证或可推断的字段。
-    normalized = {
-        "intent": intent,
-        "open_discovery": open_discovery,
-        "retrieval_mode": retrieval_mode,
-        "keywords": keywords[:10],
-        "games": games,
-        "game_domains": game_domains,
-        "categories": categories,
-        "category_hints": category_hints,
-        "category_match_mode": category_match_mode,
-        "sources": sources,
-        "adult_content": adult_content,
-        "sort_field": sort_field,
+def _build_normalized_query_plan(state: _QueryPlanNormalization) -> dict[str, Any]:
+    raw = state.raw
+    normalized: dict[str, Any] = {
+        "intent": state.intent,
+        "open_discovery": state.open_discovery,
+        "retrieval_mode": state.retrieval_mode,
+        "keywords": state.keywords[:10],
+        "games": state.games,
+        "game_domains": state.game_domains,
+        "categories": state.categories,
+        "category_hints": state.category_hints,
+        "category_match_mode": state.category_match_mode,
+        "sources": state.sources,
+        "adult_content": state.adult_content,
+        "sort_field": state.sort_field,
         "sort_order": "asc" if str(raw.get("sort_order") or "").strip().lower() == "asc" else "desc",
         "limit": _normalize_limit(raw),
     }
+    _add_present_values(normalized, state.metrics, none_only=True)
+    _add_present_values(normalized, state.date_ranges)
+    optional_values = {
+        "tags": state.tags,
+        "summary_languages": state.summary_languages,
+        "excluded_summary_languages": state.excluded_summary_languages,
+        "requirement_terms": state.requirement_terms,
+        "compatibility_terms": state.compatibility_terms,
+        "exact_title": state.exact_title,
+        "version": state.version,
+        "external_id": state.external_id,
+        "source_url": state.source_url,
+        "author": state.author,
+        "excluded_sources": state.excluded_sources,
+        "exclude_titles": _normalize_exclude_titles(raw.get("exclude_titles")),
+        "excluded_keywords": state.excluded_keywords,
+    }
+    _add_present_values(normalized, optional_values)
+    if state.updated_since_days is not None:
+        normalized["updated_since_days"] = state.updated_since_days
+    if state.has_thumbnail is not None:
+        normalized["has_thumbnail"] = state.has_thumbnail
     evidence_id = str(raw.get("evidence_id") or "").strip()
     if evidence_id:
         normalized["evidence_id"] = evidence_id
-    for key, value in metrics.items():
-        if value is not None:
-            normalized[key] = value
-    if updated_since_days is not None:
-        normalized["updated_since_days"] = updated_since_days
-    for key, value in date_ranges.items():
-        if value:
-            normalized[key] = value
-    if tags:
-        normalized["tags"] = tags
-    if has_thumbnail is not None:
-        normalized["has_thumbnail"] = has_thumbnail
-    if summary_languages:
-        normalized["summary_languages"] = summary_languages
-    if excluded_summary_languages:
-        normalized["excluded_summary_languages"] = excluded_summary_languages
-    if requirement_terms:
-        normalized["requirement_terms"] = requirement_terms
-    if compatibility_terms:
-        normalized["compatibility_terms"] = compatibility_terms
-    if exact_title:
-        normalized["exact_title"] = exact_title
-    if version:
-        normalized["version"] = version
-    if external_id:
-        normalized["external_id"] = external_id
-    if source_url:
-        normalized["source_url"] = source_url
-    if author:
-        normalized["author"] = author
-    if excluded_sources:
-        normalized["excluded_sources"] = excluded_sources
-    exclude_titles = _normalize_exclude_titles(raw.get("exclude_titles"))
-    if exclude_titles:
-        normalized["exclude_titles"] = exclude_titles
     if str(raw.get("keyword_match_mode") or "").strip().lower() == "all":
         normalized["keyword_match_mode"] = "all"
-    if excluded_keywords:
-        normalized["excluded_keywords"] = excluded_keywords
-    return sanitize_query_plan_fields(normalized, query=query)
+    return normalized
+
+
+def _add_present_values(
+    target: dict[str, Any],
+    values: dict[str, Any],
+    *,
+    none_only: bool = False,
+) -> None:
+    for key, value in values.items():
+        if value is not None if none_only else bool(value):
+            target[key] = value
 
 
 def _query_mentions_category_scope(query: str) -> bool:

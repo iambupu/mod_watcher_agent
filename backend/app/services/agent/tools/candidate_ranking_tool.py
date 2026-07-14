@@ -12,6 +12,7 @@ from app.services.agent.planning.open_discovery_policy import (
     is_open_discovery_plan,
     judge_candidate_pool_limit,
 )
+from app.services.agent.planning.query_plan_contract import semantic_strategy
 from app.services.agent.search_types import SearchPlan
 from app.services.agent.tools.candidate_recovery_tool import (
     CandidateRecoveryInput,
@@ -195,7 +196,7 @@ class CandidateRankingTool:
         judge_output = await judge_tool.run(
             CandidateSemanticJudgeInput(
                 query=tool_input.query,
-                semantic_strategy=_semantic_strategy(query_plan),
+                semantic_strategy=semantic_strategy(query_plan),
                 candidates=matches,
                 retrieval_evidence=prior_evidence,
                 llm_available=tool_input.llm_available,
@@ -209,15 +210,10 @@ class CandidateRankingTool:
         return judge_output, _apply_semantic_judgements(matches, judge_output, query_plan=query_plan)
 
 
-def _semantic_strategy(query_plan: dict[str, Any]) -> dict[str, Any]:
-    value = query_plan.get("_agent_semantic_strategy")
-    return value if isinstance(value, dict) else {}
-
-
 def _should_use_semantic_judge(query_plan: dict[str, Any]) -> bool:
     if is_open_discovery_plan(query_plan):
         return True
-    strategy = _semantic_strategy(query_plan)
+    strategy = semantic_strategy(query_plan)
     if not strategy:
         return False
     contract_fields = (

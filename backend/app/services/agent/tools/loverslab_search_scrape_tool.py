@@ -19,7 +19,7 @@ from app.services.agent.tools.loverslab_search_common import (
     LoversLabSearchRecord,
     clean_loverslab_query,
     is_loverslab_url,
-    score_and_sort_loverslab_mods,
+    loverslab_search_results,
     upsert_loverslab_search_records,
 )
 from app.services.settings_service import SettingsService
@@ -81,7 +81,12 @@ class LoversLabSearchScrapeTool:
 
         results = self._parse_results(html, engine)
         mods = self._upsert(results, tool_input, engine)
-        return self._score_and_sort(mods, tool_input)
+        return loverslab_search_results(
+            mods,
+            query=tool_input.query,
+            limit=tool_input.limit,
+            tool_name=self.name,
+        )
 
     def _build_query(self, tool_input: LoversLabSearchScrapeInput) -> str:
         """构造带 site:loverslab.com 的公开搜索查询。"""
@@ -146,12 +151,6 @@ class LoversLabSearchScrapeTool:
             game=tool_input.game,
             adult_content=tool_input.adult_content,
         )
-
-    def _score_and_sort(self, mods: list[Mod], tool_input: LoversLabSearchScrapeInput) -> list[SearchResult]:
-        """复用 LoversLab 公共排序，返回统一 SearchResult。"""
-        scored = score_and_sort_loverslab_mods(mods, query=tool_input.query, limit=tool_input.limit)
-        return [SearchResult(score=score, mod=mod, tool_name=self.name) for score, mod in scored]
-
 
 def loverslab_scrape_input_from_plan(query: str, plan: dict[str, Any]) -> LoversLabSearchScrapeInput | None:
     """复用 Google 工具的 plan 转换逻辑，保证两个 LoversLab 在线入口约束一致。"""

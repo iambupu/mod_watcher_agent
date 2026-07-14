@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 
 from app.models.mod import Mod
 from app.services.agent.llm_config_service import get_llm_config
+from app.services.agent.routing.question_policy import has_specific_mod_question_marker
 from app.services.agent.schemas import AgentHistoryItem
 from app.services.llm_client import LLMClient, create_llm_client
 from app.services.llm_provider_config import provider_has_credentials
@@ -222,18 +223,10 @@ def _should_ask_llm(message: str, history: list[AgentHistoryItem]) -> bool:
     text = _normalize(message)
     if not text:
         return False
-    if _has_broad_search_marker(text) and not _has_specific_question_marker(text):
+    if _has_broad_search_marker(text) and not has_specific_mod_question_marker(text):
         return False
-    return _has_specific_question_marker(text) or bool(_history_titles(history) and _has_reference_marker(text))
-
-
-def _has_specific_question_marker(text: str) -> bool:
-    return bool(
-        re.search(
-            r"(如何|怎么样|怎么|支持|兼容|安装|风险|情况|是否|吗|\?|？|详情|介绍|解析|物理|前置|依赖|冲突|版本|作者|更新)",
-            text,
-            flags=re.IGNORECASE,
-        )
+    return has_specific_mod_question_marker(text) or bool(
+        _history_titles(history) and _has_reference_marker(text)
     )
 
 

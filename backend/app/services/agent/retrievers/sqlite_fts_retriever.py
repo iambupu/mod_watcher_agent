@@ -22,6 +22,7 @@ FTS_INDEX_VERSION = "mods_fts_v2_trigram_meta"
 FTS_TABLES = ("mods_fts", "mods_fts_trigram")
 FTS_META_TABLE = "mods_fts_meta"
 DEFAULT_FTS_REPAIR_LIMIT = 1000
+FTS_REPAIR_COMMIT_BATCH_SIZE = 100
 
 
 @dataclass(frozen=True)
@@ -185,15 +186,18 @@ def repair_stale_mods_fts(session: Session, *, limit: int = DEFAULT_FTS_REPAIR_L
         default_when_below_minimum=True,
     )
     stale_ids = _stale_mods_fts_ids(session, limit=normalized_limit)
-    for mod_id in stale_ids:
+    for index, mod_id in enumerate(stale_ids, start=1):
         _refresh_mods_fts_row(session, mod_id)
-    session.commit()
+        if index % FTS_REPAIR_COMMIT_BATCH_SIZE == 0:
+            session.commit()
+    if stale_ids and len(stale_ids) % FTS_REPAIR_COMMIT_BATCH_SIZE:
+        session.commit()
     return len(stale_ids)
 
 
 def _refresh_mods_fts_row(session: Session, mod_id: int) -> None:
     for table_name in FTS_TABLES:
-        session.execute(text(f"DELETE FROM {table_name} WHERE mod_id = :mod_id"), {"mod_id": mod_id})
+        session.execute(text(f"DELETE FROM {table_name} WHERE rowid = :mod_id"), {"mod_id": mod_id})
         session.execute(text(_insert_single_mods_fts_sql(session, table_name)), {"mod_id": mod_id})
     _upsert_mods_fts_meta(session, mod_id)
 
@@ -465,13 +469,13 @@ def _ensure_mods_fts_triggers(session: Session) -> None:
         for table_name in FTS_TABLES
     )
     delete_old_mod = "\n".join(
-        f"DELETE FROM {table_name} WHERE mod_id = old.id;" for table_name in FTS_TABLES
+        f"DELETE FROM {table_name} WHERE rowid = old.id;" for table_name in FTS_TABLES
     )
     delete_old_summary_mod = "\n".join(
-        f"DELETE FROM {table_name} WHERE mod_id = old.mod_id;" for table_name in FTS_TABLES
+        f"DELETE FROM {table_name} WHERE rowid = old.mod_id;" for table_name in FTS_TABLES
     )
     delete_new_summary_mod = "\n".join(
-        f"DELETE FROM {table_name} WHERE mod_id = new.mod_id;" for table_name in FTS_TABLES
+        f"DELETE FROM {table_name} WHERE rowid = new.mod_id;" for table_name in FTS_TABLES
     )
     trigger_sql = [
         f"""
@@ -801,6 +805,155 @@ def _filter_sql(filters: dict[str, Any], *, fts_table: str = "mods_fts") -> tupl
     _add_not_in_filter(clauses, params, "m.source", "excluded_source", filters.get("excluded_sources"))
     _add_in_filter(clauses, params, "m.category", "category", filters.get("categories"))
     _add_identity_filter(clauses, params, filters)
+    _add_tag_and_summary_filters(clauses, params, filters)
+    _add_term_filters(clauses, params, filters, fts_table)
+    _add_exact_text_filters(clauses, params, filters)
+    _add_metric_and_time_filters(clauses, params, filters)
+    _add_exclusion_filters(clauses, params, filters, fts_table)
+    _add_visibility_filters(clauses, params, filters)
+    return ("\n              AND " + "\n              AND ".join(clauses) if clauses else ""), params
+
+
+def _add_visibility_filters(clauses: list[str], params: dict[str, Any], filters: dict[str, Any]) -> None:
+    adult_content = filters.get("adult_content")
+    if isinstance(adult_content, bool):
+        clauses.append("m.adult_content = :adult_content")
+        params["adult_content"] = int(adult_content)
+    has_thumbnail = filters.get("has_thumbnail")
+    if isinstance(has_thumbnail, bool):
+        if has_thumbnail:
+            clauses.append("(m.thumbnail_url IS NOT NULL AND m.thumbnail_url != '')")
+        else:
+            clauses.append("(m.thumbnail_url IS NULL OR m.thumbnail_url = '')")
+
+
+def _add_exclusion_filters(
+    clauses: list[str],
+    params: dict[str, Any],
+    filters: dict[str, Any],
+    fts_table: str,
+) -> None:
+    for index, keyword in enumerate(filters.get("excluded_keywords") or []):
+        value = str(keyword or "").strip()
+        if not value:
+            continue
+        name = f"excluded_keyword_{index}"
+        params[name] = f"%{value}%"
+        clauses.append(
+            f"""(
+                COALESCE(m.title, '') NOT LIKE :{name}
+                AND COALESCE(m.translated_title_zh, '') NOT LIKE :{name}
+                AND COALESCE(m.author, '') NOT LIKE :{name}
+                AND COALESCE(m.category, '') NOT LIKE :{name}
+                AND COALESCE(m.original_summary, '') NOT LIKE :{name}
+                AND COALESCE({fts_table}.translated_summary, '') NOT LIKE :{name}
+            )"""
+        )
+    for index, title in enumerate(filters.get("exclude_titles") or []):
+        value = " ".join(str(title or "").lower().split())
+        if not value:
+            continue
+        name = f"exclude_title_{index}"
+        params[name] = value
+        clauses.append(
+            "(LOWER(TRIM(COALESCE(m.title, ''))) != :"
+            f"{name} AND LOWER(TRIM(COALESCE(m.translated_title_zh, ''))) != :{name})"
+        )
+
+
+def _add_metric_and_time_filters(clauses: list[str], params: dict[str, Any], filters: dict[str, Any]) -> None:
+    min_downloads = optional_min_metric(filters.get("min_downloads"))
+    if min_downloads is not None:
+        clauses.append("m.downloads >= :min_downloads")
+        params["min_downloads"] = min_downloads
+    min_endorsements = optional_min_metric(filters.get("min_endorsements"))
+    if min_endorsements is not None:
+        clauses.append("m.endorsements >= :min_endorsements")
+        params["min_endorsements"] = min_endorsements
+    min_views = optional_min_metric(filters.get("min_views"))
+    if min_views is not None:
+        clauses.append("m.views >= :min_views")
+        params["min_views"] = min_views
+    min_likes = optional_min_metric(filters.get("min_likes"))
+    if min_likes is not None:
+        clauses.append("m.likes >= :min_likes")
+        params["min_likes"] = min_likes
+    updated_since_days = optional_time_window(filters.get("updated_since_days"))
+    if updated_since_days is not None:
+        clauses.append("(m.updated_at_remote >= :updated_since_cutoff OR m.published_at_remote >= :updated_since_cutoff)")
+        params["updated_since_cutoff"] = (datetime.now(UTC) - timedelta(days=updated_since_days)).isoformat()
+    for key, column in {
+        "updated_after": "m.updated_at_remote",
+        "updated_before": "m.updated_at_remote",
+        "published_after": "m.published_at_remote",
+        "published_before": "m.published_at_remote",
+        "created_after": "m.created_at_remote",
+        "created_before": "m.created_at_remote",
+    }.items():
+        value = str(filters.get(key) or "").strip()
+        if not value:
+            continue
+        clauses.append(f"{column} {'>=' if key.endswith('_after') else '<='} :{key}")
+        params[key] = value
+
+
+def _add_exact_text_filters(clauses: list[str], params: dict[str, Any], filters: dict[str, Any]) -> None:
+    exact_title = str(filters.get("exact_title") or "").strip()
+    if exact_title:
+        clauses.append(
+            "(LOWER(TRIM(COALESCE(m.title, ''))) = :exact_title OR "
+            "LOWER(TRIM(COALESCE(m.translated_title_zh, ''))) = :exact_title)"
+        )
+        params["exact_title"] = " ".join(exact_title.lower().split())
+    version = str(filters.get("version") or "").strip()
+    if version:
+        clauses.append("m.version LIKE :version")
+        params["version"] = f"%{version}%"
+    author = str(filters.get("author") or "").strip()
+    if author:
+        clauses.append("m.author LIKE :author")
+        params["author"] = f"%{author}%"
+
+
+def _add_term_filters(
+    clauses: list[str],
+    params: dict[str, Any],
+    filters: dict[str, Any],
+    fts_table: str,
+) -> None:
+    for filter_name, parameter_prefix in (
+        ("requirement_terms", "requirement_term"),
+        ("compatibility_terms", "compatibility_term"),
+    ):
+        _add_term_filter_group(clauses, params, filters.get(filter_name), parameter_prefix, fts_table)
+
+
+def _add_term_filter_group(
+    clauses: list[str],
+    params: dict[str, Any],
+    terms: Any,
+    parameter_prefix: str,
+    fts_table: str,
+) -> None:
+    for index, term in enumerate(terms or []):
+        value = str(term or "").strip()
+        if not value:
+            continue
+        name = f"{parameter_prefix}_{index}"
+        params[name] = f"%{value}%"
+        clauses.append(
+            f"""(
+                COALESCE(m.title, '') LIKE :{name}
+                OR COALESCE(m.translated_title_zh, '') LIKE :{name}
+                OR COALESCE(m.tags_json, '') LIKE :{name}
+                OR COALESCE(m.original_summary, '') LIKE :{name}
+                OR COALESCE(m.raw_json, '') LIKE :{name}
+                OR COALESCE({fts_table}.translated_summary, '') LIKE :{name}
+            )"""
+        )
+
+
+def _add_tag_and_summary_filters(clauses: list[str], params: dict[str, Any], filters: dict[str, Any]) -> None:
     for index, tag in enumerate(filters.get("tags") or []):
         value = str(tag or "").strip()
         if not value:
@@ -840,123 +993,6 @@ def _filter_sql(filters: dict[str, Any], *, fts_table: str = "mods_fts") -> tupl
             f"AND s.language IN ({', '.join(names)})"
             ")"
         )
-    for index, term in enumerate(filters.get("requirement_terms") or []):
-        value = str(term or "").strip()
-        if not value:
-            continue
-        name = f"requirement_term_{index}"
-        params[name] = f"%{value}%"
-        clauses.append(
-            f"""(
-                COALESCE(m.title, '') LIKE :{name}
-                OR COALESCE(m.translated_title_zh, '') LIKE :{name}
-                OR COALESCE(m.tags_json, '') LIKE :{name}
-                OR COALESCE(m.original_summary, '') LIKE :{name}
-                OR COALESCE(m.raw_json, '') LIKE :{name}
-                OR COALESCE({fts_table}.translated_summary, '') LIKE :{name}
-            )"""
-        )
-    for index, term in enumerate(filters.get("compatibility_terms") or []):
-        value = str(term or "").strip()
-        if not value:
-            continue
-        name = f"compatibility_term_{index}"
-        params[name] = f"%{value}%"
-        clauses.append(
-            f"""(
-                COALESCE(m.title, '') LIKE :{name}
-                OR COALESCE(m.translated_title_zh, '') LIKE :{name}
-                OR COALESCE(m.tags_json, '') LIKE :{name}
-                OR COALESCE(m.original_summary, '') LIKE :{name}
-                OR COALESCE(m.raw_json, '') LIKE :{name}
-                OR COALESCE({fts_table}.translated_summary, '') LIKE :{name}
-            )"""
-        )
-    exact_title = str(filters.get("exact_title") or "").strip()
-    if exact_title:
-        clauses.append(
-            "(LOWER(TRIM(COALESCE(m.title, ''))) = :exact_title OR "
-            "LOWER(TRIM(COALESCE(m.translated_title_zh, ''))) = :exact_title)"
-        )
-        params["exact_title"] = " ".join(exact_title.lower().split())
-    version = str(filters.get("version") or "").strip()
-    if version:
-        clauses.append("m.version LIKE :version")
-        params["version"] = f"%{version}%"
-    author = str(filters.get("author") or "").strip()
-    if author:
-        clauses.append("m.author LIKE :author")
-        params["author"] = f"%{author}%"
-    min_downloads = optional_min_metric(filters.get("min_downloads"))
-    if min_downloads is not None:
-        clauses.append("m.downloads >= :min_downloads")
-        params["min_downloads"] = min_downloads
-    min_endorsements = optional_min_metric(filters.get("min_endorsements"))
-    if min_endorsements is not None:
-        clauses.append("m.endorsements >= :min_endorsements")
-        params["min_endorsements"] = min_endorsements
-    min_views = optional_min_metric(filters.get("min_views"))
-    if min_views is not None:
-        clauses.append("m.views >= :min_views")
-        params["min_views"] = min_views
-    min_likes = optional_min_metric(filters.get("min_likes"))
-    if min_likes is not None:
-        clauses.append("m.likes >= :min_likes")
-        params["min_likes"] = min_likes
-    updated_since_days = optional_time_window(filters.get("updated_since_days"))
-    if updated_since_days is not None:
-        clauses.append("(m.updated_at_remote >= :updated_since_cutoff OR m.published_at_remote >= :updated_since_cutoff)")
-        params["updated_since_cutoff"] = (datetime.now(UTC) - timedelta(days=updated_since_days)).isoformat()
-    for key, column in {
-        "updated_after": "m.updated_at_remote",
-        "updated_before": "m.updated_at_remote",
-        "published_after": "m.published_at_remote",
-        "published_before": "m.published_at_remote",
-        "created_after": "m.created_at_remote",
-        "created_before": "m.created_at_remote",
-    }.items():
-        value = str(filters.get(key) or "").strip()
-        if not value:
-            continue
-        clauses.append(f"{column} {'>=' if key.endswith('_after') else '<='} :{key}")
-        params[key] = value
-    for index, keyword in enumerate(filters.get("excluded_keywords") or []):
-        value = str(keyword or "").strip()
-        if not value:
-            continue
-        name = f"excluded_keyword_{index}"
-        params[name] = f"%{value}%"
-        clauses.append(
-            f"""(
-                COALESCE(m.title, '') NOT LIKE :{name}
-                AND COALESCE(m.translated_title_zh, '') NOT LIKE :{name}
-                AND COALESCE(m.author, '') NOT LIKE :{name}
-                AND COALESCE(m.category, '') NOT LIKE :{name}
-                AND COALESCE(m.original_summary, '') NOT LIKE :{name}
-                AND COALESCE({fts_table}.translated_summary, '') NOT LIKE :{name}
-            )"""
-        )
-    for index, title in enumerate(filters.get("exclude_titles") or []):
-        value = " ".join(str(title or "").lower().split())
-        if not value:
-            continue
-        name = f"exclude_title_{index}"
-        params[name] = value
-        clauses.append(
-            "(LOWER(TRIM(COALESCE(m.title, ''))) != :"
-            f"{name} AND LOWER(TRIM(COALESCE(m.translated_title_zh, ''))) != :{name})"
-        )
-    adult_content = filters.get("adult_content")
-    if isinstance(adult_content, bool):
-        clauses.append("m.adult_content = :adult_content")
-        params["adult_content"] = int(adult_content)
-    has_thumbnail = filters.get("has_thumbnail")
-    if isinstance(has_thumbnail, bool):
-        if has_thumbnail:
-            clauses.append("(m.thumbnail_url IS NOT NULL AND m.thumbnail_url != '')")
-        else:
-            clauses.append("(m.thumbnail_url IS NULL OR m.thumbnail_url = '')")
-    return ("\n              AND " + "\n              AND ".join(clauses) if clauses else ""), params
 
 
 def _add_identity_filter(clauses: list[str], params: dict[str, Any], filters: dict[str, Any]) -> None:

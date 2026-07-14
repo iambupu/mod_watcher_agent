@@ -72,6 +72,92 @@ class _ListHandler(logging.Handler):
         self.messages.append(record.getMessage())
 
 
+class _E2ECaseEnvironment:
+    """Own the temporary database, dependency overrides, and fast-mode stubs."""
+
+    def __init__(self, case: dict[str, Any], *, fast_mode: bool) -> None:
+        self.case = case
+        self.fast_mode = fast_mode
+        self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        self.log_handler = _ListHandler()
+        self._originals: dict[str, Any] = {}
+
+    def __enter__(self) -> "_E2ECaseEnvironment":
+        SQLModel.metadata.create_all(self.engine)
+        _seed_default_mods(self.engine)
+        _seed_case_mods(self.engine, self.case)
+
+        def override_get_session():
+            with Session(self.engine) as session:
+                yield session
+
+        fastapi_app.dependency_overrides[get_session] = override_get_session
+        logging.getLogger().addHandler(self.log_handler)
+        if self.fast_mode:
+            self._install_fast_mode_stubs()
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:  # noqa: ANN401
+        if self.fast_mode:
+            self._restore_fast_mode_stubs()
+        logging.getLogger().removeHandler(self.log_handler)
+        fastapi_app.dependency_overrides.clear()
+        SQLModel.metadata.drop_all(self.engine)
+        self.engine.dispose()
+
+    def _install_fast_mode_stubs(self) -> None:
+        self._originals = {
+            "setup_scheduler": main_module.setup_scheduler,
+            "init_db": main_module.init_db,
+            "engine": main_module.engine,
+            "provider_has_credentials": llm_provider_config_module.provider_has_credentials,
+            "enforce_rate_limit": rate_limiter_module.enforce_rate_limit,
+            "nexus_run": NexusModsSearchTool.run,
+            "loverslab_google_run": LoversLabGoogleSearchTool.run,
+            "loverslab_scrape_run": LoversLabSearchScrapeTool.run,
+        }
+
+        async def noop_async(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
+            return None
+
+        def noop_sync() -> None:
+            return None
+
+        stub_online_results = self.case.get("stub_online_results")
+        results_by_tool = stub_online_results if isinstance(stub_online_results, dict) else {}
+
+        async def stubbed_leaf_search(tool: Any, tool_input: Any) -> list[Any]:  # noqa: ARG001
+            tool_results = results_by_tool.get(str(getattr(tool, "name", "") or ""))
+            tool.last_status = "succeeded"
+            tool.last_reason = None
+            if not isinstance(tool_results, list):
+                return []
+            return [
+                SearchResult(score=_stub_search_score(item), mod=_mod_from_stub(item), tool_name=str(tool.name))
+                for item in tool_results
+                if isinstance(item, dict)
+            ]
+
+        main_module.setup_scheduler = noop_async
+        main_module.init_db = noop_sync
+        main_module.engine = self.engine
+        llm_provider_config_module.provider_has_credentials = lambda provider, api_key: False  # noqa: ARG005
+        rate_limiter_module.enforce_rate_limit = noop_async
+        NexusModsSearchTool.run = stubbed_leaf_search
+        LoversLabGoogleSearchTool.run = stubbed_leaf_search
+        LoversLabSearchScrapeTool.run = stubbed_leaf_search
+
+    def _restore_fast_mode_stubs(self) -> None:
+        main_module.setup_scheduler = self._originals["setup_scheduler"]
+        main_module.init_db = self._originals["init_db"]
+        main_module.engine = self._originals["engine"]
+        llm_provider_config_module.provider_has_credentials = self._originals["provider_has_credentials"]
+        rate_limiter_module.enforce_rate_limit = self._originals["enforce_rate_limit"]
+        NexusModsSearchTool.run = self._originals["nexus_run"]
+        LoversLabGoogleSearchTool.run = self._originals["loverslab_google_run"]
+        LoversLabSearchScrapeTool.run = self._originals["loverslab_scrape_run"]
+
+
 def load_e2e_quality_cases(path: Path) -> list[dict[str, Any]]:
     return load_case_objects(path, label="e2e quality")
 
@@ -145,73 +231,9 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
         )
         return False, checks
 
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(engine)
-    _seed_default_mods(engine)
-    _seed_case_mods(engine, case)
-
-    def override_get_session():
-        with Session(engine) as session:
-            yield session
-
-    fastapi_app.dependency_overrides[get_session] = override_get_session
-    log_handler = _ListHandler()
-    root_logger = logging.getLogger()
-    root_logger.addHandler(log_handler)
-    original_setup_scheduler = main_module.setup_scheduler
-    original_init_db = main_module.init_db
-    original_deferred_startup_maintenance = main_module._run_deferred_startup_maintenance
-    original_engine = main_module.engine
-    original_provider_has_credentials = llm_provider_config_module.provider_has_credentials
-    original_enforce_rate_limit = rate_limiter_module.enforce_rate_limit
-    original_nexus_run = NexusModsSearchTool.run
-    original_loverslab_google_run = LoversLabGoogleSearchTool.run
-    original_loverslab_scrape_run = LoversLabSearchScrapeTool.run
-    if fast_mode:
-        async def _noop_setup_scheduler(_session: Any | None = None) -> None:
-            return None
-
-        def _noop_init_db() -> None:
-            return None
-
-        async def _noop_deferred_startup_maintenance() -> None:
-            return None
-
-        async def _noop_enforce_rate_limit(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
-            return None
-
-        stub_online_results = case.get("stub_online_results") if isinstance(case.get("stub_online_results"), dict) else {}
-
-        async def _empty_leaf_search(self: Any, tool_input: Any) -> list[Any]:  # noqa: ARG001
-            self.last_status = "succeeded"
-            self.last_reason = None
-            return []
-
-        async def _stubbed_leaf_search(self: Any, tool_input: Any) -> list[Any]:  # noqa: ARG001
-            tool_results = stub_online_results.get(str(getattr(self, "name", "") or ""))
-            if not isinstance(tool_results, list):
-                return await _empty_leaf_search(self, tool_input)
-            self.last_status = "succeeded"
-            self.last_reason = None
-            return [
-                SearchResult(
-                    score=_stub_search_score(item),
-                    mod=_mod_from_stub(item),
-                    tool_name=str(getattr(self, "name", "")),
-                )
-                for item in tool_results
-                if isinstance(item, dict)
-            ]
-
-        main_module.setup_scheduler = _noop_setup_scheduler
-        main_module.init_db = _noop_init_db
-        main_module._run_deferred_startup_maintenance = _noop_deferred_startup_maintenance
-        main_module.engine = engine
-        llm_provider_config_module.provider_has_credentials = lambda provider, api_key: False  # noqa: ARG005
-        rate_limiter_module.enforce_rate_limit = _noop_enforce_rate_limit
-        NexusModsSearchTool.run = _stubbed_leaf_search
-        LoversLabGoogleSearchTool.run = _stubbed_leaf_search
-        LoversLabSearchScrapeTool.run = _stubbed_leaf_search
+    environment = _E2ECaseEnvironment(case, fast_mode=fast_mode)
+    environment.__enter__()
+    log_handler = environment.log_handler
     try:
         with TestClient(fastapi_app) as client:
             response = None
@@ -736,20 +758,7 @@ def _run_single_case(case: dict[str, Any], *, fast_mode: bool) -> tuple[bool, li
         ):
             return False, checks
     finally:
-        if fast_mode:
-            main_module.setup_scheduler = original_setup_scheduler
-            main_module.init_db = original_init_db
-            main_module._run_deferred_startup_maintenance = original_deferred_startup_maintenance
-            main_module.engine = original_engine
-            llm_provider_config_module.provider_has_credentials = original_provider_has_credentials
-            rate_limiter_module.enforce_rate_limit = original_enforce_rate_limit
-            NexusModsSearchTool.run = original_nexus_run
-            LoversLabGoogleSearchTool.run = original_loverslab_google_run
-            LoversLabSearchScrapeTool.run = original_loverslab_scrape_run
-        root_logger.removeHandler(log_handler)
-        fastapi_app.dependency_overrides.clear()
-        SQLModel.metadata.drop_all(engine)
-        engine.dispose()
+        environment.__exit__(None, None, None)
     return True, checks
 
 

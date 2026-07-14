@@ -22,6 +22,18 @@ from app.services.agent.planning.query_plan_constraints import (
     is_empty_constraint_value,
     protected_constraint_field_names,
 )
+from app.services.agent.planning.tool_plan_policy import (
+    ONLINE_TOOL_NAMES,
+)
+from app.services.agent.planning.tool_plan_policy import (
+    allowed_online_tools as _allowed_online_tools,
+)
+from app.services.agent.planning.tool_plan_policy import (
+    online_recall_mode as _online_recall_mode,
+)
+from app.services.agent.planning.tool_plan_policy import (
+    planned_tools as _planned_tools,
+)
 from app.services.agent.retrieval_evidence import (
     active_query_plan_fields,
     append_retrieval_evidence,
@@ -39,7 +51,6 @@ logger = logging.getLogger(__name__)
 ReactActionName = Literal["stop", "refine_local_query", "expand_online_search"]
 
 # 工具集合用于把 LangGraph 阶段生成的 tool_plan 映射到 ReAct 可执行动作。
-_ONLINE_TOOLS = {"nexusmods_search", "loverslab_google", "loverslab_scrape", "web_search"}
 _LOCAL_TOOLS = {"structured_sql", "sqlite_fts", "local_db_search"}
 # 只允许 ReAct 追加或收紧这些软检索字段；硬约束字段必须保持原值。
 _SOFT_PATCH_FIELDS = {
@@ -477,7 +488,7 @@ def _decide_action(
     planned_tools = _planned_tools(tool_plan)
     refined_query = _refined_query(query, query_plan)
     patch = _soft_query_plan_patch(query_plan)
-    online_allowed = bool(planned_tools & _ONLINE_TOOLS)
+    online_allowed = bool(planned_tools & ONLINE_TOOL_NAMES)
     local_allowed = bool(planned_tools & _LOCAL_TOOLS) or not planned_tools
     online_reasons = {
         "direct_match_missing_for_specific_query",
@@ -811,37 +822,6 @@ def _namespaced_react_web_evidence(
         namespaced.append(copied)
         next_index += 1
     return namespaced
-
-
-def _planned_tools(tool_plan: dict[str, Any]) -> set[str]:
-    """从工具计划中收集可用工具名称。"""
-
-    tools: set[str] = set()
-    for group in tool_plan.get("parallel_groups") or []:
-        if not isinstance(group, dict):
-            continue
-        tools.update(str(tool).strip() for tool in (group.get("tools") or []) if str(tool).strip())
-    for step in tool_plan.get("online_steps") or []:
-        if isinstance(step, dict) and str(step.get("tool") or "").strip():
-            tools.add(str(step.get("tool")).strip())
-    return tools
-
-
-def _online_recall_mode(tool_plan: dict[str, Any]) -> str:
-    policy = tool_plan.get("tool_policy_evidence") if isinstance(tool_plan, dict) else {}
-    if not isinstance(policy, dict):
-        return "broad"
-    mode = str(policy.get("online_recall_mode") or "").strip()
-    return mode if mode in {"narrow", "broad"} else "broad"
-
-
-def _allowed_online_tools(planned_tools: set[str]) -> set[str]:
-    allowed = planned_tools & _ONLINE_TOOLS
-    if "web_search" in allowed:
-        return {"nexusmods_search", "loverslab_google", "loverslab_scrape"}
-    if "loverslab_google" in allowed:
-        allowed.add("loverslab_scrape")
-    return allowed
 
 
 def _online_unavailable_from_prior_evidence(

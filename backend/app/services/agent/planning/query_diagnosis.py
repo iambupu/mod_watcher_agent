@@ -9,6 +9,9 @@ from app.services.agent.planning.context_diagnosis import (
     evaluate_context_diagnosis,
 )
 from app.services.agent.planning.query_intent import detect_query_intent
+from app.services.agent.planning.query_plan_contract import (
+    semantic_strategy as get_semantic_strategy,
+)
 from app.services.agent.planning.semantic_signals import anchor_domains
 from app.services.agent.tools.semantic_signal_tool import SemanticSignalInput, SemanticSignalTool
 from app.utils.boolean import parse_bool, parse_optional_bool
@@ -63,7 +66,7 @@ def diagnose_query(
     constraints = active_constraints or {}
     plan_keywords = _string_list((query_plan or {}).get("keywords"))
     evidence_id = str((query_plan or {}).get("evidence_id") or "").strip()
-    semantic_strategy = _semantic_strategy(query_plan)
+    semantic_strategy = get_semantic_strategy(query_plan)
     semantic_anchors, semantic_domains, semantic_source = _semantic_signals(
         query=query,
         query_plan=query_plan,
@@ -670,11 +673,6 @@ def _clarifying_question(missing_slots: list[str]) -> str | None:
     if "query_scope" in missing_slots:
         return "你想查找哪类 Mod，或希望我按哪个游戏、来源、关键词来缩小范围？"
     return None
-
-
-def _semantic_strategy(query_plan: dict[str, Any] | None) -> dict[str, Any]:
-    value = (query_plan or {}).get("_agent_semantic_strategy")
-    return value if isinstance(value, dict) else {}
 
 
 def _semantic_strategy_evidence_fields(strategy: dict[str, Any]) -> dict[str, Any]:

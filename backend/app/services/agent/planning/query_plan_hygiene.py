@@ -2,6 +2,7 @@ import re
 from typing import Any
 
 from app.services.agent.list_utils import unique_text
+from app.services.agent.planning.query_plan_contract import LOOSE_TERM_FIELDS
 
 _CATEGORY_GLUE_TOKENS = {"and", "or", "of", "the", "for", "to", "with"}
 _CATEGORY_TITLE_INDICATOR_TOKENS = {
@@ -79,18 +80,6 @@ _GENERIC_EXACT_TITLE_TOKENS = {
     "women",
 }
 _EXACT_TITLE_QUERY_MARKERS = {"只看", "仅看", "筛选", "推荐", "哪些", "有没有", "找", "查"}
-_LOOSE_TERM_FIELDS = {
-    "keywords",
-    "category_hints",
-    "requirement_terms",
-    "compatibility_terms",
-    "tags",
-    "summary_languages",
-    "excluded_summary_languages",
-    "excluded_keywords",
-}
-
-
 def sanitize_category_slot_options(values: list[object]) -> list[str]:
     kept: list[str] = []
     for value in values:
@@ -106,7 +95,7 @@ def sanitize_query_plan_fields(plan: dict[str, Any], *, query: str = "") -> dict
         sanitized["categories"] = sanitize_category_slot_options(sanitized["categories"])
     if sanitized.get("exact_title") is not None and _looks_like_generic_exact_title(sanitized.get("exact_title")):
         sanitized.pop("exact_title", None)
-    for field in _LOOSE_TERM_FIELDS:
+    for field in LOOSE_TERM_FIELDS:
         if isinstance(sanitized.get(field), list):
             sanitized[field] = _sanitize_loose_terms(sanitized[field], query=query)
     return sanitized

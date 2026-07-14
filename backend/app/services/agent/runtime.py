@@ -7,6 +7,7 @@ from sqlalchemy import func, literal
 from sqlmodel import Session, select
 
 from app.models.mod import Mod
+from app.services.agent.routing.question_policy import has_specific_mod_question_marker
 from app.services.agent.routing.specific_mod_question_router import (
     SpecificModQuestionRouter,
     SpecificModRouteInput,
@@ -195,7 +196,7 @@ def _resolve_mod_id_by_exact_title(session: Session, title: str) -> int | None:
 
 def _resolve_mod_id_by_mentioned_title(session: Session, message: str) -> int | None:
     text = _normalize_title(message)
-    if not text or not _looks_like_specific_mod_question(text):
+    if not text or not has_specific_mod_question_marker(text):
         return None
     message_text = literal(text)
     title_expr = func.lower(func.trim(Mod.title))
@@ -230,16 +231,6 @@ def _extract_detail_title(message: str) -> str:
     if match:
         return _strip_wrapping_punctuation(match.group(1))
     return ""
-
-
-def _looks_like_specific_mod_question(text: str) -> bool:
-    return bool(
-        re.search(
-            r"(如何|怎么样|怎么|支持|兼容|安装|风险|情况|是否|吗|\?|？|详情|介绍|解析|物理|前置|依赖|冲突|版本|作者|更新)",
-            text,
-            flags=re.IGNORECASE,
-        )
-    )
 
 
 def _strip_wrapping_punctuation(value: str) -> str:

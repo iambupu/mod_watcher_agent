@@ -1,6 +1,7 @@
 import re
 from typing import Any
 
+from app.services.agent.planning.query_plan_contract import semantic_strategy
 from app.services.agent.schemas import AgentModMatch
 
 
@@ -10,7 +11,7 @@ def judge_summary(query_plan: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def answer_contract_payload(query_plan: dict[str, Any] | None) -> str:
-    strategy = _semantic_strategy(query_plan)
+    strategy = semantic_strategy(query_plan)
     judge = judge_summary(query_plan)
     if not strategy and not judge:
         return ""
@@ -117,11 +118,6 @@ def partition_matches_by_fit(
         else:
             direct.append(match)
     return direct, support, uncertain
-
-
-def _semantic_strategy(query_plan: dict[str, Any] | None) -> dict[str, Any]:
-    value = (query_plan or {}).get("_agent_semantic_strategy") if isinstance(query_plan, dict) else None
-    return value if isinstance(value, dict) else {}
 
 
 def _compact_judgements(judge: dict[str, Any]) -> list[dict[str, object]]:

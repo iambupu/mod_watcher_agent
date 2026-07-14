@@ -2,6 +2,10 @@ from app.services.llm_provider_config import get_provider_chain, resolve_provide
 from app.services.settings_service import SettingsService
 
 
+class InvalidLlmProviderOverrideError(ValueError):
+    """Raised when an API override does not identify an enabled provider."""
+
+
 def get_llm_config(
     settings: SettingsService,
     *,
@@ -21,6 +25,9 @@ def get_llm_config(
             provider, api_key, base_url, model = resolve_provider_config(item)
             model = override_model or model
             return provider, api_key, base_url, model
+        raise InvalidLlmProviderOverrideError(
+            f"Unknown or disabled LLM provider override: {override_provider}"
+        )
 
     if enabled:
         p = enabled[0]

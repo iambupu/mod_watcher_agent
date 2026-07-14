@@ -19,6 +19,7 @@ from app.services.agent.planning.context_result_reference import (
     shown_titles_from_history,
 )
 from app.services.agent.planning.executor_query_plan import build_executor_query_plan
+from app.services.agent.planning.query_plan_contract import CURRENT_ONLY_QUERY_PLAN_FIELDS
 
 
 def build_context_query_plan(
@@ -50,48 +51,5 @@ def build_context_query_plan(
     return normalize_context_query_plan(raw=raw, query=query, constraints=constraints, session=session)
 
 
-_CURRENT_ONLY_PLAN_FIELDS = {
-    "keywords",
-    "excluded_keywords",
-    "exclude_titles",
-    "games",
-    "game_domains",
-    "sources",
-    "excluded_sources",
-    "categories",
-    "category_hints",
-    "tags",
-    "summary_languages",
-    "excluded_summary_languages",
-    "requirement_terms",
-    "compatibility_terms",
-    "has_thumbnail",
-    "author",
-    "adult_content",
-    "min_downloads",
-    "min_endorsements",
-    "min_views",
-    "min_likes",
-    "updated_since_days",
-    "updated_after",
-    "updated_before",
-    "published_after",
-    "published_before",
-    "created_after",
-    "created_before",
-    "sort_field",
-    "sort_order",
-    "limit",
-    "open_discovery",
-    "retrieval_mode",
-    "keyword_match_mode",
-    "exact_title",
-    "version",
-    "external_id",
-    "source_url",
-    "evidence_id",
-}
-
-
 def _current_only_query_plan(raw: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in raw.items() if key in _CURRENT_ONLY_PLAN_FIELDS}
+    return {key: value for key, value in raw.items() if key in CURRENT_ONLY_QUERY_PLAN_FIELDS}

@@ -15,7 +15,7 @@ from app.services.agent.tools.loverslab_search_common import (
     LoversLabSearchRecord,
     clean_loverslab_query,
     is_loverslab_url,
-    score_and_sort_loverslab_mods,
+    loverslab_search_results,
     upsert_loverslab_search_records,
 )
 from app.services.settings_service import SettingsService
@@ -70,7 +70,12 @@ class LoversLabGoogleSearchTool:
             return []
 
         mods = self._upsert(data.get("items") or [], tool_input)
-        return self._score_and_sort(mods, tool_input)
+        return loverslab_search_results(
+            mods,
+            query=tool_input.query,
+            limit=tool_input.limit,
+            tool_name=self.name,
+        )
 
     def _build_params(
         self,
@@ -130,12 +135,6 @@ class LoversLabGoogleSearchTool:
             game=tool_input.game,
             adult_content=tool_input.adult_content,
         )
-
-    def _score_and_sort(self, mods: list[Mod], tool_input: LoversLabGoogleSearchInput) -> list[SearchResult]:
-        """复用 LoversLab 公共排序，返回统一 SearchResult。"""
-        scored = score_and_sort_loverslab_mods(mods, query=tool_input.query, limit=tool_input.limit)
-        return [SearchResult(score=score, mod=mod, tool_name=self.name) for score, mod in scored]
-
 
 def loverslab_google_input_from_plan(query: str, plan: dict[str, Any]) -> LoversLabGoogleSearchInput | None:
     """从通用 query_plan 构造 Google LoversLab 搜索输入；非 LoversLab 来源直接跳过。"""

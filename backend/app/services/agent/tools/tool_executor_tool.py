@@ -6,6 +6,16 @@ from sqlmodel import Session
 
 from app.services.agent.planning.open_discovery_policy import is_open_discovery_plan
 from app.services.agent.planning.query_plan_hygiene import sanitize_query_plan_fields
+from app.services.agent.planning.retrieval_policy import current_only_reserved
+from app.services.agent.planning.tool_plan_policy import (
+    allowed_online_tools as _allowed_online_tools,
+)
+from app.services.agent.planning.tool_plan_policy import (
+    online_recall_mode as _online_recall_mode,
+)
+from app.services.agent.planning.tool_plan_policy import (
+    planned_tools as _planned_tools,
+)
 from app.services.agent.retrieval_evidence import (
     active_query_plan_fields,
     append_retrieval_evidence,
@@ -123,7 +133,7 @@ class ToolExecutorTool:
                         "retrieval_branch": "dual_summary",
                         "current_only_count": len(current_results),
                         "context_scoped_count": len(context_results),
-                        "current_only_reserved": _current_only_reserved(plan.limit, len(current_results)),
+                        "current_only_reserved": current_only_reserved(plan.limit, len(current_results)),
                         "evidence_id": evidence_id,
                     }
                 )
@@ -299,13 +309,6 @@ def _append_branch_evidence(
     evidence[-1]["retrieval_branch"] = branch
 
 
-def _current_only_reserved(limit: int, current_only_count: int) -> int:
-    if current_only_count <= 0:
-        return 0
-    half_limit = max(1, limit // 2)
-    return min(current_only_count, min(3, half_limit))
-
-
 def _log_local_search(
     *,
     count: int,
@@ -356,36 +359,6 @@ def _log_local_search(
         plan.sort_field,
         plan.sort_order,
     )
-
-
-def _planned_tools(tool_plan: dict[str, Any]) -> set[str]:
-    tools: set[str] = set()
-    for group in tool_plan.get("parallel_groups") or []:
-        if not isinstance(group, dict):
-            continue
-        tools.update(str(tool).strip() for tool in (group.get("tools") or []) if str(tool).strip())
-    for step in tool_plan.get("online_steps") or []:
-        if isinstance(step, dict) and str(step.get("tool") or "").strip():
-            tools.add(str(step.get("tool")).strip())
-    return tools
-
-
-def _online_recall_mode(tool_plan: dict[str, Any]) -> str:
-    policy = tool_plan.get("tool_policy_evidence") if isinstance(tool_plan, dict) else {}
-    if not isinstance(policy, dict):
-        return "broad"
-    mode = str(policy.get("online_recall_mode") or "").strip()
-    return mode if mode in {"narrow", "broad"} else "broad"
-
-
-def _allowed_online_tools(planned_tools: set[str]) -> set[str]:
-    allowed = planned_tools & {"nexusmods_search", "loverslab_google", "loverslab_scrape", "web_search"}
-    if "web_search" in allowed:
-        # web_search 是抽象能力名，执行前要收敛到受控站点工具，避免任意 URL 搜索。
-        return {"nexusmods_search", "loverslab_google", "loverslab_scrape"}
-    if "loverslab_google" in allowed:
-        allowed.add("loverslab_scrape")
-    return allowed
 
 
 @dataclass(frozen=True)

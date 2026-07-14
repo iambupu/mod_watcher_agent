@@ -41,27 +41,25 @@ def score_mod(query: str, mod: Mod, extra_text: str = "") -> int:
     )
 
 
-def _build_mod_query_from_plan(plan: dict[str, Any]):
-    """把规范化 query_plan 翻译成只读 SQLModel 查询。"""
-    conditions = [Mod.ignored == False]  # noqa: E712
-    game_conditions = _game_scope_conditions(plan)
-    if game_conditions:
-        conditions.append(or_(*game_conditions))
-
-    categories = plan.get("categories") or []
-
+def _content_visibility_conditions(plan: dict[str, Any]) -> list[Any]:
+    conditions: list[Any] = []
     adult_content = plan.get("adult_content")
     if isinstance(adult_content, bool):
         conditions.append(Mod.adult_content == adult_content)
-    has_thumbnail = plan.get("has_thumbnail")
-    if isinstance(has_thumbnail, bool):
-        thumbnail_condition = Mod.thumbnail_url.is_not(None) if has_thumbnail else Mod.thumbnail_url.is_(None)
-        if has_thumbnail:
-            conditions.append(thumbnail_condition)
-            conditions.append(Mod.thumbnail_url != "")
-        else:
-            conditions.append(or_(thumbnail_condition, Mod.thumbnail_url == ""))
 
+    has_thumbnail = plan.get("has_thumbnail")
+    if not isinstance(has_thumbnail, bool):
+        return conditions
+    thumbnail_condition = Mod.thumbnail_url.is_not(None) if has_thumbnail else Mod.thumbnail_url.is_(None)
+    if has_thumbnail:
+        conditions.extend((thumbnail_condition, Mod.thumbnail_url != ""))
+    else:
+        conditions.append(or_(thumbnail_condition, Mod.thumbnail_url == ""))
+    return conditions
+
+
+def _source_identity_filter_conditions(plan: dict[str, Any]) -> list[Any]:
+    conditions: list[Any] = []
     sources = plan.get("sources") or []
     if sources:
         conditions.append(Mod.source.in_(sources))
@@ -74,22 +72,26 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
     author = str(plan.get("author") or "").strip()
     if author:
         conditions.append(Mod.author.ilike(f"%{author}%"))
-    min_downloads = optional_min_metric(plan.get("min_downloads"))
-    if min_downloads is not None:
-        conditions.append(Mod.downloads >= min_downloads)
-    min_endorsements = optional_min_metric(plan.get("min_endorsements"))
-    if min_endorsements is not None:
-        conditions.append(Mod.endorsements >= min_endorsements)
-    min_views = optional_min_metric(plan.get("min_views"))
-    if min_views is not None:
-        conditions.append(Mod.views >= min_views)
-    min_likes = optional_min_metric(plan.get("min_likes"))
-    if min_likes is not None:
-        conditions.append(Mod.likes >= min_likes)
+    return conditions
+
+
+def _metric_and_time_filter_conditions(plan: dict[str, Any]) -> list[Any]:
+    conditions: list[Any] = []
+    for key, column in {
+        "min_downloads": Mod.downloads,
+        "min_endorsements": Mod.endorsements,
+        "min_views": Mod.views,
+        "min_likes": Mod.likes,
+    }.items():
+        minimum = optional_min_metric(plan.get(key))
+        if minimum is not None:
+            conditions.append(column >= minimum)
+
     updated_since_days = optional_time_window(plan.get("updated_since_days"))
     if updated_since_days is not None:
         cutoff = (datetime.now(UTC) - timedelta(days=updated_since_days)).isoformat()
         conditions.append(or_(Mod.updated_at_remote >= cutoff, Mod.published_at_remote >= cutoff))
+
     for key, column in {
         "updated_after": Mod.updated_at_remote,
         "updated_before": Mod.updated_at_remote,
@@ -99,16 +101,25 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
         "created_before": Mod.created_at_remote,
     }.items():
         value = str(plan.get(key) or "").strip()
-        if not value:
-            continue
-        conditions.append(column >= value if key.endswith("_after") else column <= value)
+        if value:
+            conditions.append(column >= value if key.endswith("_after") else column <= value)
+    return conditions
+
+
+def _text_and_summary_filter_conditions(plan: dict[str, Any]) -> list[Any]:
+    conditions: list[Any] = []
     for tag in _string_list(plan.get("tags")):
         conditions.append(Mod.tags_json.ilike(f"%{tag}%"))
+
     summary_languages = _string_list(plan.get("summary_languages"))
     if summary_languages:
         # 指定摘要语言时必须 join ModSummary，且只看用户可读的 brief/introduction。
-        conditions.append(ModSummary.language.in_(summary_languages))
-        conditions.append(ModSummary.summary_type.in_(["brief", "introduction"]))
+        conditions.extend(
+            (
+                ModSummary.language.in_(summary_languages),
+                ModSummary.summary_type.in_(["brief", "introduction"]),
+            )
+        )
     excluded_summary_languages = _string_list(plan.get("excluded_summary_languages"))
     if excluded_summary_languages:
         excluded_summary_ids = (
@@ -120,10 +131,12 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
             .distinct()
         )
         conditions.append(not_(Mod.id.in_(excluded_summary_ids)))
+
     for term in _string_list(plan.get("requirement_terms")):
         conditions.append(_requirement_condition(term))
     for term in _string_list(plan.get("compatibility_terms")):
         conditions.append(_compatibility_condition(term))
+
     exact_title = str(plan.get("exact_title") or "").strip()
     if exact_title:
         # 精确标题同时匹配原文和中文标题，避免翻译标题查询漏召回。
@@ -137,7 +150,11 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
     version = str(plan.get("version") or "").strip()
     if version:
         conditions.append(Mod.version.ilike(f"%{version}%"))
+    return conditions
 
+
+def _keyword_and_category_filter_conditions(plan: dict[str, Any], categories: list[str]) -> list[Any]:
+    conditions: list[Any] = []
     keywords = _db_fuzzy_keywords(plan, categories)
     keyword_conditions = [_keyword_condition(keyword) for keyword in keywords]
     excluded_keyword_conditions = [
@@ -147,6 +164,7 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
     ]
     if excluded_keyword_conditions:
         conditions.append(not_(or_(*excluded_keyword_conditions)))
+
     exclude_titles = [_title_key(value) for value in _string_list(plan.get("exclude_titles"))]
     if exclude_titles:
         conditions.append(
@@ -157,19 +175,38 @@ def _build_mod_query_from_plan(plan: dict[str, Any]):
                 )
             )
         )
+
     category_conditions = [Mod.category.in_(categories)] if categories else []
-    if category_conditions or keyword_conditions:
-        if plan.get("category_match_mode") == "db_fuzzy" and category_conditions and keyword_conditions:
-            # 语义推断出的分类是软提示，和关键词 OR 起来提升召回，不能变成硬过滤。
-            conditions.append(or_(*(category_conditions + keyword_conditions)))
-        else:
-            if category_conditions:
-                conditions.extend(category_conditions)
-            if keyword_conditions:
-                if str(plan.get("keyword_match_mode") or "").strip().lower() == "all":
-                    conditions.extend(keyword_conditions)
-                else:
-                    conditions.append(or_(*keyword_conditions))
+    if not category_conditions and not keyword_conditions:
+        return conditions
+    if plan.get("category_match_mode") == "db_fuzzy" and category_conditions and keyword_conditions:
+        # 语义推断出的分类是软提示，和关键词 OR 起来提升召回，不能变成硬过滤。
+        conditions.append(or_(*(category_conditions + keyword_conditions)))
+        return conditions
+    conditions.extend(category_conditions)
+    if str(plan.get("keyword_match_mode") or "").strip().lower() == "all":
+        conditions.extend(keyword_conditions)
+    elif keyword_conditions:
+        conditions.append(or_(*keyword_conditions))
+    return conditions
+
+
+def _build_mod_query_from_plan(plan: dict[str, Any]):
+    """把规范化 query_plan 翻译成只读 SQLModel 查询。"""
+    conditions = [Mod.ignored == False]  # noqa: E712
+    game_conditions = _game_scope_conditions(plan)
+    if game_conditions:
+        conditions.append(or_(*game_conditions))
+
+    categories = plan.get("categories") or []
+
+    conditions.extend(_content_visibility_conditions(plan))
+
+    conditions.extend(_source_identity_filter_conditions(plan))
+    conditions.extend(_metric_and_time_filter_conditions(plan))
+    conditions.extend(_text_and_summary_filter_conditions(plan))
+
+    conditions.extend(_keyword_and_category_filter_conditions(plan, categories))
 
     sort_field = plan.get("sort_field") or "relevance"
     sort_column = SORT_COLUMNS.get(sort_field, Mod.first_seen_at)

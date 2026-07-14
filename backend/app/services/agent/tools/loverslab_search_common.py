@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from sqlmodel import Session
 
 from app.models.mod import Mod
+from app.services.agent.search_types import SearchResult
 from app.services.agent.semantic_search import strip_scope, text_score
 from app.services.loverslab.constants import LOVERSLAB_HOSTS
 from app.services.source_identity import canonical_external_id, find_existing_mod_by_identity
@@ -142,3 +143,15 @@ def score_and_sort_loverslab_mods(
     scored = [(max(score_loverslab_mod(query, mod), 1), mod) for mod in mods if mod.id is not None and not mod.ignored]
     scored.sort(key=lambda item: (item[0], item[1].first_seen_at), reverse=True)
     return scored[: max(1, min(20, limit))]
+
+
+def loverslab_search_results(
+    mods: list[Mod],
+    *,
+    query: str,
+    limit: int,
+    tool_name: str,
+) -> list[SearchResult]:
+    """Score LoversLab records and materialize the shared search result shape."""
+    scored = score_and_sort_loverslab_mods(mods, query=query, limit=limit)
+    return [SearchResult(score=score, mod=mod, tool_name=tool_name) for score, mod in scored]

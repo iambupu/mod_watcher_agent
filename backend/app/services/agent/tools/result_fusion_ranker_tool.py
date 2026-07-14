@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.services.agent.planning.retrieval_policy import current_only_reserved
 from app.services.agent.result_merger import (
     filter_by_adult_content,
     filter_by_distinctive_terms,
@@ -150,7 +151,7 @@ def _apply_context_pollution_guard(
         return results
     current_only = [item for item in results if item.retrieval_branch == "current_only"]
     context_scoped = [item for item in results if item.retrieval_branch == "context_scoped"]
-    reserved = _current_only_reserved(plan.limit, len(current_only))
+    reserved = current_only_reserved(plan.limit, len(current_only))
     blocked_terms = _context_signal_terms(query_plan, "blocked_terms")
     guard = {
         "triggered": False,
@@ -186,13 +187,6 @@ def _apply_context_pollution_guard(
 def _dual_retrieval_enabled(query_plan: dict[str, Any]) -> bool:
     config = query_plan.get("_agent_dual_retrieval")
     return isinstance(config, dict) and config.get("enabled") is True
-
-
-def _current_only_reserved(limit: int, current_only_count: int) -> int:
-    if current_only_count <= 0:
-        return 0
-    half_limit = max(1, limit // 2)
-    return min(current_only_count, min(3, half_limit))
 
 
 def _context_signal_terms(query_plan: dict[str, Any], field: str) -> list[str]:

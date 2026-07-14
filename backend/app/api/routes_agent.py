@@ -1,12 +1,16 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session
 
 from app.db import get_session
 from app.services.agent import conversation_service as conversations
 from app.services.agent.chat_service import AgentService
+from app.services.agent.llm_config_service import (
+    InvalidLlmProviderOverrideError,
+    get_llm_config,
+)
 from app.services.agent.schemas import (
     AgentChatRequest,
     AgentChatResponse,
@@ -23,6 +27,18 @@ SessionDep = Annotated[Session, Depends(get_session)]
 logger = logging.getLogger(__name__)
 
 
+def _validate_provider_override(session: Session, provider_override: str | None) -> None:
+    if not (provider_override or "").strip():
+        return
+    try:
+        get_llm_config(
+            SettingsService(session),
+            provider_override=provider_override,
+        )
+    except InvalidLlmProviderOverrideError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("/chat", response_model=AgentChatResponse)
 async def chat_with_agent(
     body: AgentChatRequest,
@@ -30,6 +46,7 @@ async def chat_with_agent(
     session: SessionDep,
 ):
     """处理 Agent 普通对话请求，并记录接口级耗时与命中数量。"""
+    _validate_provider_override(session, body.provider_override)
     started_at = start_trace()
     logger.info(
         "agent.api path=/api/agent/chat status=started history=%s provider_override=%s model_override=%s",
@@ -62,6 +79,7 @@ async def ask_mod_detail(
     session: SessionDep,
 ):
     """处理针对单个 Mod 的详情追问。"""
+    _validate_provider_override(session, body.provider_override)
     return await AgentService(session).ask_mod_detail(body, request)
 
 @router.get("/conversation-state", response_model=AgentConversationState)
