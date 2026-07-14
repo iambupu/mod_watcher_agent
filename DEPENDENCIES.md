@@ -1,6 +1,6 @@
 # 依赖与发布工具链
 
-本项目包含源码运行、Windows 独立客户端构建和前端构建 3 类依赖。普通用户使用安装版或便携版时，不需要自行安装 Python、Node.js 或 npm。
+本项目包含源码运行、Windows 独立客户端构建和前端构建 3 类依赖。普通用户使用便携版时，不需要自行安装 Python、Node.js 或 npm。
 
 ## 普通用户运行要求
 
@@ -84,7 +84,6 @@ npm run build
 | Node.js | 18+；CI 使用 24 | 前端 typecheck、test、build |
 | PyInstaller | `>=6,<7` | 生成 `dist-desktop\ModWatcherAgent` onedir |
 | PowerShell | Windows PowerShell/pwsh | 构建、smoke、portable 与 SHA256 |
-| Inno Setup | CI 固定 6.7.3 | 生成逐用户安装器 |
 
 完整本地构建：
 
@@ -92,59 +91,56 @@ npm run build
 .\scripts\build_desktop.ps1
 ```
 
-如果本机没有 `ISCC.exe`：
-
-```powershell
-.\scripts\build_desktop.ps1 -SkipInstaller
-```
-
 生成的主要资产：
 
 ```text
 release\ModWatcherAgent-<version>-win-x64-portable.zip
 release\ModWatcherAgent-<version>-win-x64-portable.zip.sha256
-release\ModWatcherAgent-Setup-<version>-win-x64.exe
-release\ModWatcherAgent-Setup-<version>-win-x64.exe.sha256
 ```
 
 构建脚本会扫描 onedir、portable staging 和 ZIP，拒绝 `.env*`、SQLite 数据库及派生文件、日志、浏览器 profile、快照、缓存、测试目录和明显的密钥/凭据文件。
 
-## Inno Setup 许可与来源验证
-
-商业环境使用 Inno Setup IDE、编译器或由 CI 调用编译器时，组织或发布者必须自行核对并取得符合 [Inno Setup 当前商业许可政策](https://jrsoftware.org/isorder.php) 的许可。官方政策把 CI 中无人值守调用编译器也计入使用场景；本仓库、开源许可证、GitHub Actions 配置和已生成的安装器都不会替使用者授予 Inno Setup 商业许可。
-
-当前 workflow 从官方 `jrsoftware/issrc` 不可变 tag `is-6_7_3` 下载 `innosetup-6.7.3.exe`，并执行：
-
-1. `gh release verify-asset` 验证 GitHub artifact attestation。
-2. Authenticode 状态必须为 `Valid`。
-3. 签名者必须匹配 `Pyrsys B.V.`。
-4. 使用 `/CURRENTUSER` 静默安装到 Runner 临时目录。
-
-验证方法与发布者信息以 [Inno Setup 官方下载验证说明](https://jrsoftware.org/isdl-verify.php) 为准。
-
-这段 workflow 已通过本地 YAML、PowerShell AST 和契约测试，但 GitHub-hosted Runner 上的实际下载、安装、编译与发布仍属于远端验收，不应写成已执行成功。
-
-## WebView2 Bootstrapper
-
-安装器只会在构建者显式提供 `MicrosoftEdgeWebview2Setup.exe` 时尝试编入 Bootstrapper。构建脚本要求：
-
-- 文件名匹配。
-- Microsoft Authenticode 签名有效。
-- 签名证书组织为 `Microsoft Corporation`。
-- 签名覆盖的版本资源符合已知 Evergreen Bootstrapper 组合。
-
-安装命令为 Microsoft 文档指定的 `/silent /install`。更多信息见 [WebView2 Runtime 分发指南](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。
-
 ## 版本基线
 
 - 项目版本权威源：`backend/pyproject.toml`。
-- 当前项目版本：`0.2.2`。
+- 当前项目版本：`0.3.1`。
 - 前端 `package.json` 应与发布版本保持一致。
-- Windows FileVersion、安装器版本和资产文件名由构建链从项目版本派生。
+- Windows FileVersion 和便携版资产文件名由构建链从项目版本派生。
 - Git tag 必须严格匹配 `v<project-version>`，否则发布 workflow 失败。
 
-## 相关文档
+## 开发者构建
 
-- [Windows 桌面客户端指南](./docs/desktop-client.md)
-- [桌面客户端验收记录](./docs/desktop-client-acceptance.md)
-- [Windows 桌面客户端技术设计](./docs/desktop-client-technical-design.md)
+普通用户不需要执行本节命令。
+
+开发环境要求：
+
+- Python 3.11+
+- Node.js 18+
+- PowerShell 5.1+
+
+在仓库根目录运行：
+
+```powershell
+.\build-desktop.bat
+```
+
+完整构建会执行前端类型检查、测试和构建，随后运行 PyInstaller onedir 打包、独立客户端 smoke test，并生成：
+
+```text
+dist-desktop\ModWatcherAgent\ModWatcherAgent.exe
+release\ModWatcherAgent-<version>-win-x64-portable.zip
+release\ModWatcherAgent-<version>-win-x64-portable.zip.sha256
+```
+
+可用构建参数：
+
+```powershell
+.\build-desktop.bat -SkipTests
+.\build-desktop.bat -SkipFrontendBuild
+.\build-desktop.bat -SkipSmokeTest
+.\build-desktop.bat -SkipPortable
+```
+
+`-SkipFrontendBuild` 只适用于 `frontend\dist` 已经存在的情况。
+
+代码规范见 [代码风格](./CODE_STYLE.md)。

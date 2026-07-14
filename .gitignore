@@ -131,6 +131,11 @@ AGENETS.md
 PLAN_repair.md
 REASONIX.md
 
+# Local desktop engineering docs
+docs/desktop-client-technical-design.md
+docs/desktop-client-implementation-plan.md
+docs/desktop-client-acceptance.md
+
 # Local UI verification screenshots
 dashboard-ui-screenshot*.png
 
