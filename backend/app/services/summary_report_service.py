@@ -89,11 +89,13 @@ async def generate_summary_report_payload(
         "近期 Mod：\n"
         f"{context}"
     )
+    provider_chain = get_provider_chain(settings_svc)
+    session.rollback()
 
     report = ""
     used_provider = "none"
     used_model = "none"
-    for provider_config in get_provider_chain(settings_svc):
+    for provider_config in provider_chain:
         used_provider, api_key, base_url, used_model = resolve_provider_config(provider_config)
         if not provider_config_has_credentials(provider_config):
             continue

@@ -12,6 +12,7 @@ from app.services.llm_provider_config import (
     SUPPORTED_PROVIDERS,
     get_provider_chain,
     provider_config_has_credentials,
+    provider_uses_openai_chat_protocol,
     resolve_provider_config,
 )
 from app.services.settings_service import SettingsService
@@ -314,7 +315,12 @@ def create_llm_filter_client(session: _Session):
 
     svc = SettingsService(session)
     primary = next(
-        (provider for provider in get_provider_chain(svc) if provider_config_has_credentials(provider)),
+        (
+            provider
+            for provider in get_provider_chain(svc)
+            if provider_config_has_credentials(provider)
+            and provider_uses_openai_chat_protocol(str(provider.get("provider") or ""))
+        ),
         None,
     )
     if primary is None:

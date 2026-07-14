@@ -1,6 +1,9 @@
 import time
 from typing import Any
 
+from fastapi import HTTPException
+
+from app.logger import redact_sensitive_text
 from app.security import validate_outbound_url
 from app.services.llm_client import create_llm_client
 from app.services.llm_provider_config import (
@@ -13,6 +16,8 @@ from app.services.settings_payload_service import restore_masked_provider_api_ke
 from app.services.settings_service import SettingsService
 from app.utils.boolean import parse_bool
 from app.utils.json import json_array
+
+MAX_PROVIDER_TESTS_PER_REQUEST = 8
 
 
 async def test_llm_provider(provider_config: dict, *, create_client=create_llm_client) -> dict:
@@ -39,7 +44,7 @@ async def test_llm_provider(provider_config: dict, *, create_client=create_llm_c
     detail = getattr(client, "last_detail", "")
     message = "ok"
     if not content:
-        message = error or detail or "Empty response"
+        message = redact_sensitive_text(error or detail or "Empty response")
     elif content.strip().lower() != "ok":
         message = f"Connected; response was {content[:120]!r}"
     return {
@@ -70,4 +75,9 @@ async def test_llm_providers(
         and str(provider.get("provider") or "").strip().lower() in SUPPORTED_PROVIDERS
     ]
     enabled.sort(key=provider_priority)
+    if len(enabled) > MAX_PROVIDER_TESTS_PER_REQUEST:
+        raise HTTPException(
+            status_code=422,
+            detail=f"At most {MAX_PROVIDER_TESTS_PER_REQUEST} LLM providers can be tested per request",
+        )
     return {"results": [await test_llm_provider(provider, create_client=create_client) for provider in enabled]}

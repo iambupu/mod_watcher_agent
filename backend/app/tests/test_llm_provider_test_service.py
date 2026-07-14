@@ -29,6 +29,18 @@ def fake_client(provider: str, api_key: str, base_url: str):  # noqa: ARG001
     return FakeClient()
 
 
+class FailingGeminiClient:
+    last_error = "401 for https://example.test/model?key=stored-gemini-secret"
+    last_detail = ""
+
+    async def chat(self, prompt: str, model: str, max_tokens: int = 64) -> str:  # noqa: ARG002
+        return ""
+
+
+def failing_gemini_client(provider: str, api_key: str, base_url: str):  # noqa: ARG001
+    return FailingGeminiClient()
+
+
 @pytest.mark.asyncio
 async def test_llm_provider_test_ignores_legacy_non_array_config(session):
     service = SettingsService(session)
@@ -104,3 +116,53 @@ async def test_llm_provider_test_treats_string_false_as_disabled(session):
     result = await run_llm_provider_tests(service, create_client=fake_client)
 
     assert [item["provider"] for item in result["results"]] == ["ollama"]
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_test_redacts_credentials_from_error_response(session):
+    service = SettingsService(session)
+    service.set(
+        "llm_providers_json",
+        json.dumps(
+            [
+                {
+                    "provider": "gemini",
+                    "enabled": True,
+                    "priority": 1,
+                    "model": "gemini-2.0-flash",
+                    "api_key": "stored-gemini-secret",
+                    "base_url": "https://generativelanguage.googleapis.com/v1",
+                }
+            ]
+        ),
+    )
+
+    result = await run_llm_provider_tests(service, create_client=failing_gemini_client)
+
+    assert "stored-gemini-secret" not in result["results"][0]["message"]
+    assert "key=********" in result["results"][0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_test_rejects_too_many_temporary_providers(session):
+    service = SettingsService(session)
+    providers = [
+        {
+            "provider": "openai",
+            "enabled": True,
+            "priority": index,
+            "model": "gpt-4o-mini",
+            "api_key": "key",
+            "base_url": "https://api.openai.com/v1",
+        }
+        for index in range(9)
+    ]
+
+    with pytest.raises(Exception) as error:
+        await run_llm_provider_tests(
+            service,
+            {"providers": providers},
+            create_client=fake_client,
+        )
+
+    assert getattr(error.value, "status_code", None) == 422

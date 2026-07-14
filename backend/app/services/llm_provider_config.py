@@ -92,6 +92,7 @@ DEFAULT_BASE_URLS = {
     for item in PROVIDER_DEFINITIONS
 }
 SUPPORTED_PROVIDERS = set(DEFAULT_MODELS)
+NATIVE_CHAT_PROTOCOL_PROVIDERS = frozenset({"anthropic", "gemini"})
 
 
 def provider_default_model(provider: str) -> str:
@@ -102,6 +103,12 @@ def provider_default_model(provider: str) -> str:
 def provider_default_base_url(provider: str) -> str:
     """返回 provider 的默认 base_url，未知 provider 回退到 OpenAI。"""
     return DEFAULT_BASE_URLS.get((provider or "").strip().lower(), DEFAULT_BASE_URLS["openai"])
+
+
+def provider_uses_openai_chat_protocol(provider: str) -> bool:
+    """Return whether the provider exposes OpenAI-compatible chat completions."""
+    normalized = (provider or "").strip().lower()
+    return normalized in SUPPORTED_PROVIDERS and normalized not in NATIVE_CHAT_PROTOCOL_PROVIDERS
 
 
 def resolve_provider_config(provider_config: dict[str, Any]) -> tuple[str, str, str, str]:

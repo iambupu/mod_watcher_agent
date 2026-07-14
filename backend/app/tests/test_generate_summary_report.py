@@ -9,6 +9,7 @@ from app.jobs.generate_summary_report import generate_summary_report
 from app.models.mod import Mod
 from app.services.settings_service import SettingsService
 from app.services.summary_report_service import (
+    generate_summary_report_payload,
     notify_summary_report_complete,
     summary_report_interval_minutes,
     summary_window_minutes,
@@ -281,3 +282,59 @@ async def test_summary_report_does_not_notify_when_not_generated(monkeypatch):
     assert result["generated"] is False
     assert result["reason"] == "missing_prompt"
     assert created_events == []
+
+
+@pytest.mark.asyncio
+async def test_summary_report_releases_transaction_before_llm_call():
+    engine = _make_engine()
+    SQLModel.metadata.create_all(engine)
+    observed: dict[str, bool] = {}
+
+    class FakeClient:
+        async def chat(self, prompt: str, model: str, max_tokens: int = 1024) -> str:  # noqa: ARG002
+            observed["in_transaction"] = session.in_transaction()
+            return "摘要报告正文"
+
+    with Session(engine) as session:
+        settings = SettingsService(session)
+        settings.set("ui_language", "zh-CN")
+        settings.set("summary_report_prompt", "关注热点")
+        settings.set("summary_report_interval_minutes", "0")
+        settings.set(
+            "llm_providers_json",
+            json.dumps(
+                [
+                    {
+                        "provider": "ollama",
+                        "enabled": True,
+                        "priority": 1,
+                        "model": "qwen3:8b",
+                        "api_key": "",
+                        "base_url": "http://localhost:11434/v1",
+                    }
+                ]
+            ),
+        )
+        session.add(
+            Mod(
+                source="nexusmods",
+                external_id="transaction-report",
+                game="Skyrim Special Edition",
+                title="Recent Mod",
+                url="https://example.com/mod/transaction-report",
+                original_summary="A recent mod.",
+                downloads=100,
+                first_seen_at=datetime.now(UTC).isoformat(),
+                last_seen_at=datetime.now(UTC).isoformat(),
+            )
+        )
+        session.commit()
+
+        result = await generate_summary_report_payload(
+            session,
+            force=True,
+            create_client=lambda *args: FakeClient(),
+        )
+
+        assert observed == {"in_transaction": False}
+        assert result["report"] == "摘要报告正文"

@@ -172,7 +172,9 @@ async def generate_digest_text(
         "窗口数据：\n"
         f"{build_digest_context(mods, updates)}"
     )
-    for provider_config in get_provider_chain(settings_svc):
+    provider_chain = get_provider_chain(settings_svc)
+    settings_svc.session.rollback()
+    for provider_config in provider_chain:
         used_provider, api_key, base_url, used_model = resolve_provider_config(provider_config)
         if not provider_config_has_credentials(provider_config):
             continue
@@ -211,6 +213,13 @@ async def send_digest_for_window(
         }
 
     mods, updates = collect_digest_items(session, window_start, window_end)
+    ui_language = settings_svc.get("ui_language") or "zh-CN"
+    label = period_label(period, ui_language)
+    desktop_enabled = (
+        parse_bool(settings_svc.get("notifications_enabled"), default=True)
+        and parse_bool(settings_svc.get("system_notifications_enabled"), default=True)
+    )
+    session.rollback()
     report, provider, model = await generate_text(settings_svc, period, window_start, window_end, mods, updates)
     report = (report or "").strip()
     if not digest_report_is_usable(report):
@@ -222,19 +231,14 @@ async def send_digest_for_window(
             "items_matched": len(mods) + len(updates),
         }
 
-    ui_language = settings_svc.get("ui_language") or "zh-CN"
-    label = period_label(period, ui_language)
     subject = f"Mod Watcher {label}摘要 ({window_end.date().isoformat()})"
     notification = NotificationService(session)
+    session.rollback()
     telegram_result, discord_result = await notification.send_external_channels(report)
     desktop_event = SystemNotificationService(session).create_event(
         event_type=f"{period}_digest_complete",
         title=f"{label}摘要完成",
         message=f"新 Mod {len(mods)} 个，收藏更新 {len(updates)} 个。{report[:160]}",
-    )
-    desktop_enabled = (
-        parse_bool(settings_svc.get("notifications_enabled"), default=True)
-        and parse_bool(settings_svc.get("system_notifications_enabled"), default=True)
     )
     if desktop_enabled and desktop_event.seen:
         channel = "desktop"

@@ -1,4 +1,7 @@
+import json
+
 import pytest
+from sqlmodel import Session, SQLModel, create_engine
 
 from app.services import llm_client as llm_client_module
 from app.services.llm_client import (
@@ -6,7 +9,9 @@ from app.services.llm_client import (
     GeminiClient,
     OpenAIClient,
     _valid_filter_indices,
+    create_llm_filter_client,
 )
+from app.services.settings_service import SettingsService
 
 
 class _FakeResponse:
@@ -81,3 +86,58 @@ async def test_gemini_client_tolerates_empty_candidates(monkeypatch):
     assert content == ""
     assert client.last_error == ""
     assert "content was empty" in client.last_detail
+
+
+def test_llm_filter_skips_native_protocol_provider_for_openai_compatible_provider(monkeypatch):
+    engine = create_engine("sqlite://", echo=False)
+    SQLModel.metadata.create_all(engine)
+    seen = {}
+
+    class FilterResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "[0]"}}]}
+
+    def fake_post(url, **kwargs):
+        seen["url"] = url
+        seen["headers"] = kwargs["headers"]
+        return FilterResponse()
+
+    monkeypatch.setattr(llm_client_module.httpx, "post", fake_post)
+    with Session(engine) as session:
+        SettingsService(session).set(
+            "llm_providers_json",
+            json.dumps(
+                [
+                    {
+                        "provider": "anthropic",
+                        "enabled": True,
+                        "priority": 1,
+                        "model": "claude",
+                        "api_key": "anthropic-key",
+                        "base_url": "https://api.anthropic.com/v1",
+                    },
+                    {
+                        "provider": "qwen",
+                        "enabled": True,
+                        "priority": 2,
+                        "model": "qwen-plus",
+                        "api_key": "qwen-key",
+                        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    },
+                ]
+            ),
+        )
+        llm_filter = create_llm_filter_client(session)
+
+        assert llm_filter is not None
+        result = llm_filter(
+            [{"title": "A", "original_summary": "B"}],
+            type("Config", (), {"prompt": "keep", "mode": "must_pass"})(),
+        )
+
+    assert result == [{"title": "A", "original_summary": "B"}]
+    assert seen["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    assert seen["headers"]["Authorization"] == "Bearer qwen-key"
