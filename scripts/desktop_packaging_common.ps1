@@ -1,3 +1,6 @@
+$packagingCoreScript = Join-Path $PSScriptRoot "packaging_common.ps1"
+. $packagingCoreScript
+
 function Test-SafeReleaseVersion {
     param(
         [string]$Version,
@@ -82,6 +85,54 @@ function Assert-NoDesktopPathReparsePoints {
         $item = Get-Item -LiteralPath $candidate -Force
         if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
             throw "Reparse point detected in ${Context}: $candidate"
+        }
+    }
+}
+
+function Remove-ControlledDirectory {
+    param(
+        [string]$Path,
+        [string]$AllowedRoot,
+        [string]$ExpectedLeaf
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+    $fullRoot = [System.IO.Path]::GetFullPath($AllowedRoot).TrimEnd("\", "/")
+    $rootPrefix = "$fullRoot$([System.IO.Path]::DirectorySeparatorChar)"
+    $leaf = Split-Path -Leaf $fullPath
+    Assert-NoDesktopPathReparsePoints -Path $fullRoot -Context "controlled cleanup root"
+    Assert-NoDesktopPathReparsePoints -Path $fullPath -Context "controlled cleanup path"
+    if (-not $fullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+        -not $leaf.Equals($ExpectedLeaf, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing recursive cleanup outside the controlled root: $fullPath"
+    }
+    if (-not (Test-Path -LiteralPath $fullPath)) {
+        return
+    }
+    $item = Get-Item -LiteralPath $fullPath -Force
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Refusing recursive cleanup of a reparse point: $fullPath"
+    }
+    $resolvedPath = (Resolve-Path -LiteralPath $fullPath).Path.TrimEnd("\", "/")
+    if (-not $resolvedPath.Equals($fullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Resolved cleanup path changed unexpectedly: $resolvedPath"
+    }
+    Remove-Item -LiteralPath $resolvedPath -Recurse -Force
+}
+
+function Assert-RequiredDesktopRuntimeFiles {
+    param([string]$BundleRoot)
+
+    $requiredFiles = @(
+        "_internal\webview\lib\Microsoft.Web.WebView2.Core.dll",
+        "_internal\webview\lib\Microsoft.Web.WebView2.WinForms.dll",
+        "_internal\webview\lib\runtimes\win-x64\native\WebView2Loader.dll",
+        "_internal\pythonnet\runtime\Python.Runtime.dll"
+    )
+    foreach ($relativePath in $requiredFiles) {
+        $requiredPath = Join-Path $BundleRoot $relativePath
+        if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+            throw "Missing required desktop runtime file: $requiredPath"
         }
     }
 }

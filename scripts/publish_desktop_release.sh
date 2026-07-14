@@ -1,20 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 3 ]]; then
-  echo "Usage: publish_desktop_release.sh <tag> <notes-file> <release-dir>" >&2
+if [[ $# -ne 2 ]]; then
+  echo "Usage: publish_desktop_release.sh <tag> <release-dir>" >&2
   exit 2
 fi
 
 tag="$1"
-notes_file="$2"
-release_dir="$3"
+release_dir="$2"
 if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo "Unsafe desktop release tag: $tag" >&2
-  exit 2
-fi
-if [[ ! -f "$notes_file" ]]; then
-  echo "Desktop release notes file is missing: $notes_file" >&2
   exit 2
 fi
 if [[ ! -d "$release_dir" ]]; then
@@ -22,28 +17,10 @@ if [[ ! -d "$release_dir" ]]; then
   exit 2
 fi
 
-required_notes=(
-  "WebView2"
-  '%LOCALAPPDATA%\ModWatcherAgent'
-  "卸载"
-  "保留"
-  "备份"
-  "NotSigned"
-  "已知限制"
-)
-for required in "${required_notes[@]}"; do
-  if ! grep -Fq -- "$required" "$notes_file"; then
-    echo "Desktop release notes are missing required guidance: $required" >&2
-    exit 2
-  fi
-done
-
 version="${tag#v}"
 expected_names=(
   "ModWatcherAgent-$version-win-x64-portable.zip"
   "ModWatcherAgent-$version-win-x64-portable.zip.sha256"
-  "ModWatcherAgent-Setup-$version-win-x64.exe"
-  "ModWatcherAgent-Setup-$version-win-x64.exe.sha256"
 )
 assets=()
 for name in "${expected_names[@]}"; do
@@ -59,14 +36,14 @@ mapfile -t expected_names_sorted < <(printf '%s\n' "${expected_names[@]}" | sort
 if ! diff -u \
   <(printf '%s\n' "${expected_names_sorted[@]}") \
   <(printf '%s\n' "${actual_names[@]}"); then
-  echo "Desktop release directory must contain exactly the expected four assets." >&2
+  echo "Desktop release directory must contain exactly the two expected portable assets." >&2
   exit 2
 fi
 
 if ! gh release view "$tag" >/dev/null 2>&1; then
   gh release create "$tag" "${assets[@]}" \
     --verify-tag \
-    --notes-file "$notes_file" \
+    --generate-notes \
     --title "Mod Watcher Agent $tag"
   exit 0
 fi
@@ -131,5 +108,3 @@ done
 for asset in "${missing_assets[@]}"; do
   gh release upload "$tag" "$asset"
 done
-
-gh release edit "$tag" --notes-file "$notes_file"

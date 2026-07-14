@@ -5,7 +5,6 @@ import base64
 import hashlib
 import json
 import re
-import shutil
 import struct
 import subprocess
 import tomllib
@@ -21,9 +20,8 @@ BUILD_SCRIPT = REPO_ROOT / "scripts" / "build_desktop.ps1"
 SMOKE_SCRIPT = REPO_ROOT / "scripts" / "smoke_test_desktop.ps1"
 PORTABLE_SCRIPT = REPO_ROOT / "scripts" / "package_portable.ps1"
 PACKAGING_COMMON_SCRIPT = REPO_ROOT / "scripts" / "desktop_packaging_common.ps1"
+PACKAGING_CORE_SCRIPT = REPO_ROOT / "scripts" / "packaging_common.ps1"
 INSTALLER_SCRIPT = REPO_ROOT / "packaging" / "installer" / "ModWatcherAgent.iss"
-EXPECTED_INSTALLER_APP_ID = "{{B20CFDE2-9822-4BB7-94A7-7B661ACF7FF5}"
-WEBVIEW2_DOWNLOAD_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
 REQUIRED_DESKTOP_RUNTIME_FILES = (
     "_internal/webview/lib/Microsoft.Web.WebView2.Core.dll",
     "_internal/webview/lib/Microsoft.Web.WebView2.WinForms.dll",
@@ -35,61 +33,6 @@ REQUIRED_DESKTOP_RUNTIME_FILES = (
 def _required_file(path: Path) -> Path:
     assert path.is_file(), f"Missing required packaging file: {path.relative_to(REPO_ROOT)}"
     return path
-
-
-def _inno_sections(path: Path) -> dict[str, list[str]]:
-    sections: dict[str, list[str]] = {}
-    current: str | None = None
-    for raw_line in _required_file(path).read_text(encoding="utf-8-sig").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith(";"):
-            continue
-        match = re.fullmatch(r"\[([^]]+)]", line)
-        if match:
-            current = match.group(1).casefold()
-            sections.setdefault(current, [])
-        elif current is not None:
-            sections[current].append(line)
-    return sections
-
-
-def _inno_setup_directives(sections: dict[str, list[str]]) -> dict[str, str]:
-    directives: dict[str, str] = {}
-    for line in sections["setup"]:
-        if line.startswith("#"):
-            continue
-        key, separator, value = line.partition("=")
-        assert separator, f"Malformed [Setup] directive: {line}"
-        directives[key.strip().casefold()] = value.strip()
-    return directives
-
-
-def _split_inno_parameters(line: str) -> list[str]:
-    parameters: list[str] = []
-    start = 0
-    quoted = False
-    for index, character in enumerate(line):
-        if character == '"':
-            quoted = not quoted
-        elif character == ";" and not quoted:
-            parameters.append(line[start:index].strip())
-            start = index + 1
-    parameters.append(line[start:].strip())
-    return parameters
-
-
-def _inno_entries(sections: dict[str, list[str]], section: str) -> list[dict[str, str]]:
-    entries: list[dict[str, str]] = []
-    for line in sections.get(section.casefold(), []):
-        if line.startswith("#"):
-            continue
-        entry: dict[str, str] = {}
-        for parameter in _split_inno_parameters(line):
-            key, separator, value = parameter.partition(":")
-            assert separator, f"Malformed [{section}] entry: {line}"
-            entry[key.strip().casefold()] = value.strip().strip('"')
-        entries.append(entry)
-    return entries
 
 
 def _assignment(tree: ast.Module, name: str) -> ast.expr:
@@ -403,6 +346,11 @@ def _copy_build_script_fixture(repo: Path) -> Path:
         PACKAGING_COMMON_SCRIPT.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    copied_core = scripts_dir / PACKAGING_CORE_SCRIPT.name
+    copied_core.write_text(
+        PACKAGING_CORE_SCRIPT.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     return copied_script
 
 
@@ -545,7 +493,6 @@ def test_build_script_has_safe_parameters_quality_gates_and_clean_build() -> Non
         "SkipFrontendBuild",
         "SkipSmokeTest",
         "SkipPortable",
-        "SkipInstaller",
         "PythonExecutable",
     }.issubset(set(summary["parameters"]))
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
@@ -572,7 +519,26 @@ def test_build_script_has_safe_parameters_quality_gates_and_clean_build() -> Non
     assert "stop-frontendnodeprocesses" not in lowered
     assert "stop-process" not in lowered
     assert "taskkill" not in lowered
-    assert "installer" in lowered and "not" in lowered
+
+
+def test_desktop_release_contract_is_portable_only() -> None:
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "desktop-release.yml"
+    publish_script = REPO_ROOT / "scripts" / "publish_desktop_release.sh"
+    readme = REPO_ROOT / "README.md"
+    combined = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (BUILD_SCRIPT, workflow_path, publish_script, readme)
+    )
+
+    assert not INSTALLER_SCRIPT.exists()
+    assert "SkipInstaller" not in _powershell_ast(BUILD_SCRIPT)["parameters"]
+    for installer_marker in (
+        "ISCC",
+        "Inno Setup",
+        "ModWatcherAgent-Setup",
+        "WebView2BootstrapperPath",
+    ):
+        assert installer_marker not in combined
 
 
 def test_smoke_script_uses_explicit_port_handshake_and_checks_cleanup() -> None:
@@ -610,12 +576,13 @@ def test_smoke_script_uses_explicit_port_handshake_and_checks_cleanup() -> None:
 def test_build_and_smoke_require_edgechromium_and_pythonnet_runtime_files(
     tmp_path: Path,
 ) -> None:
+    common_text = PACKAGING_COMMON_SCRIPT.read_text(encoding="utf-8").replace("\\", "/")
+    assert set(REQUIRED_DESKTOP_RUNTIME_FILES).issubset(
+        set(re.findall(r'"([^"\r\n]+\.dll)"', common_text))
+    )
     for script_path in (BUILD_SCRIPT, SMOKE_SCRIPT):
         text = script_path.read_text(encoding="utf-8").replace("\\", "/")
         assert "Assert-RequiredDesktopRuntimeFiles" in text
-        assert set(REQUIRED_DESKTOP_RUNTIME_FILES).issubset(
-            set(re.findall(r'"([^"\r\n]+\.dll)"', text))
-        )
 
     fake_bundle = tmp_path / "missing runtime" / "ModWatcherAgent"
     fake_bundle.mkdir(parents=True)
@@ -637,20 +604,17 @@ def test_build_and_smoke_require_edgechromium_and_pythonnet_runtime_files(
 @pytest.mark.parametrize(
     ("script_path", "cleanup_function", "allowed_marker"),
     [
-        (BUILD_SCRIPT, "Remove-ControlledDirectory", "$repoRoot"),
-        (PORTABLE_SCRIPT, "Remove-ControlledDirectory", "$resolvedOutputDir"),
+        (PACKAGING_COMMON_SCRIPT, "Remove-ControlledDirectory", "$AllowedRoot"),
         (SMOKE_SCRIPT, "Remove-SmokeDirectory", "$systemTemp"),
     ],
 )
 def test_recursive_cleanup_is_confined_to_an_expected_root_and_leaf(
-    script_path: Path,
-    cleanup_function: str,
-    allowed_marker: str,
+    script_path: Path, cleanup_function: str, allowed_marker: str
 ) -> None:
     summary = _powershell_ast(script_path)
-    removals = summary["recursive_removals"]
-    assert removals, f"{script_path.name} should clean its controlled output"
-    assert {removal["function"] for removal in removals} == {cleanup_function}
+    assert {removal["function"] for removal in summary["recursive_removals"]} == {
+        cleanup_function
+    }
     text = script_path.read_text(encoding="utf-8")
     function_match = re.search(
         rf"function\s+{re.escape(cleanup_function)}\b(?P<body>.*?)(?=\nfunction\s|\Z)",
@@ -663,6 +627,14 @@ def test_recursive_cleanup_is_confined_to_an_expected_root_and_leaf(
     assert "Resolve-Path" in body
     assert "Split-Path -Leaf" in body
     assert allowed_marker in text
+
+    for consumer, marker in (
+        (BUILD_SCRIPT, "$repoRoot"),
+        (PORTABLE_SCRIPT, "$resolvedOutputDir"),
+    ):
+        consumer_summary = _powershell_ast(consumer)
+        assert "Remove-ControlledDirectory" in set(consumer_summary["commands"])
+        assert marker in consumer.read_text(encoding="utf-8")
 
 
 def test_portable_script_builds_clean_zip_and_matching_sha256(tmp_path: Path) -> None:
@@ -1274,272 +1246,18 @@ def test_build_portable_and_smoke_enforce_windows_x64_pe_contract() -> None:
     assert "struct.calcsize('P') == 8" in build_text
 
 
-def test_installer_source_scan_rejects_reparse_points() -> None:
-    build_text = BUILD_SCRIPT.read_text(encoding="utf-8")
-    assert "Assert-CleanDesktopBundleTree" in build_text
-    text = _required_file(PACKAGING_COMMON_SCRIPT).read_text(encoding="utf-8")
-    function_match = re.search(
-        r"function\s+Assert-CleanDesktopBundleTree\b(?P<body>.*?)(?=\nfunction\s|\Z)",
-        text,
-        re.IGNORECASE | re.DOTALL,
-    )
-    assert function_match is not None
-    assert "ReparsePoint" in function_match.group("body")
-
-
-def test_inno_installer_is_stable_per_user_and_installs_only_onedir() -> None:
-    sections = _inno_sections(INSTALLER_SCRIPT)
-    setup = _inno_setup_directives(sections)
-
-    assert setup["appid"] == EXPECTED_INSTALLER_APP_ID
-    assert setup["appversion"] == "{#AppVersion}"
-    assert setup["privilegesrequired"].casefold() == "lowest"
-    assert "privilegesrequiredoverridesallowed" not in setup
-    assert setup["defaultdirname"] == r"{localappdata}\Programs\ModWatcherAgent"
-    assert setup["defaultgroupname"] == "Mod Watcher Agent"
-    assert setup["outputdir"] == "{#OutputDir}"
-    assert setup["outputbasefilename"] == ("ModWatcherAgent-Setup-{#AppVersion}-win-x64")
-    assert setup["uninstallable"].casefold() == "yes"
-    assert setup["uninstalldisplayicon"] == r"{app}\ModWatcherAgent.exe"
-    assert setup["closeapplications"].casefold() == "yes"
-    assert setup["restartapplications"].casefold() == "no"
-    assert setup["appmutex"] == r"Local\ModWatcherAgentDesktop"
-    assert setup["architecturesallowed"].casefold() in {"x64", "x64compatible"}
-
-    files = _inno_entries(sections, "files")
-    bundle_entries = [entry for entry in files if entry.get("destdir") == "{app}"]
-    assert bundle_entries == [
-        {
-            "source": r"{#SourceDir}\*",
-            "destdir": "{app}",
-            "flags": "ignoreversion recursesubdirs createallsubdirs",
-        }
-    ]
-    assert "localappdata" not in "\n".join(sections["files"]).casefold()
-    assert sections.get("uninstalldelete", []) == []
-
-
-def test_inno_installer_creates_per_user_shortcuts_and_optional_launch() -> None:
-    sections = _inno_sections(INSTALLER_SCRIPT)
-    tasks = _inno_entries(sections, "tasks")
-    assert tasks == [
-        {
-            "name": "desktopicon",
-            "description": "{cm:CreateDesktopIcon}",
-            "groupdescription": "{cm:AdditionalIcons}",
-            "flags": "unchecked",
-        }
-    ]
-
-    icons = _inno_entries(sections, "icons")
-    assert {(entry["name"], entry["filename"], entry.get("tasks")) for entry in icons} == {
-        (r"{group}\Mod Watcher Agent", r"{app}\ModWatcherAgent.exe", None),
-        (r"{autodesktop}\Mod Watcher Agent", r"{app}\ModWatcherAgent.exe", "desktopicon"),
-    }
-
-    runs = _inno_entries(sections, "run")
-    launch = next(entry for entry in runs if entry.get("filename") == r"{app}\ModWatcherAgent.exe")
-    assert {"postinstall", "nowait", "skipifsilent"}.issubset(
-        set(launch["flags"].casefold().split())
-    )
-    assert launch["check"] == "IsWebView2RuntimeInstalled"
-
-
-def test_inno_webview2_policy_is_conditional_offline_and_verifies_result() -> None:
-    text = _required_file(INSTALLER_SCRIPT).read_text(encoding="utf-8-sig")
-    sections = _inno_sections(INSTALLER_SCRIPT)
-    lowered = text.casefold()
-    guid = "{f3017226-fe2a-4295-8bdf-00c3a9a7e4c5}"
-
-    conditional_blocks = re.findall(
-        r"#ifdef\s+WebView2BootstrapperPath(?P<body>.*?)#endif",
-        text,
-        re.IGNORECASE | re.DOTALL,
-    )
-    assert len(conditional_blocks) >= 2
-    assert any(
-        "[files]" not in block.casefold() and "microsoftedgewebview2setup.exe" in block.casefold()
-        for block in conditional_blocks
-    )
-    assert "{#WebView2BootstrapperPath}" in text
-    assert "Flags: dontcopy noencryption" in text
-
-    code = "\n".join(sections["code"])
-    assert guid in code.casefold()
-    assert re.search(
-        r"function\s+RegistryHasWebView2\s*\(const\s+RootKey:\s*Integer\)",
-        code,
-        re.IGNORECASE,
-    )
-    assert not [line for line in sections["code"] if line.lstrip().startswith("[")]
-    assert "RegQueryStringValue" in code
-    assert {"HKCU32", "HKCU64", "HKLM32", "HKLM64"}.issubset(
-        set(re.findall(r"\bHK(?:CU|LM)(?:32|64)\b", code))
-    )
-    assert "'pv'" in code
-    assert "StrToVersion" in code
-    assert "0.0.0.0" in code
-    assert "ExtractTemporaryFile('MicrosoftEdgeWebview2Setup.exe')" in code
-    assert "MicrosoftEdgeWebview2Setup.exe /silent /install" in code
-    assert "WebView2InstallExitCode" in code
-    assert "PrepareToInstall" in code
-    assert "Exec(" in code
-    assert "'/silent /install'" in code
-    assert "ewWaitUntilTerminated" in code
-    assert "IsWebView2RuntimeInstalled" in code
-    assert "AnsiString" not in code
-    assert "SaveStringToFile" not in code
-    assert "LoadStringFromFile" not in code
-    assert 'Filename: "{cmd}"' not in text
-    assert WEBVIEW2_DOWNLOAD_URL in text
-    assert "WebView2Missing=未检测到可用的 Microsoft Edge WebView2 Runtime。" in text
-    assert "WizardSilent" in code
-    assert "microsoftedge.exe" not in lowered
-    for forbidden_download in (
-        "downloadtemporaryfile",
-        "downloadtemporaryfilewithprogress",
-        "flags: external download",
-        "invoke-webrequest",
-        "start-bitstransfer",
-    ):
-        assert forbidden_download not in lowered
-
-
-def test_inno_uninstall_requires_two_interactive_confirms_before_exact_data_delete() -> None:
-    sections = _inno_sections(INSTALLER_SCRIPT)
-    code = "\n".join(sections["code"])
-    uninstall_match = re.search(
-        r"procedure\s+CurUninstallStepChanged\s*\([^)]*\)\s*;(?P<body>.*)\Z",
-        code,
-        re.IGNORECASE | re.DOTALL,
-    )
-    assert uninstall_match is not None
-    body = uninstall_match.group("body")
-    assert "usPostUninstall" in body
-    assert "UninstallSilent" in body
-    assert body.count("MB_YESNO") >= 2
-    assert body.count("IDYES") >= 2
-    delete_call = re.search(
-        r"DelTree\s*\(\s*ExpandConstant\s*\(\s*'\{localappdata\}\\ModWatcherAgent'\s*\)",
-        code,
-        re.IGNORECASE,
-    )
-    assert delete_call is not None
-    delete_dispatch = body.index("DeleteUserData")
-    assert body.index("UninstallSilent") < delete_dispatch
-    assert body.rfind("IDYES", 0, delete_dispatch) >= 0
-
-
-def test_inno_uninstall_removes_only_its_exact_quoted_auto_start_command() -> None:
-    sections = _inno_sections(INSTALLER_SCRIPT)
-    code = "\n".join(sections["code"])
-    cleanup_match = re.search(
-        r"procedure\s+RemoveOwnedAutoStartEntry\s*;(?P<body>.*?)"
-        r"(?=\nprocedure\s+CurUninstallStepChanged)",
-        code,
-        re.IGNORECASE | re.DOTALL,
-    )
-    assert cleanup_match is not None
-    cleanup = cleanup_match.group("body")
-    assert "RegQueryStringValue" in cleanup
-    assert "RegDeleteValue" in cleanup
-    assert r"Software\Microsoft\Windows\CurrentVersion\Run" in cleanup
-    assert "ModWatcherAgent" in cleanup
-    assert "ExpandConstant('{app}\\ModWatcherAgent.exe')" in cleanup
-    comparison = re.search(
-        r"CompareText\s*\(\s*RegisteredCommand\s*,\s*ExpectedCommand\s*\)\s*<>\s*0",
-        cleanup,
-        re.IGNORECASE,
-    )
-    assert comparison is not None
-    assert comparison.start() < cleanup.index("RegDeleteValue")
-
-    uninstall_match = re.search(
-        r"procedure\s+CurUninstallStepChanged\s*\([^)]*\)\s*;(?P<body>.*)\Z",
-        code,
-        re.IGNORECASE | re.DOTALL,
-    )
-    assert uninstall_match is not None
-    uninstall = uninstall_match.group("body")
-    cleanup_call = uninstall.index("RemoveOwnedAutoStartEntry")
-    assert cleanup_call < uninstall.index("UninstallSilent")
-    assert (
-        "uninsdeletevalue"
-        not in "\n".join(line for section in sections.values() for line in section).casefold()
-    )
-
-
-def test_build_script_compiles_installer_without_network_downloads_and_hashes_it() -> None:
-    summary = _powershell_ast(BUILD_SCRIPT)
-    assert {"IsccPath", "WebView2BootstrapperPath"}.issubset(set(summary["parameters"]))
-    text = BUILD_SCRIPT.read_text(encoding="utf-8")
-    lowered = text.casefold()
-
-    assert "Resolve-IsccPath" in text
-    assert "Get-Command ISCC.exe" in text
-    for common_path in (
-        r"Inno Setup 6\ISCC.exe",
-        "ProgramFiles",
-        "ProgramFiles(x86)",
-        "LOCALAPPDATA",
-    ):
-        assert common_path.casefold() in lowered
-    assert "MicrosoftEdgeWebview2Setup.exe" in text
-    assert "Get-AuthenticodeSignature" in text
-    assert "SignatureStatus]::Valid" in text
-    assert "O=Microsoft Corporation" in text
-    assert "FileVersionInfo" in text
-    assert "OriginalFilename" in text
-    assert "ProductName" in text
-    assert "/DAppVersion=" in text
-    assert "/DSourceDir=" in text
-    assert "/DOutputDir=" in text
-    assert "/DWebView2BootstrapperPath=" in text
-    assert "ModWatcherAgent-Setup-$appVersion-win-x64.exe" in text
-    assert "Get-Sha256Hex" in text
-    assert ".sha256" in text
-    assert "Assert-CleanInstallerSource" in text
-    assert "Test-SafeReleaseVersion" in text
-    assert "Assert-ControlledOutputFile" in text
-    assert "not produced" not in lowered
-    for forbidden_download in (
-        "invoke-webrequest",
-        "start-bitstransfer",
-        "system.net.webclient",
-        "curl.exe",
-    ):
-        assert forbidden_download not in lowered
-
-
-@pytest.mark.parametrize(
-    ("portable", "installer", "preserved_families"),
-    [
-        (True, True, set()),
-        (True, False, {"installer"}),
-        (False, True, {"portable"}),
-    ],
-)
-def test_release_cleanup_removes_only_artifact_families_being_rebuilt(
-    tmp_path: Path,
-    portable: bool,
-    installer: bool,
-    preserved_families: set[str],
-) -> None:
+def test_release_cleanup_removes_only_stale_portable_artifacts(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     release = repo / "release"
     release.mkdir(parents=True)
-    artifacts = {
-        "ModWatcherAgent-0.0.0-win-x64-portable.zip": "portable",
-        "ModWatcherAgent-0.0.0-win-x64-portable.zip.sha256": "portable",
-        "ModWatcherAgent-1.2.3-win-x64-portable.zip": "portable",
-        "ModWatcherAgent-1.2.3-win-x64-portable.zip.sha256": "portable",
-        "ModWatcherAgent-Setup-0.0.0-win-x64.exe": "installer",
-        "ModWatcherAgent-Setup-0.0.0-win-x64.exe.sha256": "installer",
-        "ModWatcherAgent-Setup-1.2.3-win-x64.exe": "installer",
-        "ModWatcherAgent-Setup-1.2.3-win-x64.exe.sha256": "installer",
-    }
-    for leaf in artifacts:
-        (release / leaf).write_bytes(b"stale")
+    stale_portable = (
+        release / "ModWatcherAgent-0.0.0-win-x64-portable.zip",
+        release / "ModWatcherAgent-0.0.0-win-x64-portable.zip.sha256",
+    )
+    for path in stale_portable:
+        path.write_bytes(b"stale")
+    legacy_installer = release / "ModWatcherAgent-Setup-0.0.0-win-x64.exe"
+    legacy_installer.write_bytes(b"keep")
     unknown = release / "release-notes.txt"
     unknown.write_text("keep", encoding="utf-8")
 
@@ -1551,22 +1269,18 @@ def test_release_cleanup_removes_only_artifact_families_being_rebuilt(
             "Resolve-ControlledReleaseRoot",
             "Assert-ControlledOutputFile",
             "Remove-ControlledFile",
-            "Clear-ControlledReleaseArtifactFamilies",
+            "Clear-ControlledPortableArtifacts",
         ),
         rf"""
-Clear-ControlledReleaseArtifactFamilies `
+Clear-ControlledPortableArtifacts `
     -RepoRoot '{repo_literal}' `
-    -ReleaseRoot '{release_literal}' `
-    -Portable:${str(portable).lower()} `
-    -Installer:${str(installer).lower()}
+    -ReleaseRoot '{release_literal}'
 """,
     )
 
     assert completed.returncode == 0, completed.stderr or completed.stdout
-    expected = {"release-notes.txt"} | {
-        leaf for leaf, family in artifacts.items() if family in preserved_families
-    }
-    assert {path.name for path in release.iterdir()} == expected
+    assert all(not path.exists() for path in stale_portable)
+    assert legacy_installer.read_bytes() == b"keep"
     assert unknown.read_text(encoding="utf-8") == "keep"
 
 
@@ -1582,7 +1296,7 @@ def test_release_cleanup_rejects_matching_reparse_point_before_deleting_files(
     external.mkdir()
     external_secret = external / "secret.txt"
     external_secret.write_text("keep-secret", encoding="utf-8")
-    junction = release / "ModWatcherAgent-Setup-0.0.0-win-x64.exe"
+    junction = release / "ModWatcherAgent-0.0.0-win-x64-portable.zip"
     _create_directory_junction(junction, external)
 
     repo_literal = str(repo).replace("'", "''")
@@ -1594,14 +1308,12 @@ def test_release_cleanup_rejects_matching_reparse_point_before_deleting_files(
                 "Resolve-ControlledReleaseRoot",
                 "Assert-ControlledOutputFile",
                 "Remove-ControlledFile",
-                "Clear-ControlledReleaseArtifactFamilies",
+                "Clear-ControlledPortableArtifacts",
             ),
             rf"""
-Clear-ControlledReleaseArtifactFamilies `
+Clear-ControlledPortableArtifacts `
     -RepoRoot '{repo_literal}' `
-    -ReleaseRoot '{release_literal}' `
-    -Portable:$true `
-    -Installer:$true
+    -ReleaseRoot '{release_literal}'
 """,
         )
 
@@ -1615,107 +1327,6 @@ Clear-ControlledReleaseArtifactFamilies `
             junction.rmdir()
 
 
-def test_full_build_rejects_unknown_release_entry_before_running_tooling(
-    tmp_path: Path,
-) -> None:
-    repo = tmp_path / "repo"
-    copied_script = _copy_build_script_fixture(repo)
-    pyproject = repo / "backend" / "pyproject.toml"
-    pyproject.parent.mkdir(parents=True)
-    pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
-    release = repo / "release"
-    release.mkdir()
-    stale_installer = release / "ModWatcherAgent-Setup-0.0.0-win-x64.exe"
-    stale_installer.write_bytes(b"stale")
-    unknown = release / "caller-owned.txt"
-    unknown.write_text("keep", encoding="utf-8")
-    fake_iscc = tmp_path / "ISCC.exe"
-    fake_iscc.write_bytes(b"not executed")
-    fake_python = tmp_path / "python.cmd"
-    fake_python.write_text("@exit /b 99\r\n", encoding="ascii")
-
-    completed = _run_script(
-        copied_script,
-        "-SkipTests",
-        "-SkipFrontendBuild",
-        "-SkipSmokeTest",
-        "-IsccPath",
-        str(fake_iscc),
-        "-PythonExecutable",
-        str(fake_python),
-    )
-
-    assert completed.returncode != 0
-    output = f"{completed.stdout}\n{completed.stderr}".casefold()
-    assert "unexpected release entries" in output
-    assert not stale_installer.exists()
-    assert unknown.read_text(encoding="utf-8") == "keep"
-    assert not (repo / ".venv-desktop-build").exists()
-
-
-def test_full_build_release_gate_requires_exact_current_four_artifacts(
-    tmp_path: Path,
-) -> None:
-    repo = tmp_path / "repo"
-    release = repo / "release"
-    release.mkdir(parents=True)
-    expected = (
-        "ModWatcherAgent-1.2.3-win-x64-portable.zip",
-        "ModWatcherAgent-1.2.3-win-x64-portable.zip.sha256",
-        "ModWatcherAgent-Setup-1.2.3-win-x64.exe",
-        "ModWatcherAgent-Setup-1.2.3-win-x64.exe.sha256",
-    )
-    for leaf in expected:
-        (release / leaf).write_bytes(b"artifact")
-    unknown = release / "unexpected.txt"
-    unknown.write_text("keep", encoding="utf-8")
-    repo_literal = str(repo).replace("'", "''")
-    release_literal = str(release).replace("'", "''")
-    expected_literals = ", ".join(f"'{leaf}'" for leaf in expected)
-    statements = rf"""
-Assert-ExactReleaseArtifactSet `
-    -RepoRoot '{repo_literal}' `
-    -ReleaseRoot '{release_literal}' `
-    -ExpectedLeaves @({expected_literals})
-"""
-    functions = (
-        "Resolve-ControlledReleaseRoot",
-        "Assert-ControlledOutputFile",
-        "Assert-ExactReleaseArtifactSet",
-    )
-
-    rejected = _run_powershell_functions(BUILD_SCRIPT, functions, statements)
-    assert rejected.returncode != 0
-    assert "exact release artifact set" in f"{rejected.stdout}\n{rejected.stderr}".casefold()
-    assert unknown.read_text(encoding="utf-8") == "keep"
-
-    unknown.unlink()
-    accepted = _run_powershell_functions(BUILD_SCRIPT, functions, statements)
-    assert accepted.returncode == 0, accepted.stderr or accepted.stdout
-    build_text = BUILD_SCRIPT.read_text(encoding="utf-8")
-    assert build_text.count("Assert-ExactReleaseArtifactSet") >= 2
-
-
-def test_build_script_rejects_unsafe_installer_version_before_tooling(tmp_path: Path) -> None:
-    copied_script = _copy_build_script_fixture(tmp_path)
-    pyproject = tmp_path / "backend" / "pyproject.toml"
-    pyproject.parent.mkdir(parents=True)
-    pyproject.write_text('[project]\nversion = "1.2.3/../../escaped"\n', encoding="utf-8")
-
-    completed = _run_script(
-        copied_script,
-        "-SkipTests",
-        "-SkipFrontendBuild",
-        "-SkipSmokeTest",
-        "-SkipPortable",
-    )
-
-    assert completed.returncode != 0
-    output = f"{completed.stdout}\n{completed.stderr}".casefold()
-    assert "unsafe project version" in output
-    assert not (tmp_path / ".venv-desktop-build").exists()
-
-
 def test_build_script_rejects_release_junction_before_any_tool_runs(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     copied_script = _copy_build_script_fixture(repo)
@@ -1725,8 +1336,6 @@ def test_build_script_rejects_release_junction_before_any_tool_runs(tmp_path: Pa
 
     tools_dir = tmp_path / "tools"
     tools_dir.mkdir()
-    fake_iscc = tools_dir / "ISCC.exe"
-    fake_iscc.write_bytes(b"not executed")
     fake_python = tools_dir / "python.cmd"
     fake_python.write_text("@exit /b 99\r\n", encoding="ascii")
 
@@ -1742,9 +1351,6 @@ def test_build_script_rejects_release_junction_before_any_tool_runs(tmp_path: Pa
             "-SkipTests",
             "-SkipFrontendBuild",
             "-SkipSmokeTest",
-            "-SkipPortable",
-            "-IsccPath",
-            str(fake_iscc),
             "-PythonExecutable",
             str(fake_python),
         )
@@ -1774,79 +1380,12 @@ def test_build_script_preserves_native_tool_exit_code(tmp_path: Path) -> None:
         "-SkipFrontendBuild",
         "-SkipSmokeTest",
         "-SkipPortable",
-        "-SkipInstaller",
         "-PythonExecutable",
         str(fake_python),
     )
 
     assert completed.returncode == 37
     assert "failed with exit code 37" in f"{completed.stdout}\n{completed.stderr}"
-
-
-def test_build_script_rejects_renamed_microsoft_binary_as_webview2(
-    tmp_path: Path,
-) -> None:
-    repo = tmp_path / "repo"
-    copied_script = _copy_build_script_fixture(repo)
-    pyproject = repo / "backend" / "pyproject.toml"
-    pyproject.parent.mkdir(parents=True)
-    pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
-
-    tools_dir = tmp_path / "tools"
-    tools_dir.mkdir()
-    fake_iscc = tools_dir / "ISCC.exe"
-    fake_iscc.write_bytes(b"not executed")
-    fake_python = tools_dir / "python.cmd"
-    fake_python.write_text("@exit /b 99\r\n", encoding="ascii")
-    system_where = Path(r"C:\Windows\System32\where.exe")
-    assert system_where.is_file()
-    renamed_binary = tools_dir / "MicrosoftEdgeWebview2Setup.exe"
-    shutil.copy2(system_where, renamed_binary)
-
-    completed = _run_script(
-        copied_script,
-        "-SkipTests",
-        "-SkipFrontendBuild",
-        "-SkipSmokeTest",
-        "-SkipPortable",
-        "-IsccPath",
-        str(fake_iscc),
-        "-WebView2BootstrapperPath",
-        str(renamed_binary),
-        "-PythonExecutable",
-        str(fake_python),
-    )
-
-    assert completed.returncode != 0
-    output = f"{completed.stdout}\n{completed.stderr}".casefold()
-    assert "webview2 bootstrapper identity" in output
-    assert "where.exe" in output
-    assert not (repo / ".venv-desktop-build").exists()
-
-
-@pytest.mark.parametrize(
-    ("original_filename", "product_name", "expected"),
-    [
-        ("MicrosoftEdgeUpdateSetup.exe", "Microsoft Edge Update", True),
-        ("MicrosoftEdgeWebview2Setup.exe", "Microsoft Edge WebView2 Runtime", True),
-        ("where.exe", "Microsoft® Windows® Operating System", False),
-        ("MicrosoftEdgeUpdateSetup.exe", "Microsoft Edge", False),
-    ],
-)
-def test_webview2_bootstrapper_identity_predicate_accepts_official_metadata_only(
-    original_filename: str,
-    product_name: str,
-    expected: bool,
-) -> None:
-    assert (
-        _invoke_powershell_predicate(
-            BUILD_SCRIPT,
-            "Test-WebView2BootstrapperIdentity",
-            OriginalFilename=original_filename,
-            ProductName=product_name,
-        )
-        is expected
-    )
 
 
 def test_batch_entry_forwards_arguments_and_exit_code() -> None:

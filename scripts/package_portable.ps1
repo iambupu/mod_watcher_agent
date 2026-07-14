@@ -16,39 +16,6 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $repoRoot "release"
 }
 
-function Get-ProjectVersion {
-    param([string]$PyprojectPath)
-
-    foreach ($line in Get-Content -LiteralPath $PyprojectPath) {
-        if ($line -match '^\s*version\s*=\s*"([^"]+)"\s*$') {
-            return $Matches[1]
-        }
-    }
-    throw "Unable to read the project version from $PyprojectPath"
-}
-
-function Get-Sha256Hex {
-    param([string]$Path)
-
-    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
-        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
-    }
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $stream = [System.IO.File]::OpenRead($Path)
-        try {
-            $hashBytes = $sha256.ComputeHash($stream)
-        }
-        finally {
-            $stream.Dispose()
-        }
-    }
-    finally {
-        $sha256.Dispose()
-    }
-    return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
-}
-
 function Resolve-PortableOutputDirectory {
     param([string]$Path)
 
@@ -110,37 +77,6 @@ function Assert-ControlledPortableOutputFile {
         throw "Resolved portable output directory changed unexpectedly: $resolvedParent"
     }
     return $fullPath
-}
-
-function Remove-ControlledDirectory {
-    param(
-        [string]$Path,
-        [string]$AllowedRoot,
-        [string]$ExpectedLeaf
-    )
-
-    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
-    $fullRoot = [System.IO.Path]::GetFullPath($AllowedRoot).TrimEnd("\", "/")
-    $rootPrefix = "$fullRoot$([System.IO.Path]::DirectorySeparatorChar)"
-    $leaf = Split-Path -Leaf $fullPath
-    Assert-NoDesktopPathReparsePoints -Path $fullRoot -Context "portable cleanup root"
-    Assert-NoDesktopPathReparsePoints -Path $fullPath -Context "portable cleanup path"
-    if (-not $fullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
-        -not $leaf.Equals($ExpectedLeaf, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing recursive cleanup outside the portable output root: $fullPath"
-    }
-    if (-not (Test-Path -LiteralPath $fullPath)) {
-        return
-    }
-    $item = Get-Item -LiteralPath $fullPath -Force
-    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-        throw "Refusing recursive cleanup of a reparse point: $fullPath"
-    }
-    $resolvedPath = (Resolve-Path -LiteralPath $fullPath).Path.TrimEnd("\", "/")
-    if (-not $resolvedPath.Equals($fullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Resolved portable cleanup path changed unexpectedly: $resolvedPath"
-    }
-    Remove-Item -LiteralPath $resolvedPath -Recurse -Force
 }
 
 $resolvedExecutableDir = (Resolve-Path -LiteralPath $ExecutableDir).Path

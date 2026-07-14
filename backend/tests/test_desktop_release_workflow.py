@@ -13,7 +13,6 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "desktop-release.yml"
 PUBLISH_SCRIPT = REPO_ROOT / "scripts" / "publish_desktop_release.sh"
-RELEASE_NOTES_PATH = REPO_ROOT / "docs" / "desktop-release-notes.md"
 ACTION_PINS = {
     "actions/checkout": "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",  # v7.0.0
     "actions/setup-python": "ece7cb06caefa5fff74198d8649806c4678c61a1",  # v6.3.0
@@ -114,31 +113,6 @@ def test_windows_build_job_uses_expected_toolchain_and_quality_gates() -> None:
         assert command in workflow_text
 
 
-def test_inno_setup_is_downloaded_from_official_immutable_release_and_verified() -> None:
-    job = _load_workflow()["jobs"]["build-desktop"]
-    step = _step_by_name(job, "Install verified Inno Setup")
-    script = step["run"]
-
-    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
-    assert "jrsoftware/issrc" in script
-    assert "is-6_7_3" in script
-    assert "innosetup-6.7.3.exe" in script
-    assert "gh release download" in script
-    assert re.search(
-        r'gh release verify-asset\s+"is-6_7_3"\s+\$installer\s+'
-        r'--repo\s+"jrsoftware/issrc"',
-        script,
-    )
-    assert "Get-AuthenticodeSignature" in script
-    assert "Pyrsys B.V." in script
-    assert "/VERYSILENT" in script
-    assert "/CURRENTUSER" in script
-    assert "ISCC.exe" in script
-    assert script.count("if ($LASTEXITCODE -ne 0)") >= 2
-    for forbidden in ("choco install", "winget install", "Invoke-WebRequest"):
-        assert forbidden not in script
-
-
 def test_native_quality_gates_are_independent_fail_fast_steps() -> None:
     job = _load_workflow()["jobs"]["build-desktop"]
     expected_steps = {
@@ -167,9 +141,8 @@ def test_build_verifies_tag_version_hashes_and_clean_release_artifacts() -> None
     assert "expectedReleaseNames" in verify_step["run"]
     assert "actualReleaseNames" in verify_step["run"]
     assert "Compare-Object" in verify_step["run"]
-    assert "exactly the four expected artifacts" in verify_step["run"]
+    assert "exactly the two expected portable artifacts" in verify_step["run"]
     assert "ModWatcherAgent-$env:PROJECT_VERSION-win-x64-portable.zip" in combined
-    assert "ModWatcherAgent-Setup-$env:PROJECT_VERSION-win-x64.exe" in combined
     assert ".sha256" in combined
     assert "GetFullPath" in verify_step["run"]
     assert "release" in verify_step["run"]
@@ -188,8 +161,7 @@ def test_artifacts_are_uploaded_and_tag_release_is_immutable_and_idempotent() ->
     assert int(upload["with"]["retention-days"]) <= 30
     paths = upload["with"]["path"]
     assert "portable.zip" in paths
-    assert "Setup-*-win-x64.exe" in paths
-    assert paths.count(".sha256") >= 2
+    assert paths.count(".sha256") >= 1
 
     publish = workflow["jobs"]["publish-release"]
     download = next(
@@ -213,24 +185,18 @@ def test_artifacts_are_uploaded_and_tag_release_is_immutable_and_idempotent() ->
     assert release["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert release["env"]["GH_REPO"] == "${{ github.repository }}"
     assert "scripts/publish_desktop_release.sh" in release["run"]
-    assert "docs/desktop-release-notes.md" in release["run"]
+    assert "docs/" not in release["run"]
     assert "--clobber" not in release["run"]
-    assert "--generate-notes" not in release["run"]
 
 
-def test_explicit_release_notes_cover_runtime_data_and_known_limit_guidance() -> None:
-    notes = RELEASE_NOTES_PATH.read_text(encoding="utf-8")
-    for required in (
-        "WebView2",
-        r"%LOCALAPPDATA%\ModWatcherAgent",
-        "卸载",
-        "保留",
-        "备份",
-        "NotSigned",
-        "已知限制",
-    ):
-        assert required in notes
-    assert "GitHub-hosted tag 发布" not in notes
+def test_publish_script_generates_release_notes_without_document_dependency() -> None:
+    script = PUBLISH_SCRIPT.read_text(encoding="utf-8")
+
+    assert "<tag> <release-dir>" in script
+    assert "<notes-file>" not in script
+    assert "required_notes" not in script
+    assert "--notes-file" not in script
+    assert "--generate-notes" in script
 
 
 def test_every_powershell_workflow_step_is_syntactically_valid(tmp_path: Path) -> None:
@@ -294,7 +260,6 @@ def test_release_verification_rejects_any_unpaired_or_extra_file(tmp_path: Path)
     version = "9.8.7"
     artifact_names = (
         f"ModWatcherAgent-{version}-win-x64-portable.zip",
-        f"ModWatcherAgent-Setup-{version}-win-x64.exe",
     )
     for index, artifact_name in enumerate(artifact_names):
         payload = f"artifact-{index}".encode()
@@ -344,10 +309,12 @@ def test_release_verification_rejects_any_unpaired_or_extra_file(tmp_path: Path)
         check=False,
     )
     assert rejected.returncode != 0
-    assert "exactly the four expected artifacts" in (f"{rejected.stdout}\n{rejected.stderr}")
+    assert "exactly the two expected portable artifacts" in (
+        f"{rejected.stdout}\n{rejected.stderr}"
+    )
 
 
-def test_publish_reverification_rejects_cross_referenced_hash_files(
+def test_publish_reverification_rejects_mismatched_hash_filename(
     tmp_path: Path,
 ) -> None:
     git_bash = Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Git/bin/bash.exe"
@@ -365,19 +332,12 @@ def test_publish_reverification_rejects_cross_referenced_hash_files(
     release_dir.mkdir()
     version = "9.8.7"
     portable_name = f"ModWatcherAgent-{version}-win-x64-portable.zip"
-    installer_name = f"ModWatcherAgent-Setup-{version}-win-x64.exe"
-    portable_payload = b"portable"
-    installer_payload = b"installer"
-    (release_dir / portable_name).write_bytes(portable_payload)
-    (release_dir / installer_name).write_bytes(installer_payload)
-    portable_digest = hashlib.sha256(portable_payload).hexdigest()
-    installer_digest = hashlib.sha256(installer_payload).hexdigest()
-    (release_dir / f"{portable_name}.sha256").write_text(
-        f"{portable_digest}  {portable_name}\n", encoding="ascii", newline="\n"
-    )
-    installer_hash_path = release_dir / f"{installer_name}.sha256"
-    installer_hash_path.write_text(
-        f"{installer_digest}  {installer_name}\n", encoding="ascii", newline="\n"
+    payload = b"portable"
+    (release_dir / portable_name).write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    hash_path = release_dir / f"{portable_name}.sha256"
+    hash_path.write_text(
+        f"{digest}  {portable_name}\n", encoding="ascii", newline="\n"
     )
     environment = os.environ.copy()
     environment["GITHUB_REF_NAME"] = f"v{version}"
@@ -394,8 +354,8 @@ def test_publish_reverification_rejects_cross_referenced_hash_files(
     )
     assert success.returncode == 0, success.stderr or success.stdout
 
-    installer_hash_path.write_text(
-        f"{portable_digest}  {portable_name}\n", encoding="ascii", newline="\n"
+    hash_path.write_text(
+        f"{digest}  wrong-portable.zip\n", encoding="ascii", newline="\n"
     )
     rejected = subprocess.run(
         [str(git_bash), script_path.name],
@@ -497,8 +457,6 @@ def test_publish_script_enforces_immutable_existing_release_assets_with_fake_gh(
 
     publish_script = tmp_path / "publish.sh"
     publish_script.write_bytes(PUBLISH_SCRIPT.read_bytes())
-    notes_path = tmp_path / "notes.md"
-    notes_path.write_bytes(RELEASE_NOTES_PATH.read_bytes())
     wrapper = tmp_path / "fake-gh-wrapper.sh"
     _write_fake_gh_wrapper(wrapper)
 
@@ -510,8 +468,6 @@ def test_publish_script_enforces_immutable_existing_release_assets_with_fake_gh(
     names = (
         "ModWatcherAgent-9.8.7-win-x64-portable.zip",
         "ModWatcherAgent-9.8.7-win-x64-portable.zip.sha256",
-        "ModWatcherAgent-Setup-9.8.7-win-x64.exe",
-        "ModWatcherAgent-Setup-9.8.7-win-x64.exe.sha256",
     )
     for index, name in enumerate(names):
         payload = f"asset-{index}".encode()
@@ -541,7 +497,6 @@ def test_publish_script_enforces_immutable_existing_release_assets_with_fake_gh(
             wrapper.name,
             publish_script.name,
             tag,
-            notes_path.name,
             release_dir.name,
         ],
         cwd=tmp_path,

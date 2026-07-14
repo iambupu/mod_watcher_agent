@@ -6,38 +6,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Get-VersionFromBackendPyproject {
-    param([string]$Path)
-    if (-not (Test-Path $Path)) {
-        throw "Missing file: $Path"
-    }
-    $lines = Get-Content $Path
-    foreach ($line in $lines) {
-        if ($line -match '^\s*version\s*=\s*"(.*)"\s*$') {
-            return $Matches[1]
-        }
-    }
-    throw "Could not find [project].version in $Path"
-}
-
-function Get-Sha256Hex {
-    param([string]$Path)
-    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
-        return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
-    }
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $stream = [System.IO.File]::OpenRead($Path)
-        try {
-            $hashBytes = $sha256.ComputeHash($stream)
-        } finally {
-            $stream.Dispose()
-        }
-    } finally {
-        $sha256.Dispose()
-    }
-    return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
-}
+$packagingCommonScript = Join-Path $PSScriptRoot "packaging_common.ps1"
+. $packagingCommonScript
 
 function Test-ReleasePathExcluded {
     param(
@@ -278,7 +248,7 @@ $root = Split-Path -Parent $root
 Set-Location $root
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = Get-VersionFromBackendPyproject (Join-Path $root "backend\pyproject.toml")
+    $Version = Get-ProjectVersion -PyprojectPath (Join-Path $root "backend\pyproject.toml")
 }
 
 $dateTag = Get-Date -Format "yyyyMMdd"

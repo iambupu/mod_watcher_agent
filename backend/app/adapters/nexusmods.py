@@ -90,7 +90,7 @@ class NexusModsAdapter(BaseAdapter):
         headers = {
             "Content-Type": "application/json",
             "Application-Name": "ModWatcherAgent",
-            "Application-Version": "0.2.2",
+            "Application-Version": "0.3.1",
         }
         if self.api_key:
             headers["apikey"] = self.api_key
@@ -347,7 +347,7 @@ class NexusModsAdapter(BaseAdapter):
         """Fallback REST detail fetch for APIs that require gameId in GraphQL filters."""
         headers = {
             "Application-Name": "ModWatcherAgent",
-            "Application-Version": "0.2.2",
+            "Application-Version": "0.3.1",
         }
         if self.api_key:
             headers["apikey"] = self.api_key

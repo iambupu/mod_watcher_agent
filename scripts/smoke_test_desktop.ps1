@@ -14,12 +14,6 @@ if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
 $resolvedExecutablePath = (Resolve-Path -LiteralPath $ExecutablePath).Path
 $executableDir = Split-Path -Parent $resolvedExecutablePath
 $executableName = Split-Path -Leaf $resolvedExecutablePath
-$requiredDesktopRuntimeFiles = @(
-    "_internal\webview\lib\Microsoft.Web.WebView2.Core.dll",
-    "_internal\webview\lib\Microsoft.Web.WebView2.WinForms.dll",
-    "_internal\webview\lib\runtimes\win-x64\native\WebView2Loader.dll",
-    "_internal\pythonnet\runtime\Python.Runtime.dll"
-)
 
 function Get-PackagedDesktopProcesses {
     param([string]$TargetPath)
@@ -69,17 +63,6 @@ function Remove-SmokeDirectory {
         throw "Resolved smoke cleanup path changed unexpectedly: $resolvedPath"
     }
     Remove-Item -LiteralPath $resolvedPath -Recurse -Force
-}
-
-function Assert-RequiredDesktopRuntimeFiles {
-    param([string]$BundleRoot)
-
-    foreach ($relativePath in $requiredDesktopRuntimeFiles) {
-        $requiredPath = Join-Path $BundleRoot $relativePath
-        if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
-            throw "Missing required desktop runtime file: $requiredPath"
-        }
-    }
 }
 
 function Get-AvailableSmokePort {

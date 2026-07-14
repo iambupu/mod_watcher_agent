@@ -69,56 +69,6 @@ jobs:
             -Encoding utf8 `
             -Append
 
-      - name: Install verified Inno Setup
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $downloadRoot = Join-Path $env:RUNNER_TEMP "inno-download"
-          $innoRoot = Join-Path $env:RUNNER_TEMP "Inno Setup 6"
-          New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
-          gh release download "is-6_7_3" `
-            --repo "jrsoftware/issrc" `
-            --pattern "innosetup-6.7.3.exe" `
-            --dir $downloadRoot
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-          $installer = Join-Path $downloadRoot "innosetup-6.7.3.exe"
-          gh release verify-asset "is-6_7_3" $installer --repo "jrsoftware/issrc"
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-          $signature = Get-AuthenticodeSignature -LiteralPath $installer
-          if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
-              $signature.SignerCertificate.Subject -notlike '*Pyrsys B.V.*') {
-            throw "Inno Setup Authenticode verification failed: $($signature.Status)"
-          }
-          $arguments = @(
-            "/VERYSILENT",
-            "/SUPPRESSMSGBOXES",
-            "/NORESTART",
-            "/SP-",
-            "/CURRENTUSER",
-            "/DIR=`"$innoRoot`""
-          )
-          $process = Start-Process `
-            -FilePath $installer `
-            -ArgumentList $arguments `
-            -Wait `
-            -PassThru
-          if ($process.ExitCode -ne 0) {
-            throw "Inno Setup installation failed with exit code $($process.ExitCode)"
-          }
-          $isccPath = Join-Path $innoRoot "ISCC.exe"
-          if (-not (Test-Path -LiteralPath $isccPath -PathType Leaf)) {
-            throw "Verified Inno Setup installation did not produce ISCC.exe"
-          }
-          "ISCC_PATH=$isccPath" | Out-File `
-            -FilePath $env:GITHUB_ENV `
-            -Encoding utf8 `
-            -Append
-
       - name: Run backend tests
         shell: pwsh
         run: python -m pytest backend -q
@@ -142,12 +92,11 @@ jobs:
         shell: pwsh
         run: npm run build
 
-      - name: Build desktop, portable, and installer artifacts
+      - name: Build desktop and portable artifact
         shell: pwsh
         run: |
           .\scripts\build_desktop.ps1 `
             -PythonExecutable (Get-Command python.exe).Source `
-            -IsccPath $env:ISCC_PATH `
             -SkipTests `
             -SkipFrontendBuild `
             -SkipSmokeTest
@@ -163,14 +112,11 @@ jobs:
         run: |
           $releaseRoot = [System.IO.Path]::GetFullPath((Join-Path $PWD "release")).TrimEnd("\", "/")
           $artifactPaths = @(
-            (Join-Path $releaseRoot "ModWatcherAgent-$env:PROJECT_VERSION-win-x64-portable.zip"),
-            (Join-Path $releaseRoot "ModWatcherAgent-Setup-$env:PROJECT_VERSION-win-x64.exe")
+            (Join-Path $releaseRoot "ModWatcherAgent-$env:PROJECT_VERSION-win-x64-portable.zip")
           )
           $expectedReleaseNames = @(
             "ModWatcherAgent-$env:PROJECT_VERSION-win-x64-portable.zip",
-            "ModWatcherAgent-$env:PROJECT_VERSION-win-x64-portable.zip.sha256",
-            "ModWatcherAgent-Setup-$env:PROJECT_VERSION-win-x64.exe",
-            "ModWatcherAgent-Setup-$env:PROJECT_VERSION-win-x64.exe.sha256"
+            "ModWatcherAgent-$env:PROJECT_VERSION-win-x64-portable.zip.sha256"
           ) | Sort-Object
           $actualReleaseNames = @(
             Get-ChildItem -LiteralPath $releaseRoot -Force |
@@ -181,7 +127,7 @@ jobs:
             Compare-Object -ReferenceObject $expectedReleaseNames -DifferenceObject $actualReleaseNames
           )
           if ($releaseDifferences.Count -ne 0) {
-            throw "Release directory must contain exactly the four expected artifacts: $($releaseDifferences | Out-String)"
+            throw "Release directory must contain exactly the two expected portable artifacts: $($releaseDifferences | Out-String)"
           }
           foreach ($artifactPath in $artifactPaths) {
             $fullArtifactPath = [System.IO.Path]::GetFullPath($artifactPath)
@@ -216,8 +162,6 @@ jobs:
           path: |
             release/ModWatcherAgent-*-win-x64-portable.zip
             release/ModWatcherAgent-*-win-x64-portable.zip.sha256
-            release/ModWatcherAgent-Setup-*-win-x64.exe
-            release/ModWatcherAgent-Setup-*-win-x64.exe.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -250,15 +194,13 @@ jobs:
           expected_assets=(
             "ModWatcherAgent-$version-win-x64-portable.zip"
             "ModWatcherAgent-$version-win-x64-portable.zip.sha256"
-            "ModWatcherAgent-Setup-$version-win-x64.exe"
-            "ModWatcherAgent-Setup-$version-win-x64.exe.sha256"
           )
           mapfile -t actual_assets < <(find release -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
           mapfile -t expected_assets_sorted < <(printf '%s\n' "${expected_assets[@]}" | sort)
           if ! diff -u \
             <(printf '%s\n' "${expected_assets_sorted[@]}") \
             <(printf '%s\n' "${actual_assets[@]}"); then
-            echo "Downloaded artifact set does not match the expected four files." >&2
+            echo "Downloaded artifact set does not match the expected two portable files." >&2
             exit 1
           fi
           for checksum in release/*.sha256; do
@@ -288,5 +230,4 @@ jobs:
         run: |
           bash scripts/publish_desktop_release.sh \
             "$GITHUB_REF_NAME" \
-            docs/desktop-release-notes.md \
             release
