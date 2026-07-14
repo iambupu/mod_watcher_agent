@@ -5,6 +5,7 @@ from typing import Any
 from sqlmodel import Session
 
 from app.jobs.scheduler import register_jobs
+from app.runtime_paths import RuntimePathError, build_runtime_paths, save_database_path_selection
 from app.security import invalidate_runtime_policy_cache
 from app.services.settings_payload_service import (
     SettingsPayloadError,
@@ -28,8 +29,15 @@ def apply_settings_update(session: Session, items: dict[str, str]) -> SettingsSe
     service = SettingsService(session)
     if items:
         prepared = prepare_settings_update(service, items)
-        service.set_batch(prepared, commit=False)
-        _commit_settings_change(session)
+        database_path = prepared.pop("database_path", None)
+        if database_path is not None:
+            try:
+                save_database_path_selection(build_runtime_paths(), database_path)
+            except RuntimePathError as exc:
+                raise SettingsPayloadError(422, str(exc)) from exc
+        if prepared:
+            service.set_batch(prepared, commit=False)
+            _commit_settings_change(session)
     return service
 
 
@@ -38,8 +46,15 @@ def import_settings_payload(session: Session, data: dict[str, Any]) -> int:
     items = settings_import_items(data)
     if items:
         prepared = prepare_settings_update(service, items)
-        service.set_batch(prepared, commit=False)
-        _commit_settings_change(session)
+        database_path = prepared.pop("database_path", None)
+        if database_path is not None:
+            try:
+                save_database_path_selection(build_runtime_paths(), database_path)
+            except RuntimePathError as exc:
+                raise SettingsPayloadError(422, str(exc)) from exc
+        if prepared:
+            service.set_batch(prepared, commit=False)
+            _commit_settings_change(session)
     return len(items)
 
 

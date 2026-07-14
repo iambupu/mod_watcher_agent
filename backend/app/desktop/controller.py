@@ -256,9 +256,17 @@ class DesktopController:
             self.state = DesktopState.WINDOW_VISIBLE
         return True
 
-    def _destroy_window(self) -> None:
-        with self._visibility_lock:
-            self.window.destroy()
+    def _destroy_window(self, *, wait: bool = True) -> bool:
+        acquired = self._visibility_lock.acquire(blocking=wait)
+        if not acquired:
+            return False
+        self._visibility_lock.release()
+
+        # WinForms dispatches destroy() to the UI thread and synchronously fires
+        # the closing callback there. Holding the visibility lock across this
+        # call deadlocks when that callback checks whether it should hide.
+        self.window.destroy()
+        return True
 
     def _cleanup(self, *, preserve_failure: bool) -> None:
         current_thread_id = threading.get_ident()
@@ -283,19 +291,28 @@ class DesktopController:
 
         cleanup_error: BaseException | None = None
         force_exit_required = False
+
+        def run_cleanup(cleanup: Callable[[], object]) -> None:
+            nonlocal cleanup_error, force_exit_required
+            try:
+                cleanup()
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+                if bool(getattr(exc, "requires_forced_exit", False)):
+                    force_exit_required = True
+
         try:
-            for cleanup in (
-                self.tray.stop,
-                self.server.stop,
-                self._destroy_window,
-            ):
-                try:
-                    cleanup()
-                except BaseException as exc:
-                    if cleanup_error is None:
-                        cleanup_error = exc
-                    if bool(getattr(exc, "requires_forced_exit", False)):
-                        force_exit_required = True
+            run_cleanup(self.tray.stop)
+            window_destroyed = False
+            try:
+                window_destroyed = self._destroy_window(wait=False)
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+            run_cleanup(self.server.stop)
+            if not window_destroyed:
+                run_cleanup(self._destroy_window)
             if not force_exit_required:
                 try:
                     self.guard.release()

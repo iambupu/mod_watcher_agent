@@ -31,13 +31,25 @@ def isolated_policy_engine(monkeypatch: pytest.MonkeyPatch):
     security._policy_cache["expires_at"] = 0.0
 
 
-def _make_request(host: str, path: str, token: str = "") -> Request:
+def _make_request(
+    host: str,
+    path: str,
+    token: str = "",
+    *,
+    method: str = "GET",
+    origin: str = "",
+    request_host: str = "",
+) -> Request:
     headers = []
     if token:
         headers.append((b"x-mod-watcher-token", token.encode("utf-8")))
+    if origin:
+        headers.append((b"origin", origin.encode("utf-8")))
+    if request_host:
+        headers.append((b"host", request_host.encode("utf-8")))
     scope = {
         "type": "http",
-        "method": "GET",
+        "method": method,
         "path": path,
         "raw_path": path.encode("utf-8"),
         "query_string": b"",
@@ -49,6 +61,65 @@ def _make_request(host: str, path: str, token: str = "") -> Request:
         "root_path": "",
     }
     return Request(scope)
+
+
+def test_access_policy_allows_cors_preflight_without_admin_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MW_ACCESS_PROFILE", "local_strict")
+    monkeypatch.setattr(settings, "MW_ALLOW_LAN", False)
+    monkeypatch.setattr(settings, "MW_ADMIN_TOKEN", "secret-token")
+
+    decision = AccessPolicy().evaluate(
+        _make_request(
+            "127.0.0.1",
+            "/api/settings",
+            method="OPTIONS",
+            origin="http://127.0.0.1:17501",
+        )
+    )
+
+    assert decision.allow is True
+
+
+def test_access_policy_blocks_untrusted_browser_origin_on_unsafe_local_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MW_ACCESS_PROFILE", "local_relaxed")
+    monkeypatch.setattr(settings, "MW_ALLOW_LAN", False)
+    monkeypatch.setattr(settings, "MW_ADMIN_TOKEN", "")
+
+    decision = AccessPolicy().evaluate(
+        _make_request(
+            "127.0.0.1",
+            "/api/settings/discord/test",
+            method="POST",
+            origin="https://evil.example",
+        )
+    )
+
+    assert decision.allow is False
+    assert decision.status_code == 403
+
+
+def test_access_policy_allows_same_origin_packaged_ui_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MW_ACCESS_PROFILE", "local_relaxed")
+    monkeypatch.setattr(settings, "MW_ALLOW_LAN", False)
+    monkeypatch.setattr(settings, "MW_ADMIN_TOKEN", "")
+
+    decision = AccessPolicy().evaluate(
+        _make_request(
+            "127.0.0.1",
+            "/api/settings/discord/test",
+            method="POST",
+            origin="http://127.0.0.1:17500",
+            request_host="127.0.0.1:17500",
+        )
+    )
+
+    assert decision.allow is True
 
 
 def test_access_policy_local_relaxed_blocks_remote(monkeypatch: pytest.MonkeyPatch) -> None:

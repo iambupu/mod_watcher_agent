@@ -14,19 +14,22 @@ class LogDirectoryOpenError(RuntimeError):
         self.unsupported = unsupported
 
 
-def open_log_directory_in_system() -> Path:
-    log_dir = get_log_directory()
-    log_dir.mkdir(parents=True, exist_ok=True)
+def open_directory_in_system(directory: Path) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
     system = platform.system().lower()
     try:
         if system == "windows":
-            os.startfile(str(log_dir))  # type: ignore[attr-defined]
+            os.startfile(str(directory))  # type: ignore[attr-defined]
         elif system == "darwin":
-            subprocess.Popen(["open", str(log_dir)])
+            subprocess.Popen(["open", str(directory)])
         elif system == "linux":
-            subprocess.Popen(["xdg-open", str(log_dir)])
+            subprocess.Popen(["xdg-open", str(directory)])
         else:
             raise LogDirectoryOpenError(f"Unsupported platform: {system}", unsupported=True)
     except FileNotFoundError as exc:
         raise LogDirectoryOpenError(f"Open directory command unavailable: {exc}", unsupported=True) from exc
-    return log_dir
+    return directory
+
+
+def open_log_directory_in_system() -> Path:
+    return open_directory_in_system(get_log_directory())

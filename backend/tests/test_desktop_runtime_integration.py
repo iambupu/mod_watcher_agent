@@ -82,9 +82,6 @@ def _install_lifespan_fakes(
         events.append("scheduler.start")
         fake_scheduler.running = True
 
-    async def deferred_maintenance() -> None:
-        return None
-
     frontend_dir = tmp_path / "frontend-dist"
     frontend_dir.mkdir()
     frontend_dir.joinpath("index.html").write_text("test frontend", encoding="utf-8")
@@ -96,7 +93,6 @@ def _install_lifespan_fakes(
     monkeypatch.setattr(main_module, "SettingsService", FakeSettingsService)
     monkeypatch.setattr(main_module, "mark_interrupted_jobs_failed", lambda _session: 0)
     monkeypatch.setattr(main_module, "setup_scheduler", setup_scheduler)
-    monkeypatch.setattr(main_module, "_run_deferred_startup_maintenance", deferred_maintenance)
     monkeypatch.setattr(main_module, "AccessPolicy", PolicySpy)
     monkeypatch.setattr(main_module, "FRONTEND_DIST_DIR", frontend_dir)
     monkeypatch.setattr(main_module, "is_frozen", lambda: True)

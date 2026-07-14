@@ -114,17 +114,10 @@ def _held_os_lock(lock_path: Path) -> Iterator[None]:
 
 def test_legacy_candidates_are_ordered_deduplicated_and_exclude_target(
     runtime_paths: RuntimePaths,
-    tmp_path: Path,
 ) -> None:
     executable_dir = runtime_paths.executable_dir
-    working_dir = tmp_path / "working tree"
 
-    assert list(legacy_database_candidates(runtime_paths, cwd=working_dir)) == [
-        executable_dir / "backend" / "mod_watcher.db",
-        executable_dir / "mod_watcher.db",
-        working_dir / "backend" / "mod_watcher.db",
-    ]
-    assert list(legacy_database_candidates(runtime_paths, cwd=executable_dir)) == [
+    assert list(legacy_database_candidates(runtime_paths)) == [
         executable_dir / "backend" / "mod_watcher.db",
         executable_dir / "mod_watcher.db",
     ]
@@ -133,9 +126,22 @@ def test_legacy_candidates_are_ordered_deduplicated_and_exclude_target(
         runtime_paths,
         database_path=executable_dir / "mod_watcher.db",
     )
-    assert list(legacy_database_candidates(target_is_second_candidate, cwd=executable_dir)) == [
+    assert list(legacy_database_candidates(target_is_second_candidate)) == [
         executable_dir / "backend" / "mod_watcher.db"
     ]
+
+
+def test_legacy_candidates_do_not_trust_working_directory_database(
+    runtime_paths: RuntimePaths,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    working_dir = tmp_path / "working tree"
+    working_database = working_dir / "backend" / "mod_watcher.db"
+    working_database.parent.mkdir(parents=True)
+    monkeypatch.chdir(working_dir)
+
+    assert working_database not in legacy_database_candidates(runtime_paths)
 
 
 def test_existing_target_skips_migration_without_changing_files(

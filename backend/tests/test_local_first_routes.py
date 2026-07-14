@@ -6,6 +6,7 @@ import sys
 import time
 import types
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app import security
+from app.api import routes_settings
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models.agent_message import AgentMessage
@@ -71,6 +73,60 @@ def test_settings_import_reuses_settings_validation(client: TestClient) -> None:
 
     assert resp.status_code == 422
     assert "watchdog_check_interval_minutes" in resp.json()["detail"]
+
+
+def test_settings_runtime_paths_expose_config_and_database_locations(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    config_dir = tmp_path / "config"
+    default_database = tmp_path / "data" / "mod_watcher.db"
+    active_database = tmp_path / "custom" / "selected.db"
+    monkeypatch.setattr(
+        routes_settings,
+        "build_runtime_paths",
+        lambda: SimpleNamespace(
+            config_dir=config_dir,
+            default_database_path=default_database,
+            database_path=active_database,
+        ),
+    )
+
+    response = client.get("/api/settings/runtime-paths")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "config_dir": str(config_dir),
+        "default_database_path": str(default_database),
+        "active_database_path": str(active_database),
+    }
+
+
+def test_settings_open_config_directory_uses_runtime_config_path(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    config_dir = tmp_path / "config"
+    opened: list[object] = []
+    monkeypatch.setattr(
+        routes_settings,
+        "build_runtime_paths",
+        lambda: SimpleNamespace(config_dir=config_dir),
+    )
+    monkeypatch.setattr(
+        routes_settings,
+        "open_directory_in_system",
+        lambda path: opened.append(path) or path,
+        raising=False,
+    )
+
+    response = client.post("/api/settings/open-config-dir")
+
+    assert response.status_code == 200
+    assert response.json() == {"opened": True, "path": str(config_dir)}
+    assert opened == [config_dir]
 
 
 def test_google_search_engine_id_is_visible_and_exported(

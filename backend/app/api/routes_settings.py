@@ -9,9 +9,11 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.db import get_session
+from app.runtime_paths import build_runtime_paths
 from app.schemas.settings import SettingsRead, SettingsUpdate
 from app.services.llm_client import create_llm_client
 from app.services.llm_provider_test_service import test_llm_providers as run_llm_provider_tests
+from app.services.log_directory_service import LogDirectoryOpenError, open_directory_in_system
 from app.services.notification_service import NotificationService
 from app.services.settings_payload_service import (
     EXPORT_EXCLUDED_PREFIXES,
@@ -30,7 +32,21 @@ class AutoStartRequest(BaseModel):
     enabled: bool = False
 
 
+class RuntimePathsRead(BaseModel):
+    config_dir: str
+    default_database_path: str
+    active_database_path: str
+
+
 SessionDep = Annotated[Session, Depends(get_session)]
+
+
+def _merged_settings(service: SettingsService) -> dict[str, str]:
+    db_settings = service.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
+    merged = dict(service.DEFAULTS)
+    merged.update(db_settings)
+    merged["database_path"] = str(build_runtime_paths().database_path)
+    return merged
 
 
 def _raise_settings_error(exc: SettingsPayloadError | AutoStartUnsupportedError) -> None:
@@ -44,10 +60,7 @@ def get_settings(
 ):
     """读取设置，并对敏感字段做响应脱敏。"""
     service = SettingsService(session)
-    db_settings = service.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
-    merged = dict(service.DEFAULTS)
-    merged.update(db_settings)
-    return SettingsRead(settings=redact_settings_for_response(merged))
+    return SettingsRead(settings=redact_settings_for_response(_merged_settings(service)))
 
 
 @router.put("", response_model=SettingsRead)
@@ -64,10 +77,30 @@ def update_settings(
         except SettingsPayloadError as exc:
             _raise_settings_error(exc)
 
-    db_settings = service.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
-    merged = dict(service.DEFAULTS)
-    merged.update(db_settings)
-    return SettingsRead(settings=redact_settings_for_response(merged))
+    return SettingsRead(settings=redact_settings_for_response(_merged_settings(service)))
+
+
+@router.get("/runtime-paths", response_model=RuntimePathsRead)
+def get_runtime_paths():
+    """返回设置页需要展示的只读运行时路径。"""
+    paths = build_runtime_paths()
+    return RuntimePathsRead(
+        config_dir=str(paths.config_dir),
+        default_database_path=str(paths.default_database_path),
+        active_database_path=str(paths.database_path),
+    )
+
+
+@router.post("/open-config-dir")
+def open_config_directory():
+    """调用系统文件管理器打开应用配置目录。"""
+    paths = build_runtime_paths()
+    try:
+        config_dir = open_directory_in_system(paths.config_dir)
+    except LogDirectoryOpenError as exc:
+        status_code = 501 if exc.unsupported else 500
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return {"opened": True, "path": str(config_dir)}
 
 
 @router.post("/telegram/test")
@@ -106,6 +139,7 @@ def export_settings(
     """导出可迁移设置，并排除密钥、运行态等敏感前缀。"""
     svc = SettingsService(session)
     raw = svc.get_all(exclude_prefixes=EXPORT_EXCLUDED_PREFIXES)
+    raw["database_path"] = str(build_runtime_paths().database_path)
     data = sanitize_export_settings(raw)
     json_bytes = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
     return StreamingResponse(

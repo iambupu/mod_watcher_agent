@@ -3,6 +3,7 @@
 """Tests for SettingsService."""
 
 import json
+import sqlite3
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -15,6 +16,7 @@ from app.services.settings_payload_service import (
     settings_import_items,
 )
 from app.services.settings_service import SettingsService
+from app.services.settings_update_service import apply_settings_update
 
 
 @pytest.fixture(name="engine")
@@ -122,6 +124,54 @@ class TestSettingsService:
             select(Setting).where(Setting.key == "test_key")
         ).first()
         assert new.updated_at != old_updated_at
+
+    def test_database_path_is_saved_outside_the_active_database(
+        self,
+        service,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ):
+        selected_database = tmp_path / "external" / "selected.db"
+        selected_database.parent.mkdir()
+        database = sqlite3.connect(selected_database)
+        database.execute("CREATE TABLE preserved_data (value TEXT NOT NULL)")
+        database.execute("INSERT INTO preserved_data (value) VALUES ('keep me')")
+        database.commit()
+        database.close()
+        monkeypatch.setenv("MW_USER_DATA_DIR", str(tmp_path / "runtime"))
+
+        apply_settings_update(
+            service.session,
+            {"database_path": str(selected_database)},
+        )
+
+        assert service.get("database_path") is None
+        from app.runtime_paths import build_runtime_paths
+
+        assert build_runtime_paths().database_path == selected_database.resolve()
+        database = sqlite3.connect(selected_database)
+        try:
+            assert database.execute("SELECT value FROM preserved_data").fetchone() == ("keep me",)
+        finally:
+            database.close()
+
+    def test_database_path_update_creates_a_new_sqlite_database(
+        self,
+        service,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ):
+        selected_database = tmp_path / "new location" / "selected.db"
+        monkeypatch.setenv("MW_USER_DATA_DIR", str(tmp_path / "runtime"))
+
+        apply_settings_update(
+            service.session,
+            {"database_path": str(selected_database)},
+        )
+
+        assert selected_database.is_file()
+        with sqlite3.connect(selected_database) as database:
+            assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
 
 
 class TestDefaultsMerge:

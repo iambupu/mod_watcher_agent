@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -53,6 +54,7 @@ def test_source_paths_preserve_existing_layout(
         backup_dir=backend_dir / "data" / "backups",
         browser_profile_dir=backend_dir / "data" / "browser_profiles",
         snapshot_dir=backend_dir / "data" / "snapshots",
+        default_database_path=backend_dir / "mod_watcher.db",
         database_path=backend_dir / "mod_watcher.db",
         frontend_dist_dir=repo_root / "frontend" / "dist",
         alembic_ini_path=backend_dir / "alembic.ini",
@@ -60,6 +62,8 @@ def test_source_paths_preserve_existing_layout(
 
     with pytest.raises(FrozenInstanceError):
         paths.user_root = tmp_path  # type: ignore[misc]
+
+    assert paths.default_database_path == backend_dir / "mod_watcher.db"
 
 
 def test_source_defaults_are_derived_from_module_location(
@@ -103,9 +107,13 @@ def test_frozen_paths_use_local_app_data(
         backup_dir=local_app_data / "ModWatcherAgent" / "backups",
         browser_profile_dir=local_app_data / "ModWatcherAgent" / "data" / "browser_profiles",
         snapshot_dir=local_app_data / "ModWatcherAgent" / "data" / "snapshots",
+        default_database_path=local_app_data / "ModWatcherAgent" / "data" / "mod_watcher.db",
         database_path=local_app_data / "ModWatcherAgent" / "data" / "mod_watcher.db",
         frontend_dist_dir=bundle_root / "frontend" / "dist",
         alembic_ini_path=bundle_root / "backend" / "alembic.ini",
+    )
+    assert paths.default_database_path == (
+        local_app_data / "ModWatcherAgent" / "data" / "mod_watcher.db"
     )
 
 
@@ -275,6 +283,127 @@ def test_desktop_environment_points_to_runtime_paths_and_is_local_only(
     assert os.environ["MW_BIND_HOST"] == "127.0.0.1"
     assert os.environ["MW_ALLOW_LAN"] == "false"
     assert os.environ["LOCAL_ONLY_API"] == "true"
+
+
+def test_database_selection_is_loaded_before_desktop_environment_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    user_root = tmp_path / "用户 数据"
+    selected_database = tmp_path / "existing data" / "selected.db"
+    selected_database.parent.mkdir(parents=True)
+    selected_database.write_bytes(b"")
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(user_root))
+    initial_paths = build_runtime_paths(
+        frozen=True,
+        bundle_root=tmp_path / "bundle",
+        executable_dir=tmp_path / "app",
+    )
+
+    runtime_paths_module.save_database_path_selection(initial_paths, str(selected_database))
+    selected_paths = build_runtime_paths(
+        frozen=True,
+        bundle_root=tmp_path / "bundle",
+        executable_dir=tmp_path / "app",
+    )
+    configure_desktop_environment(selected_paths)
+
+    assert selected_paths.database_path == selected_database.resolve()
+    assert os.environ["DATABASE_URL"] == f"sqlite:///{selected_database.resolve().as_posix()}"
+
+
+def test_blank_database_selection_restores_runtime_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    user_root = tmp_path / "portable-root"
+    selected_database = tmp_path / "selected.db"
+    selected_database.write_bytes(b"")
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(user_root))
+    paths = build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle")
+    runtime_paths_module.save_database_path_selection(paths, str(selected_database))
+
+    runtime_paths_module.save_database_path_selection(paths, "")
+    reset_paths = build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle")
+
+    assert reset_paths.database_path == user_root / "data" / "mod_watcher.db"
+
+
+def test_database_selection_rejects_non_sqlite_urls(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(tmp_path / "portable-root"))
+    paths = build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle")
+
+    with pytest.raises(RuntimePathError, match="SQLite"):
+        runtime_paths_module.save_database_path_selection(
+            paths,
+            "postgresql://localhost/mod_watcher",
+        )
+
+
+def test_database_selection_creates_missing_database_and_parent_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    user_root = tmp_path / "portable-root"
+    missing_database = tmp_path / "missing" / "selected.db"
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(user_root))
+    paths = build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle")
+
+    selected = runtime_paths_module.save_database_path_selection(paths, str(missing_database))
+
+    assert selected == missing_database.resolve()
+    assert missing_database.is_file()
+    with sqlite3.connect(missing_database) as database:
+        assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    assert build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle").database_path == missing_database.resolve()
+
+
+def test_existing_selection_for_missing_database_falls_back_to_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    user_root = tmp_path / "portable-root"
+    config_dir = user_root / "config"
+    missing_database = tmp_path / "removed" / "selected.db"
+    config_dir.mkdir(parents=True)
+    missing_database.parent.mkdir()
+    (config_dir / "database-selection.json").write_text(
+        '{"database_path": "' + missing_database.as_posix() + '"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(user_root))
+
+    paths = build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle")
+
+    assert paths.database_path == user_root / "data" / "mod_watcher.db"
+    assert not missing_database.exists()
+
+
+def test_legacy_database_path_setting_is_migrated_before_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    user_root = tmp_path / "portable-root"
+    selected_database = tmp_path / "existing" / "selected.db"
+    selected_database.parent.mkdir()
+    selected_database.write_bytes(b"")
+    monkeypatch.setenv("MW_USER_DATA_DIR", str(user_root))
+    paths = build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle")
+    paths.data_dir.mkdir(parents=True)
+    with sqlite3.connect(paths.database_path) as connection:
+        connection.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+        connection.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            ("database_path", str(selected_database)),
+        )
+
+    migrated = runtime_paths_module.migrate_legacy_database_path_setting(paths)
+
+    assert migrated is True
+    assert build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle").database_path == selected_database.resolve()
 
 
 def test_desktop_environment_seeds_game_aliases_into_user_config(

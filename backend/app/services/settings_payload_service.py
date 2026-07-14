@@ -130,43 +130,29 @@ def prepare_settings_update(
     items: dict[str, str],
 ) -> dict[str, str]:
     sanitized = dict(items)
-    access_profile = sanitized.get("access_profile")
-    if access_profile is not None:
-        profile = str(access_profile).strip().lower()
-        if profile not in ACCESS_PROFILES:
-            raise SettingsPayloadError(422, "access_profile is invalid")
-        if profile in ACCESS_PROFILES_REQUIRING_TOKEN and not settings.MW_ADMIN_TOKEN:
-            raise SettingsPayloadError(
-                422,
-                "MW_ADMIN_TOKEN must be configured before enabling token-required access profiles",
-            )
-        sanitized["access_profile"] = profile
+    _normalize_access_profile(sanitized)
+    _normalize_scrape_engine(sanitized)
+    _sanitize_credential_fields(sanitized)
+    _prepare_llm_providers_json(service, sanitized)
+    _normalize_numeric_settings(sanitized)
+    return sanitized
 
-    scrape_engine = sanitized.get("loverslab_search_scrape_engine")
-    if scrape_engine is not None:
-        engine = str(scrape_engine).strip().lower()
-        if engine not in LOVERSLAB_SEARCH_SCRAPE_ENGINES:
-            raise SettingsPayloadError(422, "loverslab_search_scrape_engine is invalid")
-        sanitized["loverslab_search_scrape_engine"] = engine
 
-    for key in SENSITIVE_KEYS:
-        value = sanitized.get(key)
-        if value == MASKED_VALUE:
-            sanitized.pop(key, None)
-    for key, min_len in MIN_LENGTH_SENSITIVE_KEYS.items():
+def _normalize_numeric_settings(sanitized: dict[str, str]) -> None:
+    for key, (min_v, max_v) in NUMERIC_SETTING_BOUNDS.items():
         raw = sanitized.get(key)
         if raw is None:
             continue
-        value = str(raw).strip()
-        if value and len(value) < min_len:
-            raise SettingsPayloadError(422, f"{key} is too short")
+        try:
+            value = int(str(raw).strip())
+        except ValueError:
+            raise SettingsPayloadError(422, f"{key} must be an integer") from None
+        if value < min_v or value > max_v:
+            raise SettingsPayloadError(422, f"{key} must be between {min_v} and {max_v}")
+        sanitized[key] = str(value)
 
-    webhook = sanitized.get("discord_webhook_url")
-    if webhook is not None:
-        webhook_value = str(webhook).strip()
-        if webhook_value and not webhook_value.startswith("https://"):
-            raise SettingsPayloadError(422, "discord_webhook_url must start with https://")
 
+def _prepare_llm_providers_json(service: SettingsService, sanitized: dict[str, str]) -> None:
     if "llm_providers_json" in sanitized:
         try:
             providers = json.loads(sanitized["llm_providers_json"])
@@ -197,18 +183,48 @@ def prepare_settings_update(
             service.get("llm_providers_json"),
         )
 
-    for key, (min_v, max_v) in NUMERIC_SETTING_BOUNDS.items():
+
+def _sanitize_credential_fields(sanitized: dict[str, str]) -> None:
+    for key in SENSITIVE_KEYS:
+        value = sanitized.get(key)
+        if value == MASKED_VALUE:
+            sanitized.pop(key, None)
+    for key, min_len in MIN_LENGTH_SENSITIVE_KEYS.items():
         raw = sanitized.get(key)
         if raw is None:
             continue
-        try:
-            value = int(str(raw).strip())
-        except ValueError:
-            raise SettingsPayloadError(422, f"{key} must be an integer") from None
-        if value < min_v or value > max_v:
-            raise SettingsPayloadError(422, f"{key} must be between {min_v} and {max_v}")
-        sanitized[key] = str(value)
-    return sanitized
+        value = str(raw).strip()
+        if value and len(value) < min_len:
+            raise SettingsPayloadError(422, f"{key} is too short")
+
+    webhook = sanitized.get("discord_webhook_url")
+    if webhook is not None:
+        webhook_value = str(webhook).strip()
+        if webhook_value and not webhook_value.startswith("https://"):
+            raise SettingsPayloadError(422, "discord_webhook_url must start with https://")
+
+
+def _normalize_scrape_engine(sanitized: dict[str, str]) -> None:
+    scrape_engine = sanitized.get("loverslab_search_scrape_engine")
+    if scrape_engine is not None:
+        engine = str(scrape_engine).strip().lower()
+        if engine not in LOVERSLAB_SEARCH_SCRAPE_ENGINES:
+            raise SettingsPayloadError(422, "loverslab_search_scrape_engine is invalid")
+        sanitized["loverslab_search_scrape_engine"] = engine
+
+
+def _normalize_access_profile(sanitized: dict[str, str]) -> None:
+    access_profile = sanitized.get("access_profile")
+    if access_profile is not None:
+        profile = str(access_profile).strip().lower()
+        if profile not in ACCESS_PROFILES:
+            raise SettingsPayloadError(422, "access_profile is invalid")
+        if profile in ACCESS_PROFILES_REQUIRING_TOKEN and not settings.MW_ADMIN_TOKEN:
+            raise SettingsPayloadError(
+                422,
+                "MW_ADMIN_TOKEN must be configured before enabling token-required access profiles",
+            )
+        sanitized["access_profile"] = profile
 
 
 def sanitize_export_settings(raw: dict[str, str]) -> dict[str, str]:

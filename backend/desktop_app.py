@@ -25,6 +25,7 @@ from app.runtime_paths import (
     build_runtime_paths,
     configure_desktop_environment,
     ensure_runtime_directories,
+    migrate_legacy_database_path_setting,
 )
 
 _APPLICATION_TITLE = "Mod Watcher Agent"
@@ -447,6 +448,9 @@ def _run_normal_desktop() -> int:
     try:
         paths = build_runtime_paths()
         ensure_runtime_directories(paths)
+        if migrate_legacy_database_path_setting(paths):
+            paths = build_runtime_paths()
+            ensure_runtime_directories(paths)
         configure_desktop_environment(paths)
         runtime_settings = load_desktop_runtime_settings()
         desktop_logger = configure_desktop_logging(paths)

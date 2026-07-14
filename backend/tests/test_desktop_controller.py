@@ -492,10 +492,10 @@ def test_shutdown_is_thread_safe_idempotent_and_signals_completion(tmp_path: Pat
     assert guard.release_calls == 1
 
 
-def test_controller_stops_tray_before_waiting_for_blocked_server_cleanup(
+def test_controller_closes_window_before_waiting_for_blocked_server_cleanup(
     tmp_path: Path,
 ) -> None:
-    controller, server, _window, tray, _guard, history = _make_controller(tmp_path)
+    controller, server, window, tray, _guard, history = _make_controller(tmp_path)
     server_stop_entered = threading.Event()
     release_server_stop = threading.Event()
 
@@ -511,12 +511,53 @@ def test_controller_stops_tray_before_waiting_for_blocked_server_cleanup(
     try:
         assert server_stop_entered.wait(1)
         assert tray.stop_calls == 1
+        assert window.destroy_calls == 1
         assert history.index("tray.stop") < history.index("server.stop")
+        assert history.index("window.destroy") < history.index("server.stop")
     finally:
         release_server_stop.set()
         shutdown.join(1)
 
     assert not shutdown.is_alive()
+
+
+def test_shutdown_does_not_hold_visibility_lock_during_native_close_callback(
+    tmp_path: Path,
+) -> None:
+    module = _desktop_controller_module()
+    controller, _server, window, _tray, _guard, history = _make_controller(tmp_path)
+    close_callback_finished = threading.Event()
+
+    controller.state = module.DesktopState.WINDOW_VISIBLE
+    controller.tray_available = True
+    window.bind(
+        on_minimized=controller.on_window_minimized,
+        on_closing=controller.on_window_closing,
+    )
+
+    def destroy_with_native_close_callback() -> None:
+        window.destroy_calls += 1
+        history.append("window.destroy")
+
+        def run_close_callback() -> None:
+            try:
+                assert window.on_closing is not None
+                window.on_closing()
+            finally:
+                close_callback_finished.set()
+
+        callback_thread = threading.Thread(target=run_close_callback, daemon=True)
+        callback_thread.start()
+        if not close_callback_finished.wait(0.25):
+            raise TimeoutError("native close callback blocked during window destruction")
+
+    window.destroy = destroy_with_native_close_callback  # type: ignore[method-assign]
+
+    controller.shutdown("tray")
+
+    assert close_callback_finished.is_set()
+    assert controller.state is module.DesktopState.STOPPED
+    assert controller.error is None
 
 
 def test_concurrent_shutdown_caller_waits_for_the_cleanup_owner(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from ipaddress import ip_address
@@ -177,6 +178,25 @@ class AccessPolicy:
                 return False
         return self.profile in ACCESS_PROFILES_REQUIRING_TOKEN
 
+    @staticmethod
+    def _origin_allowed(request: Request) -> bool:
+        origin = request.headers.get("Origin", "").strip()
+        if not origin:
+            return True
+        parsed_origin = urlparse(origin)
+        request_host = request.headers.get("Host", "").strip()
+        if (
+            parsed_origin.scheme in {"http", "https"}
+            and request_host
+            and parsed_origin.netloc.casefold() == request_host.casefold()
+        ):
+            return True
+        allowed_origins = settings.MW_ALLOWED_ORIGINS or settings.CORS_ORIGINS
+        if origin in allowed_origins:
+            return True
+        pattern = settings.MW_ALLOWED_ORIGIN_REGEX or ""
+        return bool(pattern and re.fullmatch(pattern, origin))
+
     def evaluate(self, request: Request) -> AccessDecision:
         path = request.url.path or ""
         if not path.startswith("/api/"):
@@ -187,6 +207,15 @@ class AccessPolicy:
                 allow=False,
                 status_code=403,
                 detail="Remote API access is disabled on this instance",
+            )
+
+        if request.method.upper() == "OPTIONS":
+            return AccessDecision(allow=True)
+        if request.method.upper() not in {"GET", "HEAD"} and not self._origin_allowed(request):
+            return AccessDecision(
+                allow=False,
+                status_code=403,
+                detail="Browser origin is not allowed for this API request",
             )
 
         if (

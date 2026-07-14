@@ -5,6 +5,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.runtime_paths import build_runtime_paths
 from app.utils.boolean import parse_bool
 
 env_file = os.getenv("MW_ENV_FILE")
@@ -55,7 +56,10 @@ def _normalize_database_url(raw_url: str) -> str:
 
 class Settings:
     DATABASE_URL: str = _normalize_database_url(
-        os.getenv("DATABASE_URL", "sqlite:///./backend/mod_watcher.db")
+        os.getenv(
+            "DATABASE_URL",
+            f"sqlite:///{build_runtime_paths().database_path.as_posix()}",
+        )
     )
     NEXUS_API_KEY: str = os.getenv("NEXUS_API_KEY", "")
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -70,7 +74,7 @@ class Settings:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_DIR: str = os.getenv("LOG_DIR", "../log")
     GAME_ALIAS_FILE: str = os.getenv("GAME_ALIAS_FILE", "game_aliases.json")
-    # Local-first security settings (v0.2.2)
+    # Local-first security settings
     _LEGACY_LOCAL_ONLY_API: bool = _env_bool("LOCAL_ONLY_API", True)
     MW_ACCESS_PROFILE: str = (
         os.getenv("MW_ACCESS_PROFILE")

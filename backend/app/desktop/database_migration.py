@@ -53,17 +53,12 @@ def _unique_candidates(candidates: Iterable[Path], *, target: Path) -> tuple[Pat
     return tuple(unique)
 
 
-def legacy_database_candidates(
-    paths: RuntimePaths,
-    cwd: Path | None = None,
-) -> tuple[Path, ...]:
-    """Return legacy database locations in first-release discovery order."""
-    working_directory = Path.cwd() if cwd is None else Path(cwd)
+def legacy_database_candidates(paths: RuntimePaths) -> tuple[Path, ...]:
+    """Return trusted executable-relative legacy database locations."""
     return _unique_candidates(
         (
             paths.executable_dir / "backend" / _DATABASE_NAME,
             paths.executable_dir / _DATABASE_NAME,
-            working_directory / "backend" / _DATABASE_NAME,
         ),
         target=paths.database_path,
     )

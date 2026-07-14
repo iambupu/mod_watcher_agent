@@ -440,12 +440,14 @@ def _port_owner_pids(port: int) -> set[int]:
 
 
 def _kill_port_owners(port: int, label: str, managed_pids: set[int] | None = None) -> None:
-    """Kill processes listening on a known application port."""
+    """Kill recorded managed processes only when they still own the port."""
     managed_pids = managed_pids or set()
+    if not managed_pids:
+        return
     for pid in _port_owner_pids(port):
         if pid <= 0 or pid == os.getpid():
             continue
-        if managed_pids and pid in managed_pids:
+        if pid not in managed_pids:
             continue
         _tray_logger.info("%s 端口 %s 被 PID=%s 占用，清理旧实例", label, port, pid)
         _terminate_process_tree(pid, f"{label}-port-{port}")
@@ -469,6 +471,18 @@ def _clear_state() -> None:
         _STATE_FILE_PATH.unlink()
 
 
+def _state_pid_set(state: dict, key: str) -> set[int]:
+    try:
+        pid = int(state.get(key) or 0)
+    except (TypeError, ValueError):
+        return set()
+    return {pid} if pid > 0 else set()
+
+
+def _open_service_log(path: Path):
+    return path.open("a", encoding="utf-8")
+
+
 def _stop_existing_services() -> None:
     """Stop the recorded manager and any remaining service port owners."""
     state = _read_state()
@@ -483,8 +497,8 @@ def _stop_existing_services() -> None:
         if manager_pid_int and manager_pid_int != current_pid and _is_process_running(manager_pid_int):
             _terminate_process_tree(manager_pid_int, "manager")
 
-    _kill_port_owners(BACKEND_PORT, "后端")
-    _kill_port_owners(FRONTEND_DEV_PORT, "前端")
+    _kill_port_owners(BACKEND_PORT, "后端", _state_pid_set(state, "backend_pid"))
+    _kill_port_owners(FRONTEND_DEV_PORT, "前端", _state_pid_set(state, "frontend_pid"))
     _clear_state()
     _tray_logger.info("已停止记录的服务进程")
 
@@ -555,6 +569,11 @@ class TrayApp:
         self.frontend_url = f"http://{BACKEND_HOST}:{self.frontend_port}"
         self.app_title = "Mod Watcher Agent (Dev)" if frontend_mode == "dev" else "Mod Watcher Agent"
         self.service_job = _WindowsJob()
+        self._stop_lock = threading.Lock()
+        self._cleanup_lock = threading.Lock()
+        self._stop_started = False
+        self._services_cleaned = False
+        self._exit_thread = None
 
     # ── 子进程启动 ──────────────────────────────
 
@@ -577,32 +596,34 @@ class TrayApp:
         if _check_port(BACKEND_HOST, BACKEND_PORT):
             _tray_logger.info("后端端口已就绪，跳过启动后端")
             return
-        _kill_port_owners(BACKEND_PORT, "后端")
         _tray_logger.info("启动后端: %s:%s", BACKEND_HOST, BACKEND_PORT)
-        backend_log = (LOG_DIR / "backend_service.log").open("a", encoding="utf-8")
+        backend_log = _open_service_log(LOG_DIR / "backend_service.log")
         backend_log.write("\n=== starting backend service ===\n")
         backend_log.flush()
-        self.backend_proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "app.main:app",
-                "--host",
-                BACKEND_HOST,
-                "--port",
-                str(BACKEND_PORT),
-            ],
-            cwd=str(BACKEND_DIR),
-            env={
-                **os.environ,
-                "MOD_WATCHER_PROCESS_NAME": "ModWatcherBackend",
-                "MW_BIND_HOST": BACKEND_HOST,
-            },
-            stdout=backend_log,
-            stderr=subprocess.STDOUT,
-            **self._subprocess_kwargs(),
-        )
+        try:
+            self.backend_proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "app.main:app",
+                    "--host",
+                    BACKEND_HOST,
+                    "--port",
+                    str(BACKEND_PORT),
+                ],
+                cwd=str(BACKEND_DIR),
+                env={
+                    **os.environ,
+                    "MOD_WATCHER_PROCESS_NAME": "ModWatcherBackend",
+                    "MW_BIND_HOST": BACKEND_HOST,
+                },
+                stdout=backend_log,
+                stderr=subprocess.STDOUT,
+                **self._subprocess_kwargs(),
+            )
+        finally:
+            backend_log.close()
         self.service_job.add(self.backend_proc)
         self._save_state()
 
@@ -614,23 +635,25 @@ class TrayApp:
         if _check_port(BACKEND_HOST, FRONTEND_DEV_PORT):
             _tray_logger.info("前端端口已就绪，跳过启动前端")
             return
-        _kill_port_owners(FRONTEND_DEV_PORT, "前端")
         _tray_logger.info("启动前端: npm run dev")
-        frontend_log = (LOG_DIR / "frontend_service.log").open("a", encoding="utf-8")
+        frontend_log = _open_service_log(LOG_DIR / "frontend_service.log")
         frontend_log.write("\n=== starting frontend service ===\n")
         frontend_log.flush()
         npm_cmd = os.getenv("MW_NPM_CMD") or ("npm.cmd" if sys.platform == "win32" else "npm")
-        self.frontend_proc = subprocess.Popen(
-            [
-                npm_cmd,
-                "run",
-                "dev",
-            ],
-            cwd=str(FRONTEND_DIR),
-            env={**os.environ, "MOD_WATCHER_PROCESS_NAME": "ModWatcherFrontend"},
-            stdout=frontend_log,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            self.frontend_proc = subprocess.Popen(
+                [
+                    npm_cmd,
+                    "run",
+                    "dev",
+                ],
+                cwd=str(FRONTEND_DIR),
+                env={**os.environ, "MOD_WATCHER_PROCESS_NAME": "ModWatcherFrontend"},
+                stdout=frontend_log,
+                stderr=subprocess.STDOUT,
+            )
+        finally:
+            frontend_log.close()
         self.service_job.add(self.frontend_proc)
         self._save_state()
 
@@ -649,13 +672,27 @@ class TrayApp:
         _tray_logger.info("重启后端...")
         self._terminate_proc(self.backend_proc, "backend")
         self.backend_proc = None
-        _kill_port_owners(BACKEND_PORT, "后端")
         self.launch_backend()
 
     def _exit_app(self, icon, item):
         """退出托盘。"""
+        self._request_stop_async()
+
+    def _request_stop_async(self) -> None:
+        """Request shutdown from a tray callback without blocking the tray message loop."""
+        with self._stop_lock:
+            if self._stop_started:
+                _tray_logger.info("退出请求已在处理，忽略重复点击")
+                return
+            self._stop_started = True
+
         _tray_logger.info("退出...")
-        self.stop()
+        self._exit_thread = threading.Thread(
+            target=self._stop_impl,
+            name="ModWatcherTrayExit",
+            daemon=False,
+        )
+        self._exit_thread.start()
 
     # ── HTTP API 工具 ───────────────────────────
 
@@ -818,6 +855,7 @@ class TrayApp:
         atexit.register(self._cleanup)
         _tray_logger.info("托盘已启动 — 右键图标查看菜单")
         self.icon.run()
+        self._cleanup_services()
 
     def _log_failed_child_status(self) -> None:
         """Log child process exit codes and the latest captured service output."""
@@ -838,16 +876,34 @@ class TrayApp:
 
     def stop(self):
         """停止所有子进程并退出托盘。"""
-        self._terminate_proc(self.backend_proc, "backend")
-        self._terminate_proc(self.frontend_proc, "frontend")
-        self.service_job.close()
-        _kill_port_owners(BACKEND_PORT, "后端")
-        _kill_port_owners(FRONTEND_DEV_PORT, "前端")
-        state = _read_state()
-        if state.get("manager_pid") == os.getpid():
-            _clear_state()
-        if self.icon:
-            self.icon.stop()
+        with self._stop_lock:
+            if self._stop_started:
+                return
+            self._stop_started = True
+        self._stop_impl()
+
+    def _stop_impl(self) -> None:
+        icon = self.icon
+        self.icon = None
+        if icon:
+            icon.stop()
+        self._cleanup_services()
+
+    def _cleanup_services(self) -> None:
+        """Stop managed services once, even when tray stop and atexit both run."""
+        with self._cleanup_lock:
+            if self._services_cleaned:
+                return
+            self._services_cleaned = True
+
+            self._terminate_proc(self.backend_proc, "backend")
+            self.backend_proc = None
+            self._terminate_proc(self.frontend_proc, "frontend")
+            self.frontend_proc = None
+            self.service_job.close()
+            state = _read_state()
+            if state.get("manager_pid") == os.getpid():
+                _clear_state()
 
     def _terminate_proc(self, proc, name: str):
         """优雅终止子进程：先 terminate()，超时则 kill()。"""
@@ -880,12 +936,7 @@ class TrayApp:
 
     def _cleanup(self):
         """atexit 清理处理器。"""
-        self._terminate_proc(self.backend_proc, "backend")
-        self._terminate_proc(self.frontend_proc, "frontend")
-        self.service_job.close()
-        state = _read_state()
-        if state.get("manager_pid") == os.getpid():
-            _clear_state()
+        self._cleanup_services()
         _release_single_instance()
 
     def _save_state(self) -> None:
@@ -911,8 +962,8 @@ class TrayApp:
         if state:
             _tray_logger.info("清理旧服务状态，当前管理器将重新接管端口")
         _clear_state()
-        _kill_port_owners(BACKEND_PORT, "后端")
-        _kill_port_owners(FRONTEND_DEV_PORT, "前端")
+        _kill_port_owners(BACKEND_PORT, "后端", _state_pid_set(state, "backend_pid"))
+        _kill_port_owners(FRONTEND_DEV_PORT, "前端", _state_pid_set(state, "frontend_pid"))
 
 
 # ─────────────────────────────────────────────────

@@ -3,6 +3,20 @@ import os
 import subprocess
 
 
+def _hidden_process_options() -> dict[str, object]:
+    """Prevent notification helper processes from opening a console on Windows."""
+    if os.name != "nt":
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+        "startupinfo": startupinfo,
+    }
+
+
 def _run_powershell_script(script: str, env: dict[str, str], *, sta: bool = False, timeout: int = 8) -> bool:
     """用 EncodedCommand 执行 PowerShell，避免把消息文本拼进脚本源码。"""
     encoded_script = base64.b64encode(script.encode("utf-16le")).decode("ascii")
@@ -17,6 +31,7 @@ def _run_powershell_script(script: str, env: dict[str, str], *, sta: bool = Fals
             text=True,
             timeout=timeout,
             env=env,
+            **_hidden_process_options(),
         )
     except Exception:
         return False

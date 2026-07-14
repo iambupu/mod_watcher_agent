@@ -1,10 +1,17 @@
 import json
+import sqlite3
 
 import pytest
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.jobs.tracked_jobs import mark_interrupted_jobs_failed, mark_job_succeeded, run_tracked_job
+from app.jobs.tracked_jobs import (
+    create_job_run_record,
+    mark_interrupted_jobs_failed,
+    mark_job_succeeded,
+    run_tracked_job,
+)
 from app.models.job_run import JobRun
 
 
@@ -188,3 +195,87 @@ def test_mark_job_succeeded_recovers_from_invalid_existing_metadata():
         reloaded = session.get(JobRun, job.id)
         assert reloaded.status == "succeeded"
         assert json.loads(reloaded.metadata_json) == {"detail": "ok"}
+
+
+def test_create_job_run_record_retries_transient_sqlite_database_lock(monkeypatch):
+    class FakeSession:
+        def __init__(self) -> None:
+            self.added = []
+            self.commits = 0
+            self.rollbacks = 0
+            self.refreshed = []
+
+        def add(self, item):
+            self.added.append(item)
+
+        def commit(self):
+            self.commits += 1
+            if self.commits == 1:
+                raise OperationalError(
+                    "INSERT INTO job_runs",
+                    {},
+                    sqlite3.OperationalError("database is locked"),
+                )
+
+        def rollback(self):
+            self.rollbacks += 1
+
+        def refresh(self, item):
+            item.id = 123
+            self.refreshed.append(item)
+
+    monkeypatch.setattr("app.jobs.tracked_jobs.SQLITE_LOCK_RETRY_DELAY_SECONDS", 0, raising=False)
+    session = FakeSession()
+
+    job = create_job_run_record(session, "digest_catchup", {"trigger": "startup"})
+
+    assert job.id == 123
+    assert session.commits == 2
+    assert session.rollbacks == 1
+    assert len(session.added) == 2
+
+
+def test_mark_interrupted_jobs_failed_reapplies_statuses_after_sqlite_lock(monkeypatch):
+    jobs = [
+        JobRun(job_name="queued_job", status="queued", started_at="2026-05-24T00:00:00+00:00"),
+        JobRun(job_name="running_job", status="running", started_at="2026-05-24T00:01:00+00:00"),
+    ]
+
+    class FakeResult:
+        def all(self):
+            return jobs
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.commits = 0
+            self.rollbacks = 0
+            self.added = []
+
+        def exec(self, stmt):  # noqa: ARG002
+            return FakeResult()
+
+        def add(self, item):
+            self.added.append(item)
+
+        def commit(self):
+            self.commits += 1
+            if self.commits == 1:
+                raise OperationalError(
+                    "UPDATE job_runs",
+                    {},
+                    sqlite3.OperationalError("database is locked"),
+                )
+
+        def rollback(self):
+            self.rollbacks += 1
+            jobs[0].status = "queued"
+            jobs[1].status = "running"
+
+    monkeypatch.setattr("app.jobs.tracked_jobs.SQLITE_LOCK_RETRY_DELAY_SECONDS", 0)
+    session = FakeSession()
+
+    assert mark_interrupted_jobs_failed(session) == 2
+
+    assert [job.status for job in jobs] == ["failed", "failed"]
+    assert session.commits == 2
+    assert session.rollbacks == 1

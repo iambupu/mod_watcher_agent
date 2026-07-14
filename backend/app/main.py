@@ -1,6 +1,5 @@
 # 中文注释：装配 FastAPI 应用、中间件、静态资源和 API 路由。
 
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -26,7 +25,7 @@ from app.api import (
     routes_updates,
 )
 from app.config import settings
-from app.db import engine, init_db, rebuild_sqlite_fts_if_needed
+from app.db import engine, init_db
 from app.jobs.scheduler import setup_scheduler
 from app.jobs.tracked_jobs import mark_interrupted_jobs_failed
 from app.logger import setup_logging
@@ -36,13 +35,6 @@ from app.services.settings_service import SettingsService
 from app.utils.boolean import parse_bool
 
 logger = logging.getLogger(__name__)
-
-
-async def _run_deferred_startup_maintenance() -> None:
-    try:
-        await asyncio.to_thread(rebuild_sqlite_fts_if_needed)
-    except Exception:
-        logger.exception("Deferred startup maintenance failed")
 
 
 @asynccontextmanager
@@ -64,7 +56,6 @@ async def lifespan(_app: FastAPI):
                 logger.info("Scheduler started successfully")
             except Exception as e:
                 logger.error("Failed to start scheduler: %s", e)
-        asyncio.create_task(_run_deferred_startup_maintenance())
         yield
     finally:
         from app.jobs.scheduler import scheduler
@@ -84,7 +75,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="Mod Watcher Agent",
-    version="0.2.2",
+    version="0.3.1",
     lifespan=lifespan,
 )
 
@@ -178,4 +169,4 @@ if FRONTEND_DIST_DIR.exists():
 else:
     @app.get("/")
     async def root():
-        return {"service": "Mod Watcher Agent", "version": "0.2.2"}
+        return {"service": "Mod Watcher Agent", "version": "0.3.1"}
