@@ -60,51 +60,48 @@ while IFS= read -r remote_name; do
     remote_names+=("$remote_name")
   fi
 done <<< "$remote_inventory"
-for remote_name in "${remote_names[@]}"; do
-  expected=false
-  for expected_name in "${expected_names[@]}"; do
-    if [[ "$remote_name" == "$expected_name" ]]; then
-      expected=true
-      break
-    fi
-  done
-  if [[ "$expected" != true ]]; then
-    echo "Unexpected remote release assets: $remote_name" >&2
-    exit 1
-  fi
-done
+mapfile -t remote_names_sorted < <(printf '%s\n' "${remote_names[@]}" | sort)
+if ! diff -u \
+  <(printf '%s\n' "${expected_names_sorted[@]}") \
+  <(printf '%s\n' "${remote_names_sorted[@]}"); then
+  echo "Existing release assets do not match the exact immutable asset set." >&2
+  exit 1
+fi
 
 download_root="$(mktemp -d)"
 trap 'rm -rf -- "$download_root"' EXIT
-missing_assets=()
-for asset in "${assets[@]}"; do
-  name="$(basename "$asset")"
-  remote_exists=false
-  for remote_name in "${remote_names[@]}"; do
-    if [[ "$remote_name" == "$name" ]]; then
-      remote_exists=true
-      break
-    fi
-  done
-  if [[ "$remote_exists" != true ]]; then
-    missing_assets+=("$asset")
-    continue
-  fi
-  asset_download_dir="$download_root/$name"
-  mkdir -p "$asset_download_dir"
+for name in "${expected_names[@]}"; do
   if ! gh release download "$tag" \
     --pattern "$name" \
-    --dir "$asset_download_dir" >/dev/null 2>&1; then
+    --dir "$download_root" >/dev/null 2>&1; then
     echo "Unable to download existing release asset for verification: $name" >&2
-    exit 1
-  fi
-  remote_asset="$asset_download_dir/$name"
-  if [[ ! -f "$remote_asset" ]] || ! cmp -s -- "$asset" "$remote_asset"; then
-    echo "Immutable release asset mismatch: $name" >&2
     exit 1
   fi
 done
 
-for asset in "${missing_assets[@]}"; do
-  gh release upload "$tag" "$asset"
-done
+remote_artifact="$download_root/${expected_names[0]}"
+remote_checksum="$download_root/${expected_names[1]}"
+if [[ ! -f "$remote_artifact" || ! -f "$remote_checksum" ]]; then
+  echo "Existing release asset download is incomplete." >&2
+  exit 1
+fi
+
+hash_line="$(tr -d '\r' < "$remote_checksum")"
+digest="${hash_line%%  *}"
+referenced_name="${hash_line#*  }"
+if [[ "$digest" == "$hash_line" ||
+      ! "$digest" =~ ^[0-9a-f]{64}$ ||
+      "$referenced_name" != "${expected_names[0]}" ]]; then
+  echo "Existing release checksum metadata is invalid." >&2
+  exit 1
+fi
+if ! (
+  cd "$download_root"
+  printf '%s  %s\n' "$digest" "$referenced_name" |
+    sha256sum --check --strict - >/dev/null
+); then
+  echo "Existing release checksum verification failed." >&2
+  exit 1
+fi
+
+echo "Existing immutable release assets verified: $tag"

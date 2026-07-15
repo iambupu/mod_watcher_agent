@@ -2,6 +2,11 @@ name: Desktop Release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to validate or resume
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -20,6 +25,8 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
+    outputs:
+      release-tag: ${{ steps.release-metadata.outputs.release_tag }}
     env:
       PYTHONUTF8: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -51,7 +58,10 @@ jobs:
         run: npm ci
 
       - name: Validate tag version
+        id: release-metadata
         shell: pwsh
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag || '' }}
         run: |
           $versionLine = Select-String `
             -LiteralPath "backend\pyproject.toml" `
@@ -61,11 +71,25 @@ jobs:
             throw "Unable to read project version"
           }
           $projectVersion = $versionLine.Matches[0].Groups[1].Value
-          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -ne "v$projectVersion") {
-            throw "Tag $env:GITHUB_REF_NAME does not match project version v$projectVersion"
+          $releaseTag = ""
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $releaseTag = $env:GITHUB_REF_NAME
+          } elseif (-not [string]::IsNullOrWhiteSpace($env:INPUT_RELEASE_TAG)) {
+            $releaseTag = $env:INPUT_RELEASE_TAG.Trim()
+          }
+          if ($releaseTag -and $releaseTag -ne "v$projectVersion") {
+            throw "Tag $releaseTag does not match project version v$projectVersion"
           }
           "PROJECT_VERSION=$projectVersion" | Out-File `
             -FilePath $env:GITHUB_ENV `
+            -Encoding utf8 `
+            -Append
+          "RELEASE_TAG=$releaseTag" | Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Encoding utf8 `
+            -Append
+          "release_tag=$releaseTag" | Out-File `
+            -FilePath $env:GITHUB_OUTPUT `
             -Encoding utf8 `
             -Append
 
@@ -168,12 +192,14 @@ jobs:
 
   publish-release:
     name: Publish tag release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: build-desktop
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ needs.build-desktop.outputs.release-tag }}
     steps:
       - name: Check out release metadata
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -190,7 +216,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          release_tag="$RELEASE_TAG"
+          version="${release_tag#v}"
           expected_assets=(
             "ModWatcherAgent-$version-win-x64-portable.zip"
             "ModWatcherAgent-$version-win-x64-portable.zip.sha256"
@@ -229,5 +256,5 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           bash scripts/publish_desktop_release.sh \
-            "$GITHUB_REF_NAME" \
+            "$RELEASE_TAG" \
             release

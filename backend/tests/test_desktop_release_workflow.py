@@ -46,6 +46,11 @@ def test_desktop_release_workflow_has_bounded_triggers_and_permissions() -> None
     workflow = _load_workflow()
 
     assert set(workflow["on"]) == {"workflow_dispatch", "push"}
+    assert workflow["on"]["workflow_dispatch"]["inputs"]["release_tag"] == {
+        "description": "Existing release tag to validate or resume",
+        "required": "false",
+        "type": "string",
+    }
     assert workflow["on"]["push"]["tags"] == ["v*"]
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
@@ -55,7 +60,13 @@ def test_desktop_release_workflow_has_bounded_triggers_and_permissions() -> None
     assert jobs["build-desktop"]["permissions"] == {"contents": "read"}
     assert jobs["publish-release"]["permissions"] == {"contents": "write"}
     assert jobs["publish-release"]["needs"] == "build-desktop"
-    assert jobs["publish-release"]["if"] == ("startsWith(github.ref, 'refs/tags/v')")
+    assert jobs["publish-release"]["if"] == (
+        "startsWith(github.ref, 'refs/tags/v') || "
+        "(github.event_name == 'workflow_dispatch' && inputs.release_tag != '')"
+    )
+    assert jobs["build-desktop"]["outputs"]["release-tag"] == (
+        "${{ steps.release-metadata.outputs.release_tag }}"
+    )
     assert int(jobs["build-desktop"]["timeout-minutes"]) <= 90
     assert int(jobs["publish-release"]["timeout-minutes"]) <= 15
 
@@ -134,7 +145,11 @@ def test_build_verifies_tag_version_hashes_and_clean_release_artifacts() -> None
     combined = f"{version_step['run']}\n{verify_step['run']}"
 
     assert "backend\\pyproject.toml" in version_step["run"]
+    assert version_step["id"] == "release-metadata"
+    assert version_step["env"]["INPUT_RELEASE_TAG"] == "${{ inputs.release_tag || '' }}"
     assert "GITHUB_REF_TYPE" in version_step["run"]
+    assert "INPUT_RELEASE_TAG" in version_step["run"]
+    assert "GITHUB_OUTPUT" in version_step["run"]
     assert '"v$projectVersion"' in version_step["run"]
     assert "Get-FileHash" in verify_step["run"]
     assert "SHA256" in verify_step["run"]
@@ -164,6 +179,9 @@ def test_artifacts_are_uploaded_and_tag_release_is_immutable_and_idempotent() ->
     assert paths.count(".sha256") >= 1
 
     publish = workflow["jobs"]["publish-release"]
+    assert publish["env"]["RELEASE_TAG"] == (
+        "${{ needs.build-desktop.outputs.release-tag }}"
+    )
     download = next(
         step
         for step in _steps(publish)
@@ -174,6 +192,7 @@ def test_artifacts_are_uploaded_and_tag_release_is_immutable_and_idempotent() ->
         "run"
     ]
     assert "expected_assets" in reverify
+    assert 'release_tag="$RELEASE_TAG"' in reverify
     assert "actual_assets" in reverify
     assert "find release -mindepth 1 -maxdepth 1" in reverify
     assert "diff -u" in reverify
@@ -185,6 +204,7 @@ def test_artifacts_are_uploaded_and_tag_release_is_immutable_and_idempotent() ->
     assert release["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert release["env"]["GH_REPO"] == "${{ github.repository }}"
     assert "scripts/publish_desktop_release.sh" in release["run"]
+    assert '"$RELEASE_TAG"' in release["run"]
     assert "docs/" not in release["run"]
     assert "--clobber" not in release["run"]
 
@@ -340,7 +360,7 @@ def test_publish_reverification_rejects_mismatched_hash_filename(
         f"{digest}  {portable_name}\n", encoding="ascii", newline="\n"
     )
     environment = os.environ.copy()
-    environment["GITHUB_REF_NAME"] = f"v{version}"
+    environment["RELEASE_TAG"] = f"v{version}"
 
     success = subprocess.run(
         [str(git_bash), script_path.name],
@@ -435,21 +455,21 @@ source "$1" "${@:2}"
 
 
 @pytest.mark.parametrize(
-    ("remote_mode", "expected_returncode", "expected_uploads"),
+    ("remote_mode", "expected_returncode", "expected_error"),
     [
-        ("matching", 0, 0),
-        ("mismatch", 1, 0),
-        ("missing", 0, 1),
-        ("extra", 1, 0),
-        ("inventory_failure", 1, 0),
-        ("missing_then_mismatch", 1, 0),
+        ("matching", 0, None),
+        ("different_but_valid", 0, None),
+        ("corrupt_remote", 1, "existing release checksum verification failed"),
+        ("missing", 1, "existing release assets do not match"),
+        ("extra", 1, "existing release assets do not match"),
+        ("inventory_failure", 1, "unable to query remote release assets"),
     ],
 )
-def test_publish_script_enforces_immutable_existing_release_assets_with_fake_gh(
+def test_publish_script_validates_existing_release_as_immutable_source_of_truth(
     tmp_path: Path,
     remote_mode: str,
     expected_returncode: int,
-    expected_uploads: int,
+    expected_error: str | None,
 ) -> None:
     git_bash = Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Git/bin/bash.exe"
     if not git_bash.is_file():
@@ -465,24 +485,31 @@ def test_publish_script_enforces_immutable_existing_release_assets_with_fake_gh(
     remote_dir = tmp_path / "remote" / tag
     release_dir.mkdir()
     remote_dir.mkdir(parents=True)
-    names = (
-        "ModWatcherAgent-9.8.7-win-x64-portable.zip",
-        "ModWatcherAgent-9.8.7-win-x64-portable.zip.sha256",
+    portable_name = "ModWatcherAgent-9.8.7-win-x64-portable.zip"
+    checksum_name = f"{portable_name}.sha256"
+    local_payload = b"locally rebuilt portable artifact"
+    local_digest = hashlib.sha256(local_payload).hexdigest()
+    (release_dir / portable_name).write_bytes(local_payload)
+    (release_dir / checksum_name).write_text(
+        f"{local_digest}  {portable_name}\n",
+        encoding="ascii",
+        newline="\n",
     )
-    for index, name in enumerate(names):
-        payload = f"asset-{index}".encode()
-        (release_dir / name).write_bytes(payload)
-        should_skip = (remote_mode == "missing" and index == len(names) - 1) or (
-            remote_mode == "missing_then_mismatch" and index == 0
+
+    remote_payload = (
+        b"previously published portable artifact"
+        if remote_mode in {"different_but_valid", "corrupt_remote"}
+        else local_payload
+    )
+    remote_digest = hashlib.sha256(remote_payload).hexdigest()
+    (remote_dir / portable_name).write_bytes(remote_payload)
+    if remote_mode != "missing":
+        checksum_digest = local_digest if remote_mode == "corrupt_remote" else remote_digest
+        (remote_dir / checksum_name).write_text(
+            f"{checksum_digest}  {portable_name}\n",
+            encoding="ascii",
+            newline="\n",
         )
-        if not should_skip:
-            remote_payload = (
-                b"changed"
-                if (remote_mode == "mismatch" and index == 0)
-                or (remote_mode == "missing_then_mismatch" and index == 1)
-                else payload
-            )
-            (remote_dir / name).write_bytes(remote_payload)
     if remote_mode == "extra":
         (remote_dir / "unexpected-debug.zip").write_bytes(b"unexpected")
 
@@ -510,22 +537,12 @@ def test_publish_script_enforces_immutable_existing_release_assets_with_fake_gh(
 
     assert result.returncode == expected_returncode, result.stderr or result.stdout
     log = log_path.read_text(encoding="utf-8")
-    assert log.count("release upload") == expected_uploads
-    if remote_mode in {
-        "mismatch",
-        "extra",
-        "inventory_failure",
-        "missing_then_mismatch",
-    }:
-        expected_error = {
-            "mismatch": "immutable release asset mismatch",
-            "extra": "unexpected remote release assets",
-            "inventory_failure": "unable to query remote release assets",
-            "missing_then_mismatch": "immutable release asset mismatch",
-        }[remote_mode]
+    assert "release upload" not in log
+    if expected_error is not None:
         assert expected_error in result.stderr.casefold()
-        if remote_mode == "missing_then_mismatch":
-            assert not (remote_dir / names[0]).exists()
     else:
-        for name in names:
-            assert (remote_dir / name).read_bytes() == (release_dir / name).read_bytes()
+        assert hashlib.sha256((remote_dir / portable_name).read_bytes()).hexdigest() == (
+            remote_digest
+        )
+        if remote_mode == "different_but_valid":
+            assert (remote_dir / portable_name).read_bytes() != local_payload
