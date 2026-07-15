@@ -52,8 +52,6 @@ def test_source_paths_preserve_existing_layout(
         webview_dir=backend_dir / "data" / "webview",
         runtime_dir=repo_root / ".runtime",
         backup_dir=backend_dir / "data" / "backups",
-        browser_profile_dir=backend_dir / "data" / "browser_profiles",
-        snapshot_dir=backend_dir / "data" / "snapshots",
         default_database_path=backend_dir / "mod_watcher.db",
         database_path=backend_dir / "mod_watcher.db",
         frontend_dist_dir=repo_root / "frontend" / "dist",
@@ -105,8 +103,6 @@ def test_frozen_paths_use_local_app_data(
         webview_dir=local_app_data / "ModWatcherAgent" / "webview",
         runtime_dir=local_app_data / "ModWatcherAgent" / "runtime",
         backup_dir=local_app_data / "ModWatcherAgent" / "backups",
-        browser_profile_dir=local_app_data / "ModWatcherAgent" / "data" / "browser_profiles",
-        snapshot_dir=local_app_data / "ModWatcherAgent" / "data" / "snapshots",
         default_database_path=local_app_data / "ModWatcherAgent" / "data" / "mod_watcher.db",
         database_path=local_app_data / "ModWatcherAgent" / "data" / "mod_watcher.db",
         frontend_dist_dir=bundle_root / "frontend" / "dist",
@@ -157,8 +153,6 @@ def test_user_data_override_uses_portable_layout_in_source_mode(
     assert paths.webview_dir == user_root / "webview"
     assert paths.runtime_dir == user_root / "runtime"
     assert paths.backup_dir == user_root / "backups"
-    assert paths.browser_profile_dir == user_root / "data" / "browser_profiles"
-    assert paths.snapshot_dir == user_root / "data" / "snapshots"
     assert paths.database_path == user_root / "data" / "mod_watcher.db"
     assert paths.frontend_dist_dir == repo_root / "frontend" / "dist"
     assert paths.alembic_ini_path == repo_root / "backend" / "alembic.ini"
@@ -223,8 +217,6 @@ def test_ensure_runtime_directories_creates_every_writable_directory(
         paths.webview_dir,
         paths.runtime_dir,
         paths.backup_dir,
-        paths.browser_profile_dir,
-        paths.snapshot_dir,
     )
     assert all(path.is_dir() for path in writable_directories)
 
@@ -254,8 +246,6 @@ def test_desktop_environment_points_to_runtime_paths_and_is_local_only(
         "MW_DESKTOP_MODE",
         "DATABASE_URL",
         "LOG_DIR",
-        "MW_BROWSER_PROFILE_ROOT",
-        "MW_SNAPSHOT_ROOT",
         "MW_ENV_FILE",
         "MW_BIND_HOST",
         "MW_ALLOW_LAN",
@@ -277,8 +267,6 @@ def test_desktop_environment_points_to_runtime_paths_and_is_local_only(
     assert os.environ["MW_USER_DATA_DIR"] == str(paths.user_root)
     assert os.environ["DATABASE_URL"] == f"sqlite:///{paths.database_path.as_posix()}"
     assert os.environ["LOG_DIR"] == str(paths.log_dir)
-    assert os.environ["MW_BROWSER_PROFILE_ROOT"] == str(paths.browser_profile_dir)
-    assert os.environ["MW_SNAPSHOT_ROOT"] == str(paths.snapshot_dir)
     assert os.environ["MW_ENV_FILE"] == str(paths.config_dir / ".env")
     assert os.environ["MW_BIND_HOST"] == "127.0.0.1"
     assert os.environ["MW_ALLOW_LAN"] == "false"
@@ -358,7 +346,10 @@ def test_database_selection_creates_missing_database_and_parent_directory(
     assert missing_database.is_file()
     with sqlite3.connect(missing_database) as database:
         assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-    assert build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle").database_path == missing_database.resolve()
+    assert (
+        build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle").database_path
+        == missing_database.resolve()
+    )
 
 
 def test_existing_selection_for_missing_database_falls_back_to_default(
@@ -403,7 +394,10 @@ def test_legacy_database_path_setting_is_migrated_before_startup(
     migrated = runtime_paths_module.migrate_legacy_database_path_setting(paths)
 
     assert migrated is True
-    assert build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle").database_path == selected_database.resolve()
+    assert (
+        build_runtime_paths(frozen=True, bundle_root=tmp_path / "bundle").database_path
+        == selected_database.resolve()
+    )
 
 
 def test_desktop_environment_seeds_game_aliases_into_user_config(

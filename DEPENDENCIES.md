@@ -6,12 +6,9 @@
 
 - Windows 10/11 x64。
 - Microsoft Edge WebView2 Runtime，用于独立应用窗口。
-- 系统 Microsoft Edge 或 Google Chrome，用于 LoversLab 登录和抓取；如果机器已经安装 Playwright Chromium，也可作为最后回退。
 - 足够的当前用户目录写权限，用于 `%LOCALAPPDATA%\ModWatcherAgent`。
 
 PyInstaller onedir 会随应用分发 Python 解释器、后端依赖、React 静态资源、Alembic 资源、pywebview、pystray、Pillow 和所需 .NET/WebView2 loader 文件。
-
-打包版明确禁用从主 EXE 内执行 Playwright Chromium 安装命令。浏览器缺失时应安装系统 Edge 或 Chrome，不要尝试对 `ModWatcherAgent.exe` 运行 Python 模块参数。
 
 ## 后端依赖
 
@@ -103,7 +100,7 @@ release\ModWatcherAgent-<version>-win-x64-portable.zip.sha256
 ## 版本基线
 
 - 项目版本权威源：`backend/pyproject.toml`。
-- 当前项目版本：`0.3.1`。
+- 当前项目版本：`0.3.2`。
 - 前端 `package.json` 应与发布版本保持一致。
 - Windows FileVersion 和便携版资产文件名由构建链从项目版本派生。
 - Git tag 必须严格匹配 `v<project-version>`，否则发布 workflow 失败。

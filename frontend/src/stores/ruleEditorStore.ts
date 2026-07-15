@@ -15,6 +15,19 @@ import type {
 
 const EMPTY_COMMON_FILTERS: CommonRuleFilters = {};
 
+function createLoversLabDraft(
+  config: Partial<LoversLabRuleConfig> = {},
+): LoversLabRuleConfig {
+  return {
+    gameLabel: config.gameLabel || "",
+    feedUrls: config.feedUrls || [],
+    updatedSinceDays: config.updatedSinceDays ?? 30,
+    maxItemsPerRun: config.maxItemsPerRun ?? 50,
+    updateDetection:
+      config.updateDetection === "updated_time" ? "updated_time" : "published_time",
+  };
+}
+
 function createEmptyDraft(): RuleEditorDraft {
   return {
     name: "",
@@ -25,16 +38,7 @@ function createEmptyDraft(): RuleEditorDraft {
       gameDomainName: "",
       updatedSinceDays: 7,
     },
-    loverslabDraft: {
-      gameLabel: "",
-      accessMode: "rss",
-      feedUrls: [],
-      pageUrls: [],
-      browserProfile: "loverslab",
-      updatedSinceDays: 30,
-      maxItemsPerRun: 50,
-      updateDetection: "published_time",
-    },
+    loverslabDraft: createLoversLabDraft(),
     notification: {
       enabled: true,
       mode: "instant",
@@ -122,7 +126,7 @@ export const useRuleEditorStore = create<RuleEditorState>((set, get) => ({
         : defaults.nexusmodsDraft;
     const loverslabDraft =
       rule.source === "loverslab"
-        ? { ...defaults.loverslabDraft, ...(rule.sourceConfig as LoversLabRuleConfig) }
+        ? createLoversLabDraft(rule.sourceConfig as LoversLabRuleConfig)
         : defaults.loverslabDraft;
 
     set({

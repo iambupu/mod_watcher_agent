@@ -80,9 +80,7 @@ def _stored_source_config(source: str, raw: str | None) -> dict:
     if source == "loverslab":
         return {
             "gameLabel": "LoversLab",
-            "accessMode": "rss",
             "feedUrls": ["https://www.loverslab.com/files/rss/"],
-            "pageUrls": [],
             "maxItemsPerRun": 50,
             "updateDetection": "published_time",
         }
@@ -209,7 +207,9 @@ class RuleService:
         self.session.refresh(rule)
         return model_to_read(rule)
 
-    def update_rule(self, rule_id: int, data: WatchRuleUpdate, *, commit: bool = True) -> WatchRuleRead:
+    def update_rule(
+        self, rule_id: int, data: WatchRuleUpdate, *, commit: bool = True
+    ) -> WatchRuleRead:
         """更新规则字段，保持来源不可变。"""
         rule = self.get_rule(rule_id)
         if data.source is not None and data.source != rule.source:

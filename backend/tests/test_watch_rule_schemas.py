@@ -72,18 +72,14 @@ class TestLoversLabRuleConfig:
         from app.schemas.watch_rule import LoversLabRuleConfig
 
         cfg = LoversLabRuleConfig(
-            accessMode="rss",
             gameLabel="Skyrim SE",
             feedUrls=["https://www.loverslab.com/files/rss/"],
         )
         assert cfg.gameLabel == "Skyrim SE"
-        assert cfg.accessMode == "rss"
         assert cfg.feedUrls == ["https://www.loverslab.com/files/rss/"]
-        assert cfg.pageUrls == []
         assert cfg.updatedSinceDays is None
         assert cfg.maxItemsPerRun == 50
         assert cfg.updateDetection == "published_time"
-        assert cfg.browserProfile == "loverslab"
 
     def test_valid_full_loverslab_config(self):
         """Full LoversLab config with feed URLs and custom settings."""
@@ -91,13 +87,11 @@ class TestLoversLabRuleConfig:
 
         cfg = LoversLabRuleConfig(
             gameLabel="Fallout 4",
-            accessMode="rss",
             feedUrls=["https://www.loverslab.com/forum/123-feed.xml"],
             maxItemsPerRun=30,
             updateDetection="updated_time",
         )
         assert cfg.gameLabel == "Fallout 4"
-        assert cfg.accessMode == "rss"
         assert len(cfg.feedUrls) == 1
         assert cfg.maxItemsPerRun == 30
         assert cfg.updateDetection == "updated_time"
@@ -107,40 +101,32 @@ class TestLoversLabRuleConfig:
         from app.schemas.watch_rule import LoversLabRuleConfig
 
         with pytest.raises(ValidationError):
-            LoversLabRuleConfig(accessMode="rss")
+            LoversLabRuleConfig(feedUrls=["https://www.loverslab.com/files/rss/"])
 
-    def test_missing_access_mode_uses_default(self):
-        """accessMode defaults to rss when omitted."""
+    def test_legacy_browser_fields_are_ignored(self):
+        """旧页面模式字段不会重新进入保存后的 RSS 配置。"""
         from app.schemas.watch_rule import LoversLabRuleConfig
 
         cfg = LoversLabRuleConfig(
             gameLabel="Skyrim SE",
             feedUrls=["https://www.loverslab.com/files/rss/"],
+            accessMode="both",
+            pageUrls=["https://www.loverslab.com/files/category/110-skyrim/"],
+            browserProfile="loverslab",
         )
-        assert cfg.accessMode == "rss"
+        assert set(cfg.model_dump()) == {
+            "gameLabel",
+            "feedUrls",
+            "updatedSinceDays",
+            "maxItemsPerRun",
+            "updateDetection",
+        }
 
-    def test_rss_mode_requires_feed_urls(self):
+    def test_feed_urls_are_required(self):
         from app.schemas.watch_rule import LoversLabRuleConfig
 
         with pytest.raises(ValidationError):
-            LoversLabRuleConfig(gameLabel="Skyrim SE", accessMode="rss", feedUrls=[])
-
-    def test_page_mode_requires_page_urls(self):
-        from app.schemas.watch_rule import LoversLabRuleConfig
-
-        with pytest.raises(ValidationError):
-            LoversLabRuleConfig(gameLabel="Skyrim SE", accessMode="page", pageUrls=[])
-
-    def test_both_mode_requires_feed_and_page_urls(self):
-        from app.schemas.watch_rule import LoversLabRuleConfig
-
-        with pytest.raises(ValidationError):
-            LoversLabRuleConfig(
-                gameLabel="Skyrim SE",
-                accessMode="both",
-                feedUrls=["https://www.loverslab.com/files/rss/"],
-                pageUrls=[],
-            )
+            LoversLabRuleConfig(gameLabel="Skyrim SE", feedUrls=[])
 
 
 class TestLlmFilterConfig:
@@ -300,8 +286,7 @@ class TestWatchRuleCreate:
             source="loverslab",
             sourceConfig=LoversLabRuleConfig(
                 gameLabel="Fallout 4",
-                accessMode="page",
-                pageUrls=["https://www.loverslab.com/forum/123-list"],
+                feedUrls=["https://www.loverslab.com/files/rss/"],
             ),
         )
         assert rule.name == "LL Fallout Monitor"
@@ -365,7 +350,6 @@ class TestWatchRuleCreate:
                 source="nexusmods",
                 sourceConfig=LoversLabRuleConfig(
                     gameLabel="Skyrim SE",
-                    accessMode="rss",
                     feedUrls=["https://www.loverslab.com/files/rss/"],
                 ),
             )
@@ -431,7 +415,6 @@ class TestWatchRuleUpdate:
                 source="nexusmods",
                 sourceConfig=LoversLabRuleConfig(
                     gameLabel="Skyrim SE",
-                    accessMode="rss",
                     feedUrls=["https://www.loverslab.com/files/rss/"],
                 ),
             )

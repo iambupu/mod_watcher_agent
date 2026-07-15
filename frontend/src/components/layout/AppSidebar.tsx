@@ -48,7 +48,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ active }) => {
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
-  const appVersion = import.meta.env.VITE_APP_VERSION || "0.3.1";
+  const appVersion = import.meta.env.VITE_APP_VERSION || "0.3.2";
 
   const { data: unread } = useQuery({
     queryKey: ["notifications-unread-count"],

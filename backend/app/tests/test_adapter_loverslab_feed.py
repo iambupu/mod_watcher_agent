@@ -16,7 +16,6 @@ from app.schemas.watch_rule import LoversLabRuleConfig
 def _make_valid_source_config_json(*, feed_urls=None, max_items=50, updated_since_days=None):
     config = LoversLabRuleConfig(
         gameLabel="Skyrim SE",
-        accessMode="rss",
         feedUrls=feed_urls or ["https://www.loverslab.com/files/rss/1-skyrim-se.xml/"],
         maxItemsPerRun=max_items,
         updatedSinceDays=updated_since_days,

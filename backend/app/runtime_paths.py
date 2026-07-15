@@ -36,8 +36,6 @@ class RuntimePaths:
     webview_dir: Path
     runtime_dir: Path
     backup_dir: Path
-    browser_profile_dir: Path
-    snapshot_dir: Path
     default_database_path: Path
     database_path: Path
     frontend_dist_dir: Path
@@ -107,9 +105,7 @@ def _resolve_database_path(raw_value: str, *, config_dir: Path) -> Path | None:
     if resolved is None:
         return None
     if not resolved.is_file():
-        raise MissingDatabaseSelectionError(
-            f"Selected SQLite database does not exist: {resolved}"
-        )
+        raise MissingDatabaseSelectionError(f"Selected SQLite database does not exist: {resolved}")
     return resolved
 
 
@@ -140,9 +136,7 @@ def _create_empty_sqlite_database(database_path: Path) -> None:
             database.execute("VACUUM")
             integrity = database.execute("PRAGMA integrity_check").fetchone()
         if integrity != ("ok",):
-            raise RuntimePathError(
-                f"Unable to create a valid SQLite database: {database_path}"
-            )
+            raise RuntimePathError(f"Unable to create a valid SQLite database: {database_path}")
 
         try:
             if os.name == "nt":
@@ -157,9 +151,7 @@ def _create_empty_sqlite_database(database_path: Path) -> None:
     except RuntimePathError:
         raise
     except (OSError, sqlite3.Error) as exc:
-        raise RuntimePathError(
-            f"Unable to create SQLite database {database_path}: {exc}"
-        ) from exc
+        raise RuntimePathError(f"Unable to create SQLite database {database_path}: {exc}") from exc
     finally:
         if descriptor is not None:
             with suppress(OSError):
@@ -313,8 +305,6 @@ def build_runtime_paths(
         webview_dir=webview_dir,
         runtime_dir=runtime_dir,
         backup_dir=backup_dir,
-        browser_profile_dir=data_dir / "browser_profiles",
-        snapshot_dir=data_dir / "snapshots",
         default_database_path=default_database_path,
         database_path=database_path,
         frontend_dist_dir=resolved_bundle_root / "frontend" / "dist",
@@ -332,8 +322,6 @@ def ensure_runtime_directories(paths: RuntimePaths) -> None:
         paths.webview_dir,
         paths.runtime_dir,
         paths.backup_dir,
-        paths.browser_profile_dir,
-        paths.snapshot_dir,
     )
     for directory in directories:
         try:
@@ -401,8 +389,6 @@ def configure_desktop_environment(paths: RuntimePaths) -> None:
             "MW_USER_DATA_DIR": str(paths.user_root),
             "DATABASE_URL": f"sqlite:///{paths.database_path.as_posix()}",
             "LOG_DIR": str(paths.log_dir),
-            "MW_BROWSER_PROFILE_ROOT": str(paths.browser_profile_dir),
-            "MW_SNAPSHOT_ROOT": str(paths.snapshot_dir),
             "MW_ENV_FILE": str(paths.config_dir / ".env"),
             "GAME_ALIAS_FILE": str(game_alias_file),
             "MW_BIND_HOST": "127.0.0.1",

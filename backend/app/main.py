@@ -16,7 +16,6 @@ from app.api import (
     routes_favorites,
     routes_jobs,
     routes_logs,
-    routes_loverslab_browser,
     routes_mods,
     routes_notifications,
     routes_rules,
@@ -66,16 +65,12 @@ async def lifespan(_app: FastAPI):
         except Exception:
             logger.exception("Failed to stop the scheduler")
 
-        try:
-            await routes_loverslab_browser.fetcher.close_login()
-        except Exception:
-            logger.exception("Failed to close the persistent browser")
         _app.state.database_ready = False
 
 
 app = FastAPI(
     title="Mod Watcher Agent",
-    version="0.3.1",
+    version="0.3.2",
     lifespan=lifespan,
 )
 
@@ -125,7 +120,6 @@ app.include_router(routes_jobs.router)
 app.include_router(routes_logs.router)
 app.include_router(routes_notifications.router)
 app.include_router(routes_system_notifications.router)
-app.include_router(routes_loverslab_browser.router)
 
 
 FRONTEND_DIST_DIR = build_runtime_paths().frontend_dist_dir
@@ -167,6 +161,7 @@ if FRONTEND_DIST_DIR.exists():
             return FileResponse(requested_path)
         return FileResponse(FRONTEND_DIST_DIR / "index.html")
 else:
+
     @app.get("/")
     async def root():
-        return {"service": "Mod Watcher Agent", "version": "0.3.1"}
+        return {"service": "Mod Watcher Agent", "version": "0.3.2"}

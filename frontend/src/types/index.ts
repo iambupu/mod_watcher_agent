@@ -148,8 +148,6 @@ export type RuleSource = ModSource;
 export type LlmFilterMode = "assist_only" | "must_pass";
 export type NotifyMode = "instant" | "daily_digest" | "weekly_digest";
 export type MissingMetricsPolicy = "pass" | "reject";
-type AccessMode = "rss" | "page" | "both";
-
 export interface NexusModsRuleConfig {
   gameDomainName: string;
   updatedSinceDays: number;
@@ -161,13 +159,10 @@ export interface NexusModsRuleConfig {
 
 export interface LoversLabRuleConfig {
   gameLabel: string;
-  accessMode?: AccessMode;
   feedUrls?: string[];
-  pageUrls?: string[];
-  browserProfile?: string;
   updatedSinceDays?: number;
   maxItemsPerRun?: number;
-  updateDetection?: "published_time" | "updated_time" | "page_hash";
+  updateDetection?: "published_time" | "updated_time";
 }
 
 export interface LlmFilterConfig {

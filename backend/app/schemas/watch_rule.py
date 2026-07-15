@@ -15,13 +15,20 @@ from app.services.loverslab.constants import LOVERSLAB_HOSTS
 # Platform-specific source configs
 # ---------------------------------------------------------------------------
 
+
 class NexusModsRuleConfig(BaseModel):
     gameDomainName: str = Field(description="NexusMods game domain name, e.g. skyrimspecialedition")
     gameName: str | None = Field(default=None, description="Human-readable game name")
     gameId: str | None = Field(default=None, description="NexusMods internal game ID")
-    updatedSinceDays: int = Field(ge=1, le=365, description="Monitor mods updated within this many days")
-    queryMode: Literal["updated", "created"] | None = Field(default=None, description="Query by updated or created time; omit for all")
-    categoryNames: list[str] = Field(default_factory=list, description="NexusMods category names to include")
+    updatedSinceDays: int = Field(
+        ge=1, le=365, description="Monitor mods updated within this many days"
+    )
+    queryMode: Literal["updated", "created"] | None = Field(
+        default=None, description="Query by updated or created time; omit for all"
+    )
+    categoryNames: list[str] = Field(
+        default_factory=list, description="NexusMods category names to include"
+    )
     tags: list[str] = Field(default_factory=list, description="Tags to filter by")
     sortBy: Literal[
         "updatedAt_desc",
@@ -33,19 +40,17 @@ class NexusModsRuleConfig(BaseModel):
 
 class LoversLabRuleConfig(BaseModel):
     gameLabel: str = Field(description="Game label, e.g. Skyrim SE / Fallout 4")
-    accessMode: Literal["rss", "page", "both"] = Field(default="rss", description="Access mode: RSS feed, page scraping, or both")
-    feedUrls: list[str] = Field(default_factory=list, description="RSS feed URLs (required for RSS mode)")
-    pageUrls: list[str] = Field(default_factory=list, description="Page URLs (required for page mode)")
-    browserProfile: str = Field(default="loverslab", description="Persistent browser profile name for page mode")
-    updatedSinceDays: int | None = Field(default=None, ge=1, le=365, description="Monitor within this many days")
-    maxItemsPerRun: int = Field(default=50, ge=1, le=100, description="Max items per scraping run")
+    feedUrls: list[str] = Field(default_factory=list, description="LoversLab RSS feed URLs")
+    updatedSinceDays: int | None = Field(
+        default=None, ge=1, le=365, description="Monitor within this many days"
+    )
+    maxItemsPerRun: int = Field(default=50, ge=1, le=100, description="Max items per RSS run")
     updateDetection: Literal[
         "published_time",
         "updated_time",
-        "page_hash",
     ] = Field(default="published_time", description="How to detect updates")
 
-    @field_validator("feedUrls", "pageUrls")
+    @field_validator("feedUrls")
     @classmethod
     def validate_loverslab_urls(cls, value: list[str]) -> list[str]:
         """校验 LoversLab 规则 URL 只能使用 https 官方域名。"""
@@ -70,14 +75,10 @@ class LoversLabRuleConfig(BaseModel):
         return validated
 
     @model_validator(mode="after")
-    def validate_access_mode_requirements(self):
-        """根据 accessMode 要求对应 RSS 或页面 URL 列表存在。"""
-        if self.accessMode == "rss" and not self.feedUrls:
-            raise ValueError("feedUrls is required when accessMode is rss")
-        if self.accessMode == "page" and not self.pageUrls:
-            raise ValueError("pageUrls is required when accessMode is page")
-        if self.accessMode == "both" and (not self.feedUrls or not self.pageUrls):
-            raise ValueError("feedUrls and pageUrls are required when accessMode is both")
+    def validate_feed_urls_present(self):
+        """LoversLab 发现仅保留 RSS，因此必须提供至少一个 Feed URL。"""
+        if not self.feedUrls:
+            raise ValueError("feedUrls is required for LoversLab RSS discovery")
         return self
 
 
@@ -85,34 +86,59 @@ class LoversLabRuleConfig(BaseModel):
 # Filter / notification sub-models
 # ---------------------------------------------------------------------------
 
+
 class LlmFilterConfig(BaseModel):
     enabled: bool = Field(default=False, description="Enable LLM-assisted filtering")
     prompt: str = Field(default="", description="LLM prompt for filtering")
-    mode: Literal["assist_only", "must_pass"] = Field(default="assist_only", description="LLM filter mode")
-    minConfidence: float = Field(default=0.7, ge=0.0, le=1.0, description="Minimum confidence threshold")
+    mode: Literal["assist_only", "must_pass"] = Field(
+        default="assist_only", description="LLM filter mode"
+    )
+    minConfidence: float = Field(
+        default=0.7, ge=0.0, le=1.0, description="Minimum confidence threshold"
+    )
 
 
 class CommonRuleFilters(BaseModel):
-    includeKeywords: list[str] = Field(default_factory=list, description="Keywords that must appear")
-    excludeKeywords: list[str] = Field(default_factory=list, description="Keywords that trigger exclusion")
+    includeKeywords: list[str] = Field(
+        default_factory=list, description="Keywords that must appear"
+    )
+    excludeKeywords: list[str] = Field(
+        default_factory=list, description="Keywords that trigger exclusion"
+    )
     minDownloads: int | None = Field(default=None, ge=0, description="Minimum download count")
-    minEndorsements: int | None = Field(default=None, ge=0, description="Minimum endorsement count (NexusMods)")
+    minEndorsements: int | None = Field(
+        default=None, ge=0, description="Minimum endorsement count (NexusMods)"
+    )
     minLikes: int | None = Field(default=None, ge=0, description="Minimum likes (LoversLab)")
-    updatedWithinDays: int | None = Field(default=None, ge=1, description="Local time-window filter in days")
-    adultPolicy: Literal["include", "exclude", "only"] = Field(default="include", description="Adult content policy")
-    missingMetricsPolicy: Literal["pass", "reject"] = Field(default="pass", description="Policy for items missing metrics")
-    llmFilter: LlmFilterConfig = Field(default_factory=LlmFilterConfig, description="Optional LLM filter configuration")
+    updatedWithinDays: int | None = Field(
+        default=None, ge=1, description="Local time-window filter in days"
+    )
+    adultPolicy: Literal["include", "exclude", "only"] = Field(
+        default="include", description="Adult content policy"
+    )
+    missingMetricsPolicy: Literal["pass", "reject"] = Field(
+        default="pass", description="Policy for items missing metrics"
+    )
+    llmFilter: LlmFilterConfig = Field(
+        default_factory=LlmFilterConfig, description="Optional LLM filter configuration"
+    )
 
 
 class NotificationConfig(BaseModel):
     enabled: bool = Field(default=False, description="Enable notifications for this rule")
-    mode: Literal["instant", "daily_digest", "weekly_digest"] = Field(default="daily_digest", description="Notification mode")
-    channels: list[str] = Field(default_factory=list, description="Notification channels (desktop, telegram, discord, email)")
+    mode: Literal["instant", "daily_digest", "weekly_digest"] = Field(
+        default="daily_digest", description="Notification mode"
+    )
+    channels: list[str] = Field(
+        default_factory=list,
+        description="Notification channels (desktop, telegram, discord, email)",
+    )
 
 
 # ---------------------------------------------------------------------------
 # API request / response models
 # ---------------------------------------------------------------------------
+
 
 class WatchRuleCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100, description="Rule name")
@@ -124,9 +150,15 @@ class WatchRuleCreate(BaseModel):
         description="Polling interval for this rule in minutes",
     )
     source: Literal["nexusmods", "loverslab"] = Field(description="Data source platform")
-    sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig = Field(description="Platform-specific config")
-    filters: CommonRuleFilters = Field(default_factory=CommonRuleFilters, description="Common filtering rules")
-    notification: NotificationConfig = Field(default_factory=NotificationConfig, description="Notification settings")
+    sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig = Field(
+        description="Platform-specific config"
+    )
+    filters: CommonRuleFilters = Field(
+        default_factory=CommonRuleFilters, description="Common filtering rules"
+    )
+    notification: NotificationConfig = Field(
+        default_factory=NotificationConfig, description="Notification settings"
+    )
 
     @model_validator(mode="after")
     def validate_source_config_matches_source(self):
@@ -144,10 +176,16 @@ class WatchRuleUpdate(BaseModel):
         le=MAX_RULE_INTERVAL_MINUTES,
         description="Polling interval for this rule in minutes",
     )
-    source: Literal["nexusmods", "loverslab"] | None = Field(default=None, description="Data source platform")
-    sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig | None = Field(default=None, description="Platform-specific config")
+    source: Literal["nexusmods", "loverslab"] | None = Field(
+        default=None, description="Data source platform"
+    )
+    sourceConfig: NexusModsRuleConfig | LoversLabRuleConfig | None = Field(
+        default=None, description="Platform-specific config"
+    )
     filters: CommonRuleFilters | None = Field(default=None, description="Common filtering rules")
-    notification: NotificationConfig | None = Field(default=None, description="Notification settings")
+    notification: NotificationConfig | None = Field(
+        default=None, description="Notification settings"
+    )
 
     @model_validator(mode="after")
     def validate_source_config_matches_source(self):
@@ -209,6 +247,12 @@ class RuleTestResponse(BaseModel):
     normalized: int = Field(description="Number of items after normalization")
     passedDeterministicFilters: int = Field(description="Items that passed deterministic filters")
     passedLlmFilters: int = Field(description="Items that passed LLM filters")
-    rejectedReasons: dict[str, int] = Field(default_factory=dict, description="Counts grouped by rejection reason")
-    rejectedItems: list[RuleTestRejectedItem] = Field(default_factory=list, description="Rejected items with reasons")
-    items: list[dict] = Field(default_factory=list, description="Preview items that passed all filters")
+    rejectedReasons: dict[str, int] = Field(
+        default_factory=dict, description="Counts grouped by rejection reason"
+    )
+    rejectedItems: list[RuleTestRejectedItem] = Field(
+        default_factory=list, description="Rejected items with reasons"
+    )
+    items: list[dict] = Field(
+        default_factory=list, description="Preview items that passed all filters"
+    )

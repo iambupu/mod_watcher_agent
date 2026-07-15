@@ -84,9 +84,7 @@ def make_loverslab_payload(**overrides):
         "source": "loverslab",
         "sourceConfig": {
             "gameLabel": "Skyrim SE",
-            "accessMode": "rss",
             "feedUrls": ["https://www.loverslab.com/files/rss/"],
-            "pageUrls": [],
             "maxItemsPerRun": 50,
             "updateDetection": "published_time",
         },
@@ -211,7 +209,7 @@ class TestCreateRule:
         assert data["name"] == "LL Skyrim Watcher"
         assert data["source"] == "loverslab"
         assert data["sourceConfig"]["gameLabel"] == "Skyrim SE"
-        assert data["sourceConfig"]["accessMode"] == "rss"
+        assert data["sourceConfig"]["feedUrls"] == ["https://www.loverslab.com/files/rss/"]
 
     def test_create_rule_validation_error(self, client):
         payload = make_nexusmods_payload()
@@ -293,7 +291,6 @@ class TestPatchRule:
         patch_payload = {
             "sourceConfig": {
                 "gameLabel": "Skyrim SE",
-                "accessMode": "rss",
                 "feedUrls": ["https://www.loverslab.com/files/rss/"],
             }
         }

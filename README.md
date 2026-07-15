@@ -12,7 +12,7 @@
 
 ## 客户端功能
 
-- 发现：聚合 Nexus Mods 和 LoversLab 的公开 Mod 信息。
+- 发现：聚合 Nexus Mods API、LoversLab RSS 和搜索引擎公开索引中的 Mod 信息。
 - 收藏：收藏 Mod 并持续跟踪版本变化。
 - 更新：以时间线查看版本和变更记录。
 - 规则：创建、测试和启停定期发现规则。
@@ -151,10 +151,6 @@ Get-Content .\ModWatcherAgent-<version>-win-x64-portable.zip.sha256
 4. 回到「设置 → 配置与数据库」核对路径。
 
 数据库路径留空时，客户端使用 `%LOCALAPPDATA%\ModWatcherAgent\data\mod_watcher.db`。
-
-### LoversLab 登录窗口无法打开
-
-确认 Microsoft Edge 或 Google Chrome 可以正常启动。浏览器资料默认保存在 `%LOCALAPPDATA%\ModWatcherAgent\data\browser_profiles`。
 
 ### 安全软件提示未知应用
 

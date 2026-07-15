@@ -41,6 +41,7 @@ hidden_imports = [
 ]
 
 excluded_modules = [
+    "playwright",
     "PyQt5",
     "PyQt6",
     "PySide2",
